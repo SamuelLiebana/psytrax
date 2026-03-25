@@ -123,7 +123,7 @@ Then pass `device='gpu'` (or `'auto'`, the default) to `psytrax.fit()`.
 # ---------------------------------------------------------------------------
 # Visualise Results
 # ---------------------------------------------------------------------------
-else:
+elif page == 'Visualise Results':
     st.title('Visualise Results')
 
     uploaded = st.file_uploader('Upload a psytrax fit file (.npy)', type='npy')
