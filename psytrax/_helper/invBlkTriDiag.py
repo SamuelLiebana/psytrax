@@ -4,7 +4,7 @@ from psytrax._helper.helperFunctions import DT_X_D
 
 
 def getCredibleInterval(Hess):
-    return np.sqrt(invDiagHess(Hess)).reshape(Hess['K'], -1)
+    return np.sqrt(np.maximum(invDiagHess(Hess), 0.0)).reshape(Hess['K'], -1)
 
 
 def invDiagHess(Hess):
