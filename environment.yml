@@ -1,0 +1,24 @@
+name: psytrax
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - statsmodels
+  - jupyter
+  - ipykernel
+  - pip
+  - pip:
+    # CPU-only JAX (default). For GPU support, replace with one of:
+    #   Apple Silicon:  jax-metal
+    #   NVIDIA CUDA 12: jax[cuda12]
+    #   NVIDIA CUDA 11: jax[cuda11_pip]
+    - jax[cpu]
+    - numpy_indexed
+    - tqdm
+    - streamlit
+    - -e .

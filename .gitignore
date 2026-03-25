@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.eggs/
+*.npy
+fits/
+*.ipynb_checkpoints/
+.DS_Store
