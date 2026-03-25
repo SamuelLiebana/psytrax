@@ -87,11 +87,14 @@ def getMAP(dat, hyper, n_params, log_lik_fns, method=None, E0=None, showOpt=0, p
         if pbar is not None:
             pbar.set_postfix({'MAP loss': f'{val:.3f}'})
 
+    # maxiter: trust-ncg default is 200*len(x), which is huge for large N*K.
+    # Cap at 2000 — the optimizer typically converges in < 100 iterations.
+    max_iter = 2000
     if showOpt:
-        opts = {'disp': True}
+        opts = {'disp': True,  'maxiter': max_iter}
         callback = lambda x: (print(x), _callback(x))
     else:
-        opts = {'disp': False}
+        opts = {'disp': False, 'maxiter': max_iter}
         callback = _callback
 
     if showOpt:
