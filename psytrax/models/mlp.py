@@ -67,9 +67,9 @@ def make_model(input_keys=None, hidden=_H):
         log_p_left  = jax.nn.log_sigmoid(-logit)
         return dat_trial['r'] * log_p_right + (1 - dat_trial['r']) * log_p_left
 
-    def default_hyper(n_params=K):
+    def default_hyper(n_params=K, shared_sigma=False):
         return {
-            'sigma':   np.full(n_params, 2 ** -3),
+            'sigma':   float(2 ** -3) if shared_sigma else np.full(n_params, 2 ** -3),
             'sigInit': np.full(n_params, 2 **  2),
             'sigDay':  None,
         }

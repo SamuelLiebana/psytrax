@@ -8,3 +8,4 @@ build/
 fits/
 *.ipynb_checkpoints/
 .DS_Store
+.venv/

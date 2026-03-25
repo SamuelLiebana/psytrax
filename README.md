@@ -14,7 +14,17 @@ It is model-agnostic: you supply a **per-trial log-likelihood function** and psy
 pip install -e .
 ```
 
-Dependencies: `jax`, `numpy`, `scipy`, `tqdm`. For the web app: `streamlit`.
+For the Streamlit app:
+
+```bash
+pip install -e .[web]
+```
+
+For development and tests:
+
+```bash
+pip install -e .[dev]
+```
 
 ---
 
@@ -44,6 +54,20 @@ result = psytrax.fit(
 print(result['params'].shape)   # (K, N)
 print(result['log_evidence'])   # scalar
 ```
+
+If you want a single process-noise hyperparameter shared across all parameters,
+pass `shared_sigma=True`:
+
+```python
+result = psytrax.fit(
+    data=data,
+    log_lik_trial=log_lik_trial,
+    n_params=N_PARAMS,
+    shared_sigma=True,
+)
+```
+
+The built-in models expose the same option through `default_hyper(shared_sigma=True)`.
 
 ---
 
@@ -82,6 +106,7 @@ The function must be written with **`jax.numpy`** (not `numpy`) so that psytrax 
 | MLP | `models/mlp.py` | 13 | No | 1→4→1 MLP with tanh hidden layer |
 
 Each model exposes: `log_lik_trial`, `N_PARAMS`, `PARAM_NAMES`, `default_hyper()`, `default_E0(N)`.
+For a shared random-walk variance across parameters, call `default_hyper(shared_sigma=True)`.
 
 See `examples/compare_models_DAP009.py` for a full comparison on real mouse data.
 
@@ -132,3 +157,6 @@ Visualise results and compare models interactively:
 ```bash
 streamlit run app.py
 ```
+
+The app can display fits with either parameter-specific `sigma` values or one
+shared `sigma` across all parameters.

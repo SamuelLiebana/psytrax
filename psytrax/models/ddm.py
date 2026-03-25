@@ -18,7 +18,7 @@ z  : decision boundary (threshold)
 
 import jax
 import jax.numpy as jnp
-from jax import jit
+from jax import jit, lax
 from jax.scipy.stats.norm import logcdf as jax_logcdf
 from jax.scipy.stats.norm import cdf  as jax_cdf
 import numpy as np
@@ -28,6 +28,7 @@ import numpy as np
 N_PARAMS = 3
 PARAM_NAMES = ['w', 'b', 'z']
 _SIG = 1.0
+_INVALID_LOG_LIK = -1e12
 
 
 def log_lik_trial(params, dat_trial):
@@ -41,6 +42,20 @@ def log_lik_trial(params, dat_trial):
                     - T           : reaction time
     """
     w, b, z = params
+    T = dat_trial['T']
+    valid = (
+        jnp.isfinite(z) &
+        jnp.isfinite(T) &
+        (z > 0.0) &
+        (T > 0.0)
+    )
+    return lax.cond(valid, lambda _: _log_lik_trial_valid(params, dat_trial),
+                    lambda _: jnp.array(_INVALID_LOG_LIK), operand=None)
+
+
+def _log_lik_trial_valid(params, dat_trial):
+    """Per-trial log-likelihood assuming positive threshold and RT."""
+    w, b, z = params
     c = dat_trial['inputs']['c']
     r = dat_trial['r']
     T = dat_trial['T']
@@ -51,13 +66,13 @@ def log_lik_trial(params, dat_trial):
 
     v2 = _SIG ** 2
     ll  = _log_inv_gauss_pdf(z, d_chosen,   v2, T)
-    ll2 = jnp.log(1.0 - _inv_gauss_cdf(z, d_unchosen, v2, T))
+    ll2 = _log_survival_from_cdf(_inv_gauss_cdf(z, d_unchosen, v2, T))
     return ll + ll2
 
 
-def default_hyper(n_params=N_PARAMS):
+def default_hyper(n_params=N_PARAMS, shared_sigma=False):
     return {
-        'sigma':   np.full(n_params, 2 ** -3),
+        'sigma':   float(2 ** -3) if shared_sigma else np.full(n_params, 2 ** -3),
         'sigInit': np.full(n_params, 2 **  4),
         'sigDay':  None,
     }
@@ -86,3 +101,9 @@ def _inv_gauss_cdf(thr, drift, v, t):
     A    = jax_cdf((drift * t - thr) / jnp.sqrt(v * t))
     logB = 2.0 * thr * (drift / v) + jax_logcdf(-(drift * t + thr) / jnp.sqrt(v * t))
     return A + jnp.exp(logB)
+
+
+@jit
+def _log_survival_from_cdf(cdf):
+    survival = 1.0 - jnp.clip(cdf, 0.0, 1.0)
+    return jnp.log(jnp.maximum(survival, jnp.finfo(survival.dtype).tiny))

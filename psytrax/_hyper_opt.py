@@ -4,7 +4,7 @@ from scipy.sparse import linalg
 from tqdm.auto import tqdm
 
 from psytrax._map import getMAP, getPosteriorTerms
-from psytrax._helper.invBlkTriDiag import getCredibleInterval, invBlkTriDiag
+from psytrax._helper.invBlkTriDiag import getCredibleInterval
 from psytrax._helper.jacHessCheck import compHess
 from psytrax._helper.helperFunctions import DT_X_D, make_invSigma, sparse_logdet
 
@@ -14,15 +14,8 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
              map_tol=1e-6):
     """Optimise hyperparameters and return MAP weights.
 
-    Uses the decoupled Laplace approximation: after each MAP solve the
-    hyperparameters are updated with BFGS using an analytical gradient.
-
-    The gradient of the Laplace log-evidence w.r.t. log₂σₖ is (envelope theorem):
-        d logEvd / d log₂σₖ = (ln2/σₖ²) · Σₜ[(Δwₖ)² + Var_post(Δwₖ)] − ln2·|Sₖ|
-    where the posterior increment variance Var_post(Δwₖ[t]) comes from the
-    off-diagonal blocks of the posterior covariance (invBlkTriDiag).  This
-    replaces K+1 finite-difference evaluations per BFGS step with one analytical
-    pass, giving a ~K-fold speedup for the inner optimisation.
+    Uses the decoupled Laplace approximation to find the hyperparameter values
+    (process noise sigmas) that maximise the marginal likelihood of the data.
 
     Args:
         dat         : data dict
@@ -139,16 +132,15 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             callback = None
 
         result = minimize(
-            _hyperOpt_val_and_grad,
+            _hyperOpt_lossfun,
             optVals,
             args=opt_keywords,
             method='BFGS',
-            jac=True,       # function returns (value, gradient) — no finite differences
             options=opts,
             callback=callback,
         )
 
-        diff = np.linalg.norm((optVals - np.array(result.x)) / np.abs(optVals).clip(1e-8))
+        diff = np.linalg.norm((optVals - np.array(result.x)) / optVals)
         if showOpt:
             print(f'Recovered hypers: {np.array(result.x)}')
             print(f'Log-evidence:     {np.round(-result.fun, 5)}')
@@ -206,48 +198,11 @@ def _unpack_optvals(result_x, hyper, optList, K):
             count += K
 
 
-def _get_posterior_cov_blocks(Hess):
-    """Return diagonal and below-diagonal blocks of the posterior covariance.
+def _hyperOpt_lossfun(optVals, keywords):
+    """Negative log-evidence for a given set of hyperparameter values.
 
-    Reorders the posterior precision from parameter-major to trial-major
-    (K×K blocks per trial) before inverting via invBlkTriDiag.
-
-    Returns:
-        MinvBlocks          : (K, K, N)   — diagonal blocks; MinvBlocks[k,k,t] = Σ_kk[t,t]
-        MinvBelowDiagBlocks : (K, K, N-1) — MinvBelowDiagBlocks[k,k,t] = Σ_kk[t+1,t]
-    """
-    center = -(Hess['ddlogprior'] + Hess['H'])
-    K = Hess['K']
-    N = int(Hess['ddlogprior'].shape[0] / K)
-    ii = (np.reshape(np.arange(K * N), (N, -1), order='F').T).flatten(order='F')
-    M = center[ii][:, ii]
-    _, MinvBlocks, MinvBelowDiagBlocks = invBlkTriDiag(M, K)
-    return MinvBlocks, MinvBelowDiagBlocks
-
-
-def _sum_sq_and_post_var(w_k, transitions, MinvBlocks, MinvBelowDiagBlocks, k):
-    """Σ_t [ (w_k[t]-w_k[t-1])² + Var_post(w_k[t]-w_k[t-1]) ] over transitions t."""
-    total = 0.0
-    for t in transitions:
-        delta_sq = (w_k[t] - w_k[t - 1]) ** 2
-        post_var = (MinvBlocks[k, k, t] + MinvBlocks[k, k, t - 1]
-                    - 2.0 * MinvBelowDiagBlocks[k, k, t - 1])
-        total += delta_sq + post_var
-    return total
-
-
-def _hyperOpt_val_and_grad(optVals, keywords):
-    """Negative log-evidence and its analytical gradient w.r.t. log2 hyperparameters.
-
-    Uses the decoupled Laplace approximation: w_MAP is re-estimated cheaply via
-    a linear solve for each candidate σ, so the gradient accounts for how σ shifts
-    the MAP estimate (unlike a pure EM step which holds w fixed).
-
-    Gradient of logEvd w.r.t. log₂σₖ (envelope theorem, Laplace approx):
-        d logEvd/d log₂σₖ = (ln2/σₖ²)·Σₜ[(Δwₖ)²+Var_post(Δwₖ)] − ln2·|Sₖ|
-
-    where the posterior increment variance comes from invBlkTriDiag applied to the
-    re-estimated posterior precision (so it reflects the updated w_MAP and σ).
+    Uses the decoupled Laplace approximation: re-estimates w_MAP cheaply by
+    solving a linear system rather than re-running the full MAP optimisation.
     """
     N = keywords['dat']['r'].shape[0]
     K = keywords['LL_terms']['K']
@@ -283,59 +238,4 @@ def _hyperOpt_val_and_grad(optVals, keywords):
     pT, lT = getPosteriorTerms(E_flat, dat, hyper, log_lik_fns, method)
     logterm_post = 0.5 * sparse_logdet(-ddlogprior - lT['ddlogli']['H'])
     evd = lT['logli'] + pT['logprior'] - logterm_post
-
-    # --- Analytical gradient ---
-    Hess_tmp = {'H': lT['ddlogli']['H'], 'K': K, 'ddlogprior': pT['ddlogprior']}
-    MinvBlocks, MinvBelowDiagBlocks = _get_posterior_cov_blocks(Hess_tmp)
-
-    days_set = set(days_arr.tolist())
-    w = E_flat.reshape(K, N)
-    ln2 = np.log(2.0)
-
-    grad = []
-    for hyp_name in keywords['optList']:
-        is_scalar = np.isscalar(hyper[hyp_name])
-
-        if hyp_name == 'sigma':
-            interior = [t for t in range(1, N) if t not in days_set]
-            n = len(interior)
-            if is_scalar:
-                total = sum(_sum_sq_and_post_var(w[k], interior, MinvBlocks, MinvBelowDiagBlocks, k)
-                            for k in range(K))
-                grad.append(-(ln2 / hyper['sigma'] ** 2 * total - ln2 * K * n))
-            else:
-                for k in range(K):
-                    total = _sum_sq_and_post_var(w[k], interior, MinvBlocks, MinvBelowDiagBlocks, k)
-                    grad.append(-(ln2 / hyper['sigma'][k] ** 2 * total - ln2 * n))
-
-        elif hyp_name == 'sigInit':
-            if is_scalar:
-                total = sum(w[k, 0] ** 2 + MinvBlocks[k, k, 0] for k in range(K))
-                grad.append(-(ln2 / hyper['sigInit'] ** 2 * total - ln2 * K))
-            else:
-                for k in range(K):
-                    total = w[k, 0] ** 2 + MinvBlocks[k, k, 0]
-                    grad.append(-(ln2 / hyper['sigInit'][k] ** 2 * total - ln2))
-
-        elif hyp_name == 'sigDay':
-            day_transitions = sorted(days_set)
-            n = len(day_transitions)
-            if not n:
-                grad.extend([0.0] if is_scalar else [0.0] * K)
-                continue
-            if is_scalar:
-                total = sum(_sum_sq_and_post_var(w[k], day_transitions, MinvBlocks, MinvBelowDiagBlocks, k)
-                            for k in range(K))
-                grad.append(-(ln2 / hyper['sigDay'] ** 2 * total - ln2 * K * n))
-            else:
-                for k in range(K):
-                    total = _sum_sq_and_post_var(w[k], day_transitions, MinvBlocks, MinvBelowDiagBlocks, k)
-                    grad.append(-(ln2 / hyper['sigDay'][k] ** 2 * total - ln2 * n))
-
-    return -evd, np.array(grad)
-
-
-def _hyperOpt_lossfun(optVals, keywords):
-    """Negative log-evidence (value only) — used for numerical Hessian in hess_calc='hyper'."""
-    val, _ = _hyperOpt_val_and_grad(optVals, keywords)
-    return val
+    return -evd

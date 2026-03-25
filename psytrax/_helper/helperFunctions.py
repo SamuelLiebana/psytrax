@@ -40,29 +40,29 @@ def make_invSigma(hyper, days, missing_trials, N, K):
     sigma = hyper['sigma']
     sigInit = hyper['sigInit'] if hyper.get('sigInit') is not None else sigma
     sigDay = hyper['sigDay'] if hyper.get('sigDay') is not None else sigma
+    sigma = _broadcast_hyper_vector(sigma, K, 'sigma')
+    sigInit = _broadcast_hyper_vector(sigInit, K, 'sigInit')
+    sigDay = _broadcast_hyper_vector(sigDay, K, 'sigDay')
 
-    if np.isscalar(sigma):
-        flat = np.ones(N) * sigma ** 2
-        flat[days] = sigDay ** 2
-        flat[0] = sigInit ** 2
+    flat = np.zeros(N * K)
+    for k in range(K):
+        flat[k * N:(k + 1) * N] = sigma[k] ** 2
+        flat[k * N + days] = sigDay[k] ** 2
+        flat[k * N] = sigInit[k] ** 2
         if missing_trials is not None:
-            flat += missing_trials * sigma ** 2
-        return diags(np.tile(flat, K) ** -1)
+            flat[k * N:(k + 1) * N] += missing_trials * sigma[k] ** 2
+    return diags(flat ** -1)
 
-    elif isinstance(sigma, (np.ndarray, list)):
-        if len(sigma) != K:
-            raise Exception(f'len(sigma) = {len(sigma)}, expected K = {K}')
-        flat = np.zeros(N * K)
-        for k in range(K):
-            flat[k * N:(k + 1) * N] = sigma[k] ** 2
-            flat[k * N + days] = (sigDay if np.isscalar(sigDay) else sigDay[k]) ** 2
-            flat[k * N] = (sigInit if np.isscalar(sigInit) else sigInit[k]) ** 2
-            if missing_trials is not None:
-                flat[k * N:(k + 1) * N] += missing_trials * sigma[k] ** 2
-        return diags(flat ** -1)
 
-    else:
-        raise Exception(f'sigma must be scalar or array, not {type(sigma)}')
+def _broadcast_hyper_vector(value, K, name):
+    """Broadcast a scalar hyperparameter to length K or validate a vector."""
+    if np.isscalar(value):
+        return np.full(K, float(value))
+
+    arr = np.asarray(value, dtype=float)
+    if arr.shape != (K,):
+        raise Exception(f'{name} must be scalar or have shape ({K},), got {arr.shape}')
+    return arr
 
 
 def trim(dat, START=0, END=0):

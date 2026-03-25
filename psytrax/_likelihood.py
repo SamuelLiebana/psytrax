@@ -26,7 +26,7 @@ the simulator with a JAX-compatible approximation (normalizing flows, etc.).
 
 import jax
 import jax.numpy as jnp
-from jax import grad, jit, vmap, hessian
+from jax import hessian, jit, value_and_grad, vmap
 
 jax.config.update("jax_enable_x64", True)
 
@@ -68,9 +68,15 @@ def make_likelihood_fns(log_lik_trial):
         log_likelihood_fn : callable(E, dat) -> scalar
             E   : (K, N) parameter matrix
             dat : dict with arrays of shape (N, ...)
-        ll_hessian_blks_fn : callable(E, dat) -> array of shape (N, K, K)
-            Per-trial Hessian blocks computed via JAX autodiff + vmap.
+        likelihood_terms_fn : callable(E, dat) -> tuple
+            Returns (logli, dlogli, hessian_blocks) where:
+              - logli is a scalar
+              - dlogli has shape (K, N)
+              - hessian_blocks has shape (N, K, K)
     """
+
+    trial_value_grad_fn = value_and_grad(log_lik_trial, argnums=0)
+    trial_hessian_fn = hessian(log_lik_trial, argnums=0)
 
     @jit
     def log_likelihood_fn(E, dat):
@@ -79,10 +85,11 @@ def make_likelihood_fns(log_lik_trial):
         return jnp.sum(vmap(log_lik_trial, in_axes)(E, dat))
 
     @jit
-    def ll_hessian_blks_fn(E, dat):
+    def likelihood_terms_fn(E, dat):
         N = E.shape[1]
-        h = hessian(log_lik_trial, 0)
         in_axes = (1, _make_vmap_axes(dat, N))
-        return vmap(h, in_axes)(E, dat)
+        values, grads = vmap(trial_value_grad_fn, in_axes)(E, dat)
+        hessians = vmap(trial_hessian_fn, in_axes)(E, dat)
+        return jnp.sum(values), jnp.swapaxes(grads, 0, 1), hessians
 
-    return log_likelihood_fn, ll_hessian_blks_fn
+    return log_likelihood_fn, likelihood_terms_fn

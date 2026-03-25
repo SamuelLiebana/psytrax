@@ -34,9 +34,9 @@ def log_lik_trial(params, dat_trial):
     return dat_trial['r'] * log_p_right + (1 - dat_trial['r']) * log_p_left
 
 
-def default_hyper(n_params=N_PARAMS):
+def default_hyper(n_params=N_PARAMS, shared_sigma=False):
     return {
-        'sigma':   np.full(n_params, 2 ** -3),
+        'sigma':   float(2 ** -3) if shared_sigma else np.full(n_params, 2 ** -3),
         'sigInit': np.full(n_params, 2 **  4),
         'sigDay':  None,
     }

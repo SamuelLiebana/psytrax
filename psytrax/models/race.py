@@ -14,7 +14,7 @@ See psytrax/_likelihood.py for JAX porting tips.
 """
 
 import jax.numpy as jnp
-from jax import jit
+from jax import jit, lax
 from jax.scipy.stats.norm import logcdf as jax_logcdf
 from jax.scipy.stats.norm import cdf as jax_cdf
 import numpy as np
@@ -28,6 +28,7 @@ PARAM_NAMES = ['wr', 'wl', 'br', 'bl', 'z', 'sig_i']
 
 # Fixed observation noise (not fitted)
 _SIG_O = 1.0
+_INVALID_LOG_LIK = -1e12
 
 
 def log_lik_trial(params, dat_trial):
@@ -48,6 +49,22 @@ def log_lik_trial(params, dat_trial):
         scalar log-likelihood for this trial
     """
     wr, wl, br, bl, z, sig_i = params
+    T = dat_trial['T']
+    valid = (
+        jnp.isfinite(z) &
+        jnp.isfinite(sig_i) &
+        jnp.isfinite(T) &
+        (z > 0.0) &
+        (sig_i >= 0.0) &
+        (T > 0.0)
+    )
+    return lax.cond(valid, lambda _: _log_lik_trial_valid(params, dat_trial),
+                    lambda _: jnp.array(_INVALID_LOG_LIK), operand=None)
+
+
+def _log_lik_trial_valid(params, dat_trial):
+    """Per-trial log-likelihood assuming positive threshold and RT."""
+    wr, wl, br, bl, z, sig_i = params
     c = dat_trial['inputs']['c']
     r = dat_trial['r']
     T = dat_trial['T']
@@ -67,7 +84,7 @@ def log_lik_trial(params, dat_trial):
     v_kbar     = (1 - r) * v1     + r * v2
 
     ll  = _log_inv_gauss_pdf(z, drift_k, v_k, T)
-    ll2 = jnp.log(1.0 - _inv_gauss_cdf(z, drift_kbar, v_kbar, T))
+    ll2 = _log_survival_from_cdf(_inv_gauss_cdf(z, drift_kbar, v_kbar, T))
     return ll + ll2
 
 
@@ -75,9 +92,12 @@ def log_lik_trial(params, dat_trial):
 # Initialisation helpers
 # -----------------------------------------------------------------------
 
-def default_hyper(n_params=N_PARAMS):
+def default_hyper(n_params=N_PARAMS, shared_sigma=False):
     """Reasonable starting hyperparameters for the race model."""
-    sigma = np.array([2 ** -3] * (n_params - 1) + [2 ** -10])  # tiny variance for sig_i
+    if shared_sigma:
+        sigma = float(2 ** -3)
+    else:
+        sigma = np.array([2 ** -3] * (n_params - 1) + [2 ** -10])  # tiny variance for sig_i
     return {
         'sigma': sigma,
         'sigInit': np.full(n_params, 2 ** 4),
@@ -113,3 +133,9 @@ def _inv_gauss_cdf(thr, drift, v, t):
     A = jax_cdf((drift * t - thr) / jnp.sqrt(v * t))
     logB = 2.0 * thr * (drift / v) + jax_logcdf(-(drift * t + thr) / jnp.sqrt(v * t))
     return A + jnp.exp(logB)
+
+
+@jit
+def _log_survival_from_cdf(cdf):
+    survival = 1.0 - jnp.clip(cdf, 0.0, 1.0)
+    return jnp.log(jnp.maximum(survival, jnp.finfo(survival.dtype).tiny))

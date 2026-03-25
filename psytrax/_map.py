@@ -1,7 +1,6 @@
 import numpy as onp
 import jax
 import jax.numpy as jnp
-from jax import grad
 from scipy.optimize import minimize
 from tqdm.auto import tqdm
 
@@ -17,18 +16,20 @@ from psytrax._helper.helperFunctions import (
 jax.config.update("jax_enable_x64", True)
 
 
-def getMAP(dat, hyper, n_params, log_lik_fns, method=None, E0=None, showOpt=0, pbar=None):
+def getMAP(dat, hyper, n_params, log_lik_fns, method=None, E0=None, showOpt=0,
+           pbar=None, map_tol=1e-6):
     """Estimate MAP parameters under a Gaussian random-walk prior.
 
     Args:
         dat         : dict with at least 'inputs' (dict) and 'r' (responses)
         hyper       : dict with at least 'sigma'; optionally 'sigInit', 'sigDay'
         n_params    : int, number of parameters per trial (K)
-        log_lik_fns : tuple (log_likelihood_fn, ll_hessian_blks_fn) as returned
+        log_lik_fns : tuple (log_likelihood_fn, likelihood_terms_fn) as returned
                       by make_likelihood_fns()
         method      : None (trial-by-trial) | '_constant' | '_days'
         E0          : initial parameter array, shape (w_N*K,) or (K, w_N)
         showOpt     : 0 silent | 1 verbose | 2+ also runs derivative checks
+        map_tol     : trust-region convergence tolerance
 
     Returns:
         hess    : dict of sparse matrices for the Laplace approximation
@@ -75,8 +76,9 @@ def getMAP(dat, hyper, n_params, log_lik_fns, method=None, E0=None, showOpt=0, p
     dat.setdefault('missing_trials', None)
 
     # --- MAP optimisation ---
+    prior_cache = make_prior_cache(dat, hyper, K, method)
     lossfun = memoize(negLogPost)
-    my_args = (dat, hyper, log_lik_fns, method)
+    my_args = (dat, prior_cache, log_lik_fns, method)
 
     _map_pbar = tqdm(desc='  MAP', unit='iter', leave=False, disable=pbar is None)
 
@@ -106,7 +108,7 @@ def getMAP(dat, hyper, n_params, log_lik_fns, method=None, E0=None, showOpt=0, p
         jac=lossfun.jacobian,
         hessp=lossfun.hessian_prod,
         method='trust-ncg',
-        tol=1e-9,
+        tol=map_tol,
         args=my_args,
         options=opts,
         callback=callback,
@@ -146,9 +148,11 @@ def getMAP(dat, hyper, n_params, log_lik_fns, method=None, E0=None, showOpt=0, p
     return hess, logEvd, llstruct
 
 
-def negLogPost(E_flat, dat, hyper, log_lik_fns, method=None):
+def negLogPost(E_flat, dat, prior_cache, log_lik_fns, method=None):
     """Return (neg log-posterior, its gradient, its Hessian dict) at E_flat."""
-    priorTerms, liTerms = getPosteriorTerms(E_flat, dat, hyper, log_lik_fns, method)
+    priorTerms, liTerms = getPosteriorTerms(
+        E_flat, dat, prior_cache, log_lik_fns, method
+    )
     negPost = -priorTerms['logprior'] - liTerms['logli']
     negdPost = -priorTerms['dlogprior'] - liTerms['dlogli']
     negddPost = {
@@ -159,14 +163,14 @@ def negLogPost(E_flat, dat, hyper, log_lik_fns, method=None):
     return negPost, negdPost, negddPost
 
 
-def getPosteriorTerms(E_flat, dat, hyper, log_lik_fns, method=None):
+def getPosteriorTerms(E_flat, dat, hyper_or_prior, log_lik_fns, method=None):
     """Compute prior and likelihood terms (with derivatives) at E_flat.
 
     Args:
         E_flat      : (w_N * K,) flat parameter vector
         dat         : data dict
-        hyper       : hyperparameter dict
-        log_lik_fns : (log_likelihood_fn, ll_hessian_blks_fn)
+        hyper_or_prior : hyperparameter dict or cached prior terms
+        log_lik_fns : (log_likelihood_fn, likelihood_terms_fn)
         method      : None | '_constant' | '_days'
 
     Returns:
@@ -179,8 +183,47 @@ def getPosteriorTerms(E_flat, dat, hyper, log_lik_fns, method=None):
     dat.setdefault('dayLength', onp.array([], dtype=int))
     dat.setdefault('missing_trials', None)
 
+    prior_cache = (
+        hyper_or_prior
+        if isinstance(hyper_or_prior, dict) and 'invC' in hyper_or_prior
+        else make_prior_cache(
+            dat, hyper_or_prior, int(len(E_flat) / len(dat['r'])), method
+        )
+    )
+    K = prior_cache['K']
+    w_N = prior_cache['w_N']
+
+    if E_flat.shape != (w_N * K,):
+        raise Exception(f'E_flat shape {E_flat.shape} != ({w_N * K},)')
+
+    # --- Prior ---
+    invC = prior_cache['invC']
+    logdet_C = prior_cache['logdet_C']
+    logprior = 0.5 * (-logdet_C - E_flat @ invC @ E_flat)
+    dlogprior = -invC @ E_flat
+    ddlogprior = prior_cache['ddlogprior']
+
+    priorTerms = {'logprior': logprior, 'dlogprior': dlogprior, 'ddlogprior': ddlogprior}
+
+    # --- Likelihood ---
+    _, likelihood_terms_fn = log_lik_fns
+    E = onp.reshape(E_flat, (K, w_N), order='C')
+
+    logli, dlogli_matrix, HlliList = likelihood_terms_fn(E, dat)
+    dlogli = onp.asarray(dlogli_matrix).flatten()
+    ddlogli = {'H': myblk_diags(HlliList), 'K': K}
+
+    liTerms = {'logli': logli, 'dlogli': dlogli, 'ddlogli': ddlogli}
+    return priorTerms, liTerms
+
+
+def make_prior_cache(dat, hyper, n_params, method=None):
+    """Precompute prior quantities that stay fixed within a MAP solve."""
+    dat.setdefault('dayLength', onp.array([], dtype=int))
+    dat.setdefault('missing_trials', None)
+
     N = len(dat['r'])
-    K = int(len(E_flat) / N)
+    K = n_params
 
     if method is None:
         w_N = N
@@ -194,29 +237,16 @@ def getPosteriorTerms(E_flat, dat, hyper, log_lik_fns, method=None):
         w_N = len(dat['dayLength'])
         days = onp.arange(1, w_N, dtype=int)
         missing_trials = None
+    else:
+        raise Exception(f"method '{method}' not supported")
 
-    if E_flat.shape != (w_N * K,):
-        raise Exception(f'E_flat shape {E_flat.shape} != ({w_N * K},)')
-
-    # --- Prior ---
     invSigma = make_invSigma(hyper, days, missing_trials, w_N, K)
     invC = DT_X_D(invSigma, K)
 
-    logdet_C = -onp.sum(jnp.log(invSigma.diagonal()))
-    logprior = 0.5 * (-logdet_C - E_flat @ invC @ E_flat)
-    dlogprior = -invC @ E_flat
-    ddlogprior = -invC
-
-    priorTerms = {'logprior': logprior, 'dlogprior': dlogprior, 'ddlogprior': ddlogprior}
-
-    # --- Likelihood ---
-    log_likelihood_fn, ll_hessian_blks_fn = log_lik_fns
-    E = onp.reshape(E_flat, (K, w_N), order='C')
-
-    HlliList = ll_hessian_blks_fn(E, dat)
-    logli = log_likelihood_fn(E, dat)
-    dlogli = grad(log_likelihood_fn)(E, dat).flatten()
-    ddlogli = {'H': myblk_diags(HlliList), 'K': K}
-
-    liTerms = {'logli': logli, 'dlogli': dlogli, 'ddlogli': ddlogli}
-    return priorTerms, liTerms
+    return {
+        'K': K,
+        'w_N': w_N,
+        'invC': invC,
+        'ddlogprior': -invC,
+        'logdet_C': -onp.sum(jnp.log(invSigma.diagonal())),
+    }

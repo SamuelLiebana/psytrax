@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "psytrax"
+version = "0.1.0"
+description = "Empirical Bayes fitting for trial-by-trial decision models"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "jax>=0.6",
+    "numpy>=1.23",
+    "scipy>=1.12",
+    "tqdm>=4.60",
+]
+
+[project.optional-dependencies]
+web = [
+    "matplotlib>=3.7",
+    "pandas>=1.5",
+    "streamlit>=1.30",
+]
+dev = [
+    "matplotlib>=3.7",
+    "pandas>=1.5",
+    "pytest>=8",
+    "streamlit>=1.30",
+]
+
+[tool.setuptools.packages.find]
+exclude = ["tests", "tests.*"]

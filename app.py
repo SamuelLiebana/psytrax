@@ -34,6 +34,12 @@ It is model-agnostic: you supply a **per-trial log-likelihood function** and psy
 handles all the inference machinery.
 """)
 
+    st.info(
+        "You can fit either parameter-specific process noise (`sigma`, one value "
+        "per parameter) or a single shared process noise across all parameters "
+        "with `shared_sigma=True`."
+    )
+
     st.subheader('Quick start')
     st.code("""
 import psytrax
@@ -59,6 +65,20 @@ result = psytrax.fit(
 print(result['params'].shape)        # (K, N)
 print(result['log_evidence'])        # scalar
 """, language='python')
+
+    st.markdown("""
+To fit one shared random-walk variance across all parameters instead, either:
+
+```python
+result = psytrax.fit(..., shared_sigma=True)
+```
+
+or pass a built-in model hyperparameter template such as:
+
+```python
+hyper = default_hyper(shared_sigma=True)
+```
+""")
 
     st.subheader('Writing your own model')
     st.markdown("""
@@ -96,6 +116,22 @@ JAX automatically uses a GPU if one is available. Install the right backend firs
 | NVIDIA CUDA 11 | `pip install jax[cuda11_pip]` |
 
 Then pass `device='gpu'` (or `'auto'`, the default) to `psytrax.fit()`.
+""")
+
+    st.subheader('Installation')
+    st.markdown("""
+Core package:
+
+```bash
+pip install -e .
+```
+
+Streamlit app and plotting dependencies:
+
+```bash
+pip install -e .[web]
+streamlit run app.py
+```
 """)
 
     st.subheader('Data format')
@@ -222,10 +258,16 @@ elif page == 'Visualise Results':
     for key, val in hyper.items():
         if val is not None:
             arr = np.atleast_1d(val)
-            hyper_rows.append({
-                'hyperparameter': key,
-                **{name: f'{np.log2(arr[i]):.3f}' for i, name in enumerate(param_names) if i < len(arr)}
-            })
+            row = {'hyperparameter': key}
+            if len(arr) == 1:
+                row['shared'] = f'{np.log2(arr[0]):.3f}'
+            else:
+                row.update({
+                    name: f'{np.log2(arr[i]):.3f}'
+                    for i, name in enumerate(param_names)
+                    if i < len(arr)
+                })
+            hyper_rows.append(row)
     if hyper_rows:
         st.dataframe(pd.DataFrame(hyper_rows).set_index('hyperparameter'), use_container_width=True)
 
