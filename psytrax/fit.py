@@ -1,6 +1,10 @@
 import os
+import warnings
 import numpy as np
 from datetime import datetime
+
+import jax
+import jax.numpy as jnp
 
 from psytrax._likelihood import make_likelihood_fns
 from psytrax._hyper_opt import hyperOpt
@@ -139,6 +143,17 @@ def fit(data, log_lik_trial, n_params,
     # Build batched likelihood functions
     # ------------------------------------------------------------------
     log_lik_fns = make_likelihood_fns(log_lik_trial)
+
+    # ------------------------------------------------------------------
+    # Initialisation
+    # ------------------------------------------------------------------
+    if E0 is None:
+        if verbose:
+            print('Finding warm-start initialisation (constant-parameter fit)...')
+        const_params = _warm_start_constant(dat, log_lik_fns, K, N, verbose=verbose)
+        E0 = np.tile(const_params[:, np.newaxis], N)
+    else:
+        _check_E0_validity(E0, dat, log_lik_fns, K, N)
 
     # ------------------------------------------------------------------
     # Run hyperparameter optimisation
@@ -311,3 +326,115 @@ def _validate_hyper_value(name, value, n_params):
         )
     if not np.all(np.isfinite(arr)) or np.any(arr <= 0):
         raise ValueError(f"hyper['{name}'] must contain only positive finite values")
+
+
+def _to_jax(dat):
+    """Recursively convert numpy arrays in a data dict to jax arrays."""
+    result = {}
+    for k, v in dat.items():
+        if v is None:
+            result[k] = v
+        elif isinstance(v, dict):
+            result[k] = _to_jax(v)
+        elif isinstance(v, np.ndarray):
+            result[k] = jnp.asarray(v)
+        else:
+            result[k] = v
+    return result
+
+
+def _warm_start_constant(dat, log_lik_fns, K, N, verbose=False):
+    """Find constant MAP parameters by maximising total log-likelihood.
+
+    Optimises a single (K,) parameter vector shared across all N trials,
+    using L-BFGS-B with JAX-computed gradients.  The result provides a
+    data-informed E0 that avoids the sentinel-value region.
+
+    Args:
+        dat         : normalised data dict
+        log_lik_fns : (log_likelihood_fn, likelihood_terms_fn) from make_likelihood_fns
+        K           : number of parameters
+        N           : number of trials
+        verbose     : print optimisation result
+
+    Returns:
+        params : (K,) numpy array of best-fit constant parameters
+    """
+    from scipy.optimize import minimize as _minimize
+
+    log_lik_fn = log_lik_fns[0]
+    dat_jax = _to_jax(dat)
+
+    # Define the objective once so JAX compiles it only on the first call and
+    # reuses the cached compiled version for every subsequent iteration.
+    # (Defining a new lambda inside the loop would force re-tracing each call.)
+    @jax.jit
+    def _ll_of_params(params):
+        return log_lik_fn(jnp.tile(params[:, jnp.newaxis], (1, N)), dat_jax)
+
+    _ll_and_grad = jax.jit(jax.value_and_grad(_ll_of_params))
+
+    def neg_ll_and_grad(params_flat):
+        params = jnp.array(params_flat, dtype=jnp.float64)
+        val, grad = _ll_and_grad(params)
+        val_f = float(-val)
+        grad_f = np.array(-grad, dtype=np.float64)
+        if not np.isfinite(val_f):
+            val_f = 1e20
+        if not np.all(np.isfinite(grad_f)):
+            grad_f = np.zeros(K, dtype=np.float64)
+        return val_f, grad_f
+
+    # Try two starting points: small positive (avoids z=0 sentinel region in
+    # constrained models like the race model) and a unit vector.
+    starts = [np.full(K, 0.5), np.full(K, 1.0)]
+    best_result = None
+    for x0 in starts:
+        r = _minimize(
+            neg_ll_and_grad,
+            x0,
+            method='L-BFGS-B',
+            jac=True,
+            options={'maxiter': 200, 'ftol': 1e-8},
+        )
+        if best_result is None or r.fun < best_result.fun:
+            best_result = r
+    if verbose:
+        print(f'  Warm-start log-likelihood: {-best_result.fun:.4f}  ({best_result.message})')
+    return np.array(best_result.x)
+
+
+def _check_E0_validity(E0, dat, log_lik_fns, K, N):
+    """Warn if E0 causes many sentinel (invalid) log-likelihoods.
+
+    The race model (and similar) returns a large negative sentinel (-1e12)
+    when parameter constraints are violated (e.g. z <= 0, T <= 0).  Even a
+    handful of sentinel trials will corrupt the MAP objective.  This check
+    computes the total log-likelihood at E0 and warns when it is implausibly
+    low.
+
+    Args:
+        E0          : (K, N) initial parameter matrix
+        dat         : normalised data dict
+        log_lik_fns : (log_likelihood_fn, likelihood_terms_fn)
+        K, N        : parameter count and trial count
+    """
+    log_lik_fn = log_lik_fns[0]
+    E0_jax = jnp.asarray(E0, dtype=jnp.float64)
+    dat_jax = _to_jax(dat)
+
+    total_ll = float(log_lik_fn(E0_jax, dat_jax))
+
+    # A realistic per-trial log-likelihood for a well-specified model is O(-1).
+    # Sentinel values are -1e12, so even one sentinel completely dominates.
+    if not np.isfinite(total_ll) or total_ll < -N * 100:
+        n_sentinel_est = int(min(N, max(1, round(-total_ll / 1e12))))
+        warnings.warn(
+            f"The provided E0 yields a very low log-likelihood ({total_ll:.3e}), "
+            f"suggesting ~{n_sentinel_est} trial(s) have invalid parameter values "
+            "(e.g. z<=0, T<=0, or other model-specific constraints). "
+            "Consider passing E0=None to use the automatic warm-start, or adjusting "
+            "your initial parameter values.",
+            UserWarning,
+            stacklevel=4,
+        )

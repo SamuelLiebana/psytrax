@@ -1,5 +1,6 @@
 """End-to-end test of psytrax using the race model on a subset of one mouse."""
 
+import os
 import sys
 import numpy as np
 import pandas as pd
@@ -63,25 +64,52 @@ def load_mouse(csv_path, mouse_name):
 if __name__ == '__main__':
     csv = '/Users/sam/Documents/repos/learning_race_model/mouse_data/empirical_behav_normalised.csv'
     mouse = 'DAP009'
-    N_TEST = 300   # subset size for fast testing
+    N_TEST = 3016  # first 15 sessions
 
     data = load_mouse(csv, mouse)
-    N = N_TEST  # use first 300 trials
+    N = N_TEST
+
+    # --- Fixed nuisance parameters ---
+    # t_nd: fix at 5th percentile of RT distribution (common DDM heuristic).
+    # sig_i: fix at 0.1 — poorly identifiable from choice+RT data alone.
+    T_all = data['times'][:N]
+    t_nd = float(np.min(T_all) - 0.05)   # min RT minus 50 ms buffer
+    sig_i_fixed = 0.1
+    print(f'Fixed t_nd = {t_nd:.3f}s  (min RT - 50ms)')
+    print(f'Fixed sig_i = {sig_i_fixed}')
+
+    # Subtract non-decision time from all RTs
+    data_adj = dict(data)
+    data_adj['times'] = data['times'] - t_nd
+
+    # Save preprocessed data dict for use in the web app
+    data_dir = os.path.join(os.path.dirname(__file__), 'data')
+    os.makedirs(data_dir, exist_ok=True)
+    data_path = os.path.join(data_dir, f'{mouse}_data.npy')
+    np.save(data_path, data_adj)
+    print(f'Saved preprocessed data to: {data_path}')
 
     print(f'\nFitting first {N} trials of {mouse} with psytrax race model...\n')
 
+    # Flat E0 at stable values; sig_i fixed so its row is held constant
+    E0 = np.tile(np.array([1.0, 1.0, 0.5, 0.5, 1.0, sig_i_fixed])[:, None], N)
+
+    hyper = default_hyper()
+
     result = psytrax.fit(
-        data=data,
+        data=data_adj,
         log_lik_trial=log_lik_trial,
         n_params=N_PARAMS,
         param_names=PARAM_NAMES,
-        hyper=default_hyper(),
-        E0=default_E0(N),
+        hyper=hyper,
+        E0=E0,
         n_trials=N,
         session_boundaries=True,
         device='auto',
+        map_tol=1e-4,
         subject_name=mouse,
         save=True,
+        verbose=True,
     )
 
     print(f'\nSaved to: {result}')

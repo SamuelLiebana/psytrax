@@ -19,7 +19,15 @@ def sparse_logdet(A):
     """Log determinant of a sparse CSC matrix via LU decomposition."""
     if not isspmatrix_csc(A):
         raise Exception('sparse_logdet: matrix must be in sparse CSC format')
-    aux = splu(A)
+    try:
+        aux = splu(A)
+    except RuntimeError:
+        # Matrix is (near-)singular — add a tiny ridge and retry.
+        # This can happen during hyperparameter line searches that visit
+        # degenerate sigma values; the ridge is negligible for well-conditioned A.
+        from scipy.sparse import eye
+        A = A + 1e-8 * eye(A.shape[0], format='csc')
+        aux = splu(A)
     return np.sum(
         np.log(np.abs(aux.L.diagonal())) + np.log(np.abs(aux.U.diagonal())))
 

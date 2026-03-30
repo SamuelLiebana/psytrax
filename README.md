@@ -10,17 +10,13 @@ It is model-agnostic: you supply a **per-trial log-likelihood function** and psy
 
 ## Installation
 
-```bash
-pip install -e .
-```
-
-For the Streamlit app:
+For the web app or general use (installs all dependencies including Streamlit):
 
 ```bash
-pip install -e .[web]
+pip install -r requirements.txt
 ```
 
-For development and tests:
+For development and tests only:
 
 ```bash
 pip install -e .[dev]
@@ -101,7 +97,8 @@ The function must be written with **`jax.numpy`** (not `numpy`) so that psytrax 
 | Model | File | K | RT? | Description |
 |-------|------|---|-----|-------------|
 | Logistic | `models/logistic.py` | 2 | No | Binary logistic regression |
-| DDM | `models/ddm.py` | 3 | Yes | Drift diffusion model (fixed noise) |
+| DDM (exact) | `models/ddm.py` | 4 | Yes | Drift diffusion model — Navarro & Fuss (2009) / Bogacz et al. (2006) series solution |
+| DDM (approx) | `models/ddm_approx.py` | 3 | Yes | Drift diffusion model — inverse-Gaussian single-barrier approximation |
 | Race | `models/race.py` | 6 | Yes | Race model with separate accumulators |
 | MLP | `models/mlp.py` | 13 | No | 1→4→1 MLP with tanh hidden layer |
 
@@ -152,11 +149,50 @@ Then pass `device='gpu'` (or `'auto'`, the default) to `psytrax.fit()`.
 
 ## Web app
 
-Visualise results and compare models interactively:
+The web app lets you fit models, visualise results, and compare models — all from a browser, with no coding required.
+
+### Option A — hosted (zero install)
+
+The app is deployed on Streamlit Community Cloud. Open the link and use it directly:
+
+> **https://psytrax.streamlit.app** *(URL confirmed after deployment)*
+
+Fitting on the cloud is slower than running locally, and uploaded files are not persisted between sessions.
+
+### Option B — run locally
+
+**Requirements:** Python ≥ 3.10, [conda](https://docs.anaconda.com/miniconda/) recommended.
 
 ```bash
+# 1. Clone the repository
+git clone https://github.com/SamuelLiebana/psytrax.git
+cd psytrax
+
+# 2. Create and activate a virtual environment
+conda create -n psytrax python=3.11
+conda activate psytrax
+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Launch the app
 streamlit run app.py
 ```
 
-The app can display fits with either parameter-specific `sigma` values or one
-shared `sigma` across all parameters.
+The app opens automatically at `http://localhost:8501`.
+
+**GPU acceleration (optional)**
+
+| Platform | Extra install |
+|----------|---------------|
+| Apple Silicon (Metal) | `pip install jax-metal` |
+| NVIDIA CUDA 12 | `pip install jax[cuda12]` |
+
+### Pages
+
+| Page | What it does |
+|------|-------------|
+| Instructions | Usage guide |
+| Fit Model | Upload a dataset (`.npy` or `.csv`), choose a model, run the fit, download results |
+| Visualise Results | Load a saved fit and explore trial-by-trial parameter trajectories |
+| Compare Models | Overlay multiple fits and compare log-evidence scores |

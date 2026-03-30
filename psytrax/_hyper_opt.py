@@ -131,16 +131,22 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             opts = {'disp': False, 'maxiter': 15}
             callback = None
 
+        # L-BFGS-B with bounds keeps the line search away from degenerate sigma
+        # values (log2 in [-15, 5] ↔ sigma in [~3e-5, 32]) that make the
+        # log-evidence Hessian singular.
+        n_hyper_vals = len(optVals)
+        bounds = [(-15, 5)] * n_hyper_vals
         result = minimize(
             _hyperOpt_lossfun,
             optVals,
             args=opt_keywords,
-            method='BFGS',
+            method='L-BFGS-B',
+            bounds=bounds,
             options=opts,
             callback=callback,
         )
 
-        diff = np.linalg.norm((optVals - np.array(result.x)) / optVals)
+        diff = np.linalg.norm((optVals - np.array(result.x)) / np.maximum(np.abs(optVals), 1e-8))
         if showOpt:
             print(f'Recovered hypers: {np.array(result.x)}')
             print(f'Log-evidence:     {np.round(-result.fun, 5)}')
@@ -203,6 +209,8 @@ def _hyperOpt_lossfun(optVals, keywords):
 
     Uses the decoupled Laplace approximation: re-estimates w_MAP cheaply by
     solving a linear system rather than re-running the full MAP optimisation.
+    Returns a large positive sentinel (1e20) when numerical issues arise so
+    that the outer L-BFGS-B optimiser backs off to a safer region.
     """
     N = keywords['dat']['r'].shape[0]
     K = keywords['LL_terms']['K']
@@ -228,14 +236,19 @@ def _hyperOpt_lossfun(optVals, keywords):
     else:
         raise Exception(f"method '{method}' not supported")
 
-    invSigma = make_invSigma(hyper, days_arr, missing_trials, w_N, K)
-    ddlogprior = -DT_X_D(invSigma, K)
-    H = keywords['LL_terms']['H']
-    LL_v = keywords['LL_v']
-    Lambda = -H - ddlogprior
-    E_flat = linalg.spsolve(Lambda, LL_v)
+    try:
+        invSigma = make_invSigma(hyper, days_arr, missing_trials, w_N, K)
+        ddlogprior = -DT_X_D(invSigma, K)
+        H = keywords['LL_terms']['H']
+        LL_v = keywords['LL_v']
+        Lambda = -H - ddlogprior
+        E_flat = linalg.spsolve(Lambda, LL_v)
 
-    pT, lT = getPosteriorTerms(E_flat, dat, hyper, log_lik_fns, method)
-    logterm_post = 0.5 * sparse_logdet(-ddlogprior - lT['ddlogli']['H'])
-    evd = lT['logli'] + pT['logprior'] - logterm_post
-    return -evd
+        pT, lT = getPosteriorTerms(E_flat, dat, hyper, log_lik_fns, method)
+        logterm_post = 0.5 * sparse_logdet(-ddlogprior - lT['ddlogli']['H'])
+        evd = lT['logli'] + pT['logprior'] - logterm_post
+        if not np.isfinite(evd):
+            return 1e20
+        return -evd
+    except (RuntimeError, np.linalg.LinAlgError, ValueError):
+        return 1e20
