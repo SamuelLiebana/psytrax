@@ -155,7 +155,7 @@ The web app lets you fit models, visualise results, and compare models — all f
 
 The app is deployed on Streamlit Community Cloud. Open the link and use it directly:
 
-> **https://psytrax.streamlit.app** *(URL confirmed after deployment)*
+> **[https://psytrax.streamlit.app](https://psytrax.streamlit.app)**
 
 Fitting on the cloud is slower than running locally, and uploaded files are not persisted between sessions.
 
