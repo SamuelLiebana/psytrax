@@ -709,15 +709,34 @@ Expects `inputs['c']` (signed contrast) in your data.
 # Visualise Results
 # ---------------------------------------------------------------------------
 elif page == 'Visualise Results':
+    import os as _os
     st.title('Visualise Results')
 
-    uploaded = st.file_uploader('Upload a psytrax fit file (.npy)', type='npy')
+    _fits_dir = _os.path.join(_os.path.dirname(__file__), 'example_fits')
+    _example_fits = sorted(
+        f.replace('_race_fit.npy', '')
+        for f in _os.listdir(_fits_dir)
+        if f.endswith('_race_fit.npy')
+    ) if _os.path.isdir(_fits_dir) else []
 
-    if uploaded is None:
-        st.info('Upload a `.npy` file saved by `psytrax.fit(..., save=True)` to visualise results.')
-        st.stop()
+    _vis_source = st.radio(
+        'Data source',
+        (['Example fits', 'Upload my own file'] if _example_fits else ['Upload my own file']),
+        horizontal=True,
+        key='vis_source',
+    )
 
-    result = np.load(uploaded, allow_pickle=True).item()
+    if _vis_source == 'Example fits':
+        _animal = st.selectbox('Select animal', _example_fits, key='vis_animal')
+        result = np.load(
+            _os.path.join(_fits_dir, f'{_animal}_race_fit.npy'), allow_pickle=True
+        ).item()
+    else:
+        uploaded = st.file_uploader('Upload a psytrax fit file (.npy)', type='npy')
+        if uploaded is None:
+            st.info('Upload a `.npy` file saved by `psytrax.fit(..., save=True)` to visualise results.')
+            st.stop()
+        result = np.load(uploaded, allow_pickle=True).item()
 
     params      = result['params']          # (K, N)
     param_names = result['param_names']
@@ -903,24 +922,54 @@ elif page == 'Visualise Results':
 # Compare Models
 # ---------------------------------------------------------------------------
 elif page == 'Compare Models':
-    st.title('Compare Models')
+    import os as _os
     import pandas as pd
+    st.title('Compare Models')
 
-    uploaded_files = st.file_uploader(
-        'Upload multiple psytrax fit files (.npy)',
-        type='npy',
-        accept_multiple_files=True,
+    _fits_dir_cmp = _os.path.join(_os.path.dirname(__file__), 'example_fits')
+    _example_fits_cmp = sorted(
+        f.replace('_race_fit.npy', '')
+        for f in _os.listdir(_fits_dir_cmp)
+        if f.endswith('_race_fit.npy')
+    ) if _os.path.isdir(_fits_dir_cmp) else []
+
+    _cmp_source = st.radio(
+        'Data source',
+        (['Example fits', 'Upload my own files'] if _example_fits_cmp else ['Upload my own files']),
+        horizontal=True,
+        key='cmp_source',
     )
 
-    if not uploaded_files:
-        st.info('Upload two or more `.npy` fit files (e.g. DAP009_logistic_fit.npy, DAP009_race_fit.npy …)')
-        st.stop()
-
-    results = {}
-    for f in uploaded_files:
-        res  = np.load(f, allow_pickle=True).item()
-        name = f.name.replace('.npy', '')
-        results[name] = res
+    if _cmp_source == 'Example fits':
+        _selected_animals = st.multiselect(
+            'Select animals to compare',
+            _example_fits_cmp,
+            default=_example_fits_cmp[:min(4, len(_example_fits_cmp))],
+            key='cmp_animals',
+        )
+        if len(_selected_animals) < 2:
+            st.info('Select at least two animals to compare.')
+            st.stop()
+        results = {
+            animal: np.load(
+                _os.path.join(_fits_dir_cmp, f'{animal}_race_fit.npy'), allow_pickle=True
+            ).item()
+            for animal in _selected_animals
+        }
+    else:
+        uploaded_files = st.file_uploader(
+            'Upload multiple psytrax fit files (.npy)',
+            type='npy',
+            accept_multiple_files=True,
+        )
+        if not uploaded_files:
+            st.info('Upload two or more `.npy` fit files (e.g. DAP009_logistic_fit.npy, DAP009_race_fit.npy …)')
+            st.stop()
+        results = {}
+        for f in uploaded_files:
+            res  = np.load(f, allow_pickle=True).item()
+            name = f.name.replace('.npy', '')
+            results[name] = res
 
     # --- Log evidence bar chart ---
     st.subheader('Log evidence (higher = better fit)')
