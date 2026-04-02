@@ -79,7 +79,7 @@ def main():
                         help='Skip mice whose fit file already exists')
     parser.add_argument('--push', action='store_true',
                         help='git commit + push each fit as it completes')
-    parser.add_argument('--precision', default='float32',
+    parser.add_argument('--precision', default='float64',
                         choices=['float32', 'float64'],
                         help='JAX precision (default: float32 for speed)')
     parser.add_argument('--optimizer', default='jax',

@@ -524,8 +524,8 @@ Expects `inputs['c']` (signed contrast) in your data.
         hess_calc = None if hess_calc == 'None' else hess_calc
         precision = st.radio(
             'Precision',
-            ['float32 (faster, GPU)', 'float64 (slower, precise)'],
-            index=0,
+            ['float32 (faster, GPU)', 'float64 (recommended)'],
+            index=1,
             horizontal=True,
             key='fit_precision',
             help='float32 enables GPU acceleration (e.g. Apple Metal). '

@@ -11,7 +11,7 @@ using the existing numpy/scipy code (cheap relative to the optimisation).
 import numpy as np
 import jax
 import jax.numpy as jnp
-from tqdm.auto import tqdm
+import optax
 
 jax.config.update("jax_enable_x64", True)
 
@@ -131,18 +131,36 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
     else:
         E0_flat = E0.flatten().astype(dtype)
 
-    # ---- run L-BFGS ----
-    result = jax.scipy.optimize.minimize(
-        neg_log_post,
-        E0_flat,
-        method='l-bfgs-experimental-do-not-rely-on-this',
-        options={'maxiter': 2000, 'gtol': float(map_tol)},
+    # ---- run L-BFGS via optax ----
+    solver = optax.lbfgs(
+        memory_size=20,
+        scale_init_precond=True,
     )
+    value_and_grad_fn = optax.value_and_grad_from_state(neg_log_post)
 
-    if showOpt and not bool(result.success):
-        print(f'  WARNING — JAX L-BFGS did not converge: {result.status}')
+    opt_state = solver.init(E0_flat)
+    E_current = E0_flat
 
-    eMode = np.array(result.x, dtype=np.float64)
+    @jax.jit
+    def step(E, state):
+        value, grad = value_and_grad_fn(E, state=state)
+        updates, new_state = solver.update(
+            grad, state, E, value=value, grad=grad,
+            value_fn=neg_log_post,
+        )
+        new_E = optax.apply_updates(E, updates)
+        return new_E, new_state, value, grad
+
+    for _ in range(2000):
+        E_current, opt_state, val, grad = step(E_current, opt_state)
+        grad_norm = float(jnp.max(jnp.abs(grad)))
+        if grad_norm < float(map_tol):
+            break
+
+    if showOpt:
+        print(f'  JAX L-BFGS: final grad norm = {grad_norm:.2e}')
+
+    eMode = np.array(E_current, dtype=np.float64)
 
     # ---- Hessian + Laplace evidence (numpy/scipy, cheap one-time cost) ----
     pT, lT = getPosteriorTerms(eMode, dat, hyper, log_lik_fns, method=None)
