@@ -5,6 +5,7 @@ dist/
 build/
 .eggs/
 *.npy
+!data/*.npy
 fits/
 *.ipynb_checkpoints/
 .DS_Store
