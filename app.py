@@ -522,6 +522,16 @@ Expects `inputs['c']` (signed contrast) in your data.
         hess_calc = st.selectbox('Credible intervals', ['weights', 'None', 'hyper', 'All'],
                                  index=0, key='fit_hess')
         hess_calc = None if hess_calc == 'None' else hess_calc
+        precision = st.radio(
+            'Precision',
+            ['float32 (faster, GPU)', 'float64 (slower, precise)'],
+            index=0,
+            horizontal=True,
+            key='fit_precision',
+            help='float32 enables GPU acceleration (e.g. Apple Metal). '
+                 'float64 is more numerically precise but slower.',
+        )
+        precision = 'float32' if precision.startswith('float32') else 'float64'
 
     st.divider()
 
@@ -617,6 +627,7 @@ Expects `inputs['c']` (signed contrast) in your data.
                     n_trials=n_trials_opt,
                     hess_calc=hess_calc,
                     map_tol=float(map_tol),
+                    precision=precision,
                     subject_name=subject_name,
                     save=True,
                     verbose=True,

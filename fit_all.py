@@ -45,7 +45,7 @@ def _git_push(mouse, out_path):
         print(f'  WARNING: git push failed: {e}')
 
 
-def fit_mouse(mouse, verbose=True):
+def fit_mouse(mouse, verbose=True, precision='float32'):
     data_path = os.path.join(_DATA_DIR, f'{mouse}_data.npy')
     out_path  = os.path.join(_OUT_DIR,  f'{mouse}_race_fit.npy')
 
@@ -62,6 +62,7 @@ def fit_mouse(mouse, verbose=True):
         hyper              = default_hyper(),
         session_boundaries = has_sessions,
         hess_calc          = 'weights',
+        precision          = precision,
         verbose            = verbose,
     )
 
@@ -77,6 +78,9 @@ def main():
                         help='Skip mice whose fit file already exists')
     parser.add_argument('--push', action='store_true',
                         help='git commit + push each fit as it completes')
+    parser.add_argument('--precision', default='float32',
+                        choices=['float32', 'float64'],
+                        help='JAX precision (default: float32 for speed)')
     parser.add_argument('--quiet', action='store_true',
                         help='Suppress per-iteration output')
     args = parser.parse_args()
@@ -86,13 +90,19 @@ def main():
     if args.mice:
         mice = args.mice
     else:
-        mice = sorted(
-            f.replace('_data.npy', '')
-            for f in os.listdir(_DATA_DIR)
-            if f.endswith('_data.npy')
-        )
+        # Sort ascending by trial count so smaller (faster) fits complete first
+        all_mice = [f.replace('_data.npy', '') for f in os.listdir(_DATA_DIR)
+                    if f.endswith('_data.npy')]
+        def _n_trials(m):
+            try:
+                raw = np.load(os.path.join(_DATA_DIR, f'{m}_data.npy'), allow_pickle=True).item()
+                r_key = 'responses' if 'responses' in raw else 'r'
+                return len(raw[r_key])
+            except Exception:
+                return 0
+        mice = sorted(all_mice, key=_n_trials)
 
-    print(f'Fitting {len(mice)} mice: {mice}')
+    print(f'Fitting {len(mice)} mice (sorted by trial count, precision={args.precision}): {mice}')
     if args.push:
         print('Auto-push enabled: each fit will be pushed to GitHub on completion.')
     print()
@@ -119,7 +129,7 @@ def main():
         t0 = time.time()
 
         try:
-            result = fit_mouse(mouse, verbose=not args.quiet)
+            result = fit_mouse(mouse, verbose=not args.quiet, precision=args.precision)
             elapsed = time.time() - t0
             log_evd = result['log_evidence']
             print(f'  Done in {elapsed/60:.1f} min — log evidence: {log_evd:.2f} → {out_path}')
@@ -149,7 +159,7 @@ def main():
     stats_path = os.path.join(_REPO_DIR, 'fit_all_stats.csv')
     with open(stats_path, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['mouse', 'n_trials', 'status', 'log_evidence', 'time_min'])
+        writer.writerow(['mouse', 'n_trials', 'status', 'log_evidence', 'time_min', 'precision'])
         for mouse, N_trials, status, log_evd, elapsed in results_summary:
             writer.writerow([
                 mouse,
@@ -157,6 +167,7 @@ def main():
                 status,
                 f'{log_evd:.4f}' if log_evd is not None else '',
                 f'{elapsed/60:.2f}' if elapsed is not None else '',
+                args.precision,
             ])
     print(f'Timing stats saved to {stats_path}')
 

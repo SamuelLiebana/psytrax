@@ -15,6 +15,10 @@ from psytrax._helper.helperFunctions import (
 
 jax.config.update("jax_enable_x64", True)
 
+# Dtype used for JAX vmap calls (likelihood / gradient / hessian).
+# Set via psytrax.fit(..., precision='float32') — never change directly.
+_JAX_DTYPE = jnp.float64
+
 
 def getMAP(dat, hyper, n_params, log_lik_fns, method=None, E0=None, showOpt=0,
            pbar=None, map_tol=1e-6):
@@ -206,11 +210,23 @@ def getPosteriorTerms(E_flat, dat, hyper_or_prior, log_lik_fns, method=None):
     priorTerms = {'logprior': logprior, 'dlogprior': dlogprior, 'ddlogprior': ddlogprior}
 
     # --- Likelihood ---
+    # Cast E and floating dat arrays to _JAX_DTYPE for the vmap call so that
+    # float32 precision (and GPU) can be used without changing scipy's optimizer.
     _, likelihood_terms_fn = log_lik_fns
     E = onp.reshape(E_flat, (K, w_N), order='C')
+    E_jax = jnp.asarray(E, dtype=_JAX_DTYPE)
 
-    logli, dlogli_matrix, HlliList = likelihood_terms_fn(E, dat)
-    dlogli = onp.asarray(dlogli_matrix).flatten()
+    def _cast(x):
+        if isinstance(x, (onp.ndarray, jnp.ndarray)) and jnp.issubdtype(
+                jnp.asarray(x).dtype, jnp.floating):
+            return jnp.asarray(x, dtype=_JAX_DTYPE)
+        return x
+    dat_jax = jax.tree_util.tree_map(_cast, dat)
+
+    logli, dlogli_matrix, HlliList = likelihood_terms_fn(E_jax, dat_jax)
+    # Cast back to float64 so scipy's trust-ncg optimizer stays numerically stable
+    dlogli = onp.asarray(dlogli_matrix, dtype=onp.float64).flatten()
+    HlliList = onp.asarray(HlliList, dtype=onp.float64)
     ddlogli = {'H': myblk_diags(HlliList), 'K': K}
 
     liTerms = {'logli': logli, 'dlogli': dlogli, 'ddlogli': ddlogli}

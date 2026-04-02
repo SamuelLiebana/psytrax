@@ -10,6 +10,7 @@ from psytrax._likelihood import make_likelihood_fns
 from psytrax._hyper_opt import hyperOpt
 from psytrax._helper.helperFunctions import trim
 from psytrax._device import setup_device
+import psytrax._map as _map_module
 
 
 def fit(data, log_lik_trial, n_params,
@@ -21,6 +22,7 @@ def fit(data, log_lik_trial, n_params,
         n_trials=None,
         hess_calc='weights',
         device='auto',
+        precision='float64',
         map_tol=1e-6,
         subject_name=None,
         save=False,
@@ -84,9 +86,16 @@ def fit(data, log_lik_trial, n_params,
     """
 
     # ------------------------------------------------------------------
-    # Device selection
+    # Device + precision selection
     # ------------------------------------------------------------------
     setup_device(device, verbose=verbose)
+
+    if precision not in ('float32', 'float64'):
+        raise ValueError(f"precision must be 'float32' or 'float64', got '{precision}'")
+    _dtype = jnp.float32 if precision == 'float32' else jnp.float64
+    _map_module._JAX_DTYPE = _dtype
+    if verbose:
+        print(f'psytrax: JAX precision {precision}')
 
     # ------------------------------------------------------------------
     # Load / normalise data
@@ -150,7 +159,7 @@ def fit(data, log_lik_trial, n_params,
     if E0 is None:
         if verbose:
             print('Finding warm-start initialisation (constant-parameter fit)...')
-        const_params = _warm_start_constant(dat, log_lik_fns, K, N, verbose=verbose)
+        const_params = _warm_start_constant(dat, log_lik_fns, K, N, verbose=verbose, dtype=_dtype)
         E0 = np.tile(const_params[:, np.newaxis], N)
     else:
         _check_E0_validity(E0, dat, log_lik_fns, K, N)
@@ -328,22 +337,26 @@ def _validate_hyper_value(name, value, n_params):
         raise ValueError(f"hyper['{name}'] must contain only positive finite values")
 
 
-def _to_jax(dat):
+def _to_jax(dat, dtype=None):
     """Recursively convert numpy arrays in a data dict to jax arrays."""
     result = {}
     for k, v in dat.items():
         if v is None:
             result[k] = v
         elif isinstance(v, dict):
-            result[k] = _to_jax(v)
+            result[k] = _to_jax(v, dtype=dtype)
         elif isinstance(v, np.ndarray):
-            result[k] = jnp.asarray(v)
+            if dtype is not None and np.issubdtype(v.dtype, np.floating):
+                result[k] = jnp.asarray(v, dtype=dtype)
+            else:
+                result[k] = jnp.asarray(v)
         else:
             result[k] = v
     return result
 
 
-def _warm_start_constant(dat, log_lik_fns, K, N, verbose=False):
+def _warm_start_constant(dat, log_lik_fns, K, N, verbose=False,
+                         dtype=None):
     """Find constant MAP parameters by maximising total log-likelihood.
 
     Optimises a single (K,) parameter vector shared across all N trials,
@@ -362,8 +375,10 @@ def _warm_start_constant(dat, log_lik_fns, K, N, verbose=False):
     """
     from scipy.optimize import minimize as _minimize
 
+    if dtype is None:
+        dtype = _map_module._JAX_DTYPE
     log_lik_fn = log_lik_fns[0]
-    dat_jax = _to_jax(dat)
+    dat_jax = _to_jax(dat, dtype=dtype)
 
     # Define the objective once so JAX compiles it only on the first call and
     # reuses the cached compiled version for every subsequent iteration.
@@ -375,7 +390,7 @@ def _warm_start_constant(dat, log_lik_fns, K, N, verbose=False):
     _ll_and_grad = jax.jit(jax.value_and_grad(_ll_of_params))
 
     def neg_ll_and_grad(params_flat):
-        params = jnp.array(params_flat, dtype=jnp.float64)
+        params = jnp.array(params_flat, dtype=dtype)
         val, grad = _ll_and_grad(params)
         val_f = float(-val)
         grad_f = np.array(-grad, dtype=np.float64)
