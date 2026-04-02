@@ -103,13 +103,13 @@ def main():
 
         if args.skip_existing and os.path.exists(out_path):
             print(f'[{i+1}/{len(mice)}] {mouse} — skipping (fit already exists)')
-            results_summary.append((mouse, 'skipped', None, None))
+            results_summary.append((mouse, None, 'skipped', None, None))
             continue
 
         data_path = os.path.join(_DATA_DIR, f'{mouse}_data.npy')
         if not os.path.exists(data_path):
             print(f'[{i+1}/{len(mice)}] {mouse} — WARNING: data file not found, skipping')
-            results_summary.append((mouse, 'missing data', None, None))
+            results_summary.append((mouse, None, 'missing data', None, None))
             continue
 
         raw = np.load(data_path, allow_pickle=True).item()
@@ -123,25 +123,42 @@ def main():
             elapsed = time.time() - t0
             log_evd = result['log_evidence']
             print(f'  Done in {elapsed/60:.1f} min — log evidence: {log_evd:.2f} → {out_path}')
-            results_summary.append((mouse, 'ok', log_evd, elapsed))
+            results_summary.append((mouse, N, 'ok', log_evd, elapsed))
             if args.push:
                 _git_push(mouse, out_path)
         except Exception as e:
             print(f'  ERROR: {e}')
-            results_summary.append((mouse, f'error: {e}', None, None))
+            results_summary.append((mouse, N, f'error: {e}', None, None))
 
     # Final summary
     print('\n' + '='*60)
-    print(f'{"Mouse":<12} {"Status":<12} {"Log evd":>10} {"Time (min)":>12}')
+    print(f'{"Mouse":<12} {"N trials":>10} {"Status":<12} {"Log evd":>10} {"Time (min)":>12}')
     print('-'*60)
-    for mouse, status, log_evd, elapsed in results_summary:
-        evd_str  = f'{log_evd:.1f}'  if log_evd  is not None else '—'
-        time_str = f'{elapsed/60:.1f}' if elapsed is not None else '—'
-        print(f'{mouse:<12} {status:<12} {evd_str:>10} {time_str:>12}')
+    for mouse, N_trials, status, log_evd, elapsed in results_summary:
+        n_str    = str(N_trials) if N_trials is not None else '—'
+        evd_str  = f'{log_evd:.1f}'    if log_evd  is not None else '—'
+        time_str = f'{elapsed/60:.1f}' if elapsed  is not None else '—'
+        print(f'{mouse:<12} {n_str:>10} {status:<12} {evd_str:>10} {time_str:>12}')
     print('='*60)
 
-    n_ok = sum(1 for _, s, _, _ in results_summary if s == 'ok')
+    n_ok = sum(1 for _, _, s, _, _ in results_summary if s == 'ok')
     print(f'\nCompleted {n_ok}/{len(mice)} fits successfully.')
+
+    # Save timing stats to CSV
+    import csv
+    stats_path = os.path.join(_REPO_DIR, 'fit_all_stats.csv')
+    with open(stats_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['mouse', 'n_trials', 'status', 'log_evidence', 'time_min'])
+        for mouse, N_trials, status, log_evd, elapsed in results_summary:
+            writer.writerow([
+                mouse,
+                N_trials if N_trials is not None else '',
+                status,
+                f'{log_evd:.4f}' if log_evd is not None else '',
+                f'{elapsed/60:.2f}' if elapsed is not None else '',
+            ])
+    print(f'Timing stats saved to {stats_path}')
 
 
 if __name__ == '__main__':
