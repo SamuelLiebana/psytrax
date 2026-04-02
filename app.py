@@ -283,8 +283,34 @@ elif page == 'Fit Model':
     st.divider()
 
     # --- Data upload ---
-    st.subheader('1. Upload data')
-    st.markdown("""
+    st.subheader('1. Load data')
+
+    data_source = st.radio(
+        'Data source',
+        ['Example data (26 mice)', 'Upload my own file'],
+        horizontal=True,
+        key='fit_data_source',
+    )
+
+    import pandas as pd
+
+    if data_source == 'Example data (26 mice)':
+        _data_dir = os.path.join(os.path.dirname(__file__), 'data')
+        _available = sorted(
+            f.replace('_data.npy', '')
+            for f in os.listdir(_data_dir)
+            if f.endswith('_data.npy')
+        ) if os.path.isdir(_data_dir) else []
+
+        if not _available:
+            st.error('No example data found in `data/`. Run `extract_data.py` first.')
+            st.stop()
+
+        animal = st.selectbox('Select animal', _available, key='fit_animal')
+        raw = np.load(os.path.join(_data_dir, f'{animal}_data.npy'), allow_pickle=True).item()
+
+    else:
+        st.markdown("""
 Upload a **`.npy`** file (pre-built data dict) or a **`.csv`** file and map its
 columns to the required fields.
 
@@ -296,14 +322,12 @@ columns to the required fields.
 | `session_id` | No | Column whose value identifies the session — used to compute session lengths |
 """)
 
-    data_file = st.file_uploader('Data file (.npy or .csv)', type=['npy', 'csv'], key='fit_data')
-    if data_file is None:
-        st.info('Upload a `.npy` or `.csv` file to continue.')
-        st.stop()
+        data_file = st.file_uploader('Data file (.npy or .csv)', type=['npy', 'csv'], key='fit_data')
+        if data_file is None:
+            st.info('Upload a `.npy` or `.csv` file to continue.')
+            st.stop()
 
-    import pandas as pd
-
-    if data_file.name.endswith('.csv'):
+    if data_source == 'Upload my own file' and data_file.name.endswith('.csv'):
         df = pd.read_csv(data_file)
         st.dataframe(df.head(5), use_container_width=True)
         cols = ['— none —'] + list(df.columns)
@@ -379,8 +403,8 @@ columns to the required fields.
                 [sum(1 for _ in g) for _, g in _groupby(sess_vals)]
             )
 
-    else:
-        raw = np.load(data_file, allow_pickle=True).item()
+    elif data_source == 'Upload my own file':
+        raw = np.load(data_file, allow_pickle=True).item()  # .npy upload
 
     # Summary preview
     _r_key  = 'responses' if 'responses' in raw else ('r' if 'r' in raw else None)
