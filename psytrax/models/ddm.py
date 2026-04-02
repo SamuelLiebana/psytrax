@@ -81,7 +81,7 @@ def log_lik_trial(params, dat_trial):
     return lax.cond(
         valid,
         lambda _: _log_lik_valid(params, dat_trial),
-        lambda _: jnp.array(_INVALID_LOG_LIK),
+        lambda _: jnp.array(_INVALID_LOG_LIK, dtype=params.dtype),
         operand=None,
     )
 

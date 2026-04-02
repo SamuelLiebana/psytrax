@@ -59,7 +59,7 @@ def log_lik_trial(params, dat_trial):
         (T > 0.0)
     )
     return lax.cond(valid, lambda _: _log_lik_trial_valid(params, dat_trial),
-                    lambda _: jnp.array(_INVALID_LOG_LIK), operand=None)
+                    lambda _: jnp.array(_INVALID_LOG_LIK, dtype=params.dtype), operand=None)
 
 
 def _log_lik_trial_valid(params, dat_trial):
