@@ -22,7 +22,8 @@ def fit(data, log_lik_trial, n_params,
         n_trials=None,
         hess_calc='weights',
         device='auto',
-        precision='float64',
+        precision='float32',
+        optimizer='jax',
         map_tol=1e-6,
         subject_name=None,
         save=False,
@@ -96,6 +97,16 @@ def fit(data, log_lik_trial, n_params,
     _map_module._JAX_DTYPE = _dtype
     if verbose:
         print(f'psytrax: JAX precision {precision}')
+
+    if optimizer not in ('jax', 'scipy'):
+        raise ValueError(f"optimizer must be 'jax' or 'scipy', got '{optimizer}'")
+    if optimizer == 'jax':
+        from psytrax._jax_map import getMAP_jax
+        _map_fn = getMAP_jax
+    else:
+        _map_fn = None   # hyperOpt defaults to getMAP (scipy trust-ncg)
+    if verbose:
+        print(f'psytrax: optimizer {optimizer}')
 
     # ------------------------------------------------------------------
     # Load / normalise data
@@ -180,6 +191,7 @@ def fit(data, log_lik_trial, n_params,
         hess_calc=hess_calc,
         show_progress=verbose,
         map_tol=map_tol,
+        map_fn=_map_fn,
     )
     duration = datetime.now() - start
 

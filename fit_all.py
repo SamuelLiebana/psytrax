@@ -45,7 +45,7 @@ def _git_push(mouse, out_path):
         print(f'  WARNING: git push failed: {e}')
 
 
-def fit_mouse(mouse, verbose=True, precision='float32'):
+def fit_mouse(mouse, verbose=True, precision='float32', optimizer='jax'):
     data_path = os.path.join(_DATA_DIR, f'{mouse}_data.npy')
     out_path  = os.path.join(_OUT_DIR,  f'{mouse}_race_fit.npy')
 
@@ -63,6 +63,7 @@ def fit_mouse(mouse, verbose=True, precision='float32'):
         session_boundaries = has_sessions,
         hess_calc          = 'weights',
         precision          = precision,
+        optimizer          = optimizer,
         verbose            = verbose,
     )
 
@@ -81,6 +82,9 @@ def main():
     parser.add_argument('--precision', default='float32',
                         choices=['float32', 'float64'],
                         help='JAX precision (default: float32 for speed)')
+    parser.add_argument('--optimizer', default='jax',
+                        choices=['jax', 'scipy'],
+                        help='Inner MAP optimizer (default: jax L-BFGS)')
     parser.add_argument('--quiet', action='store_true',
                         help='Suppress per-iteration output')
     args = parser.parse_args()
@@ -129,7 +133,8 @@ def main():
         t0 = time.time()
 
         try:
-            result = fit_mouse(mouse, verbose=not args.quiet, precision=args.precision)
+            result = fit_mouse(mouse, verbose=not args.quiet,
+                               precision=args.precision, optimizer=args.optimizer)
             elapsed = time.time() - t0
             log_evd = result['log_evidence']
             print(f'  Done in {elapsed/60:.1f} min — log evidence: {log_evd:.2f} → {out_path}')

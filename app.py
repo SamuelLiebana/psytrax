@@ -532,6 +532,17 @@ Expects `inputs['c']` (signed contrast) in your data.
                  'float64 is more numerically precise but slower.',
         )
         precision = 'float32' if precision.startswith('float32') else 'float64'
+        optimizer = st.radio(
+            'Optimizer',
+            ['JAX L-BFGS (GPU-native)', 'scipy trust-NCG (CPU only)'],
+            index=0,
+            horizontal=True,
+            key='fit_optimizer',
+            help='JAX L-BFGS runs the entire inner loop on GPU. '
+                 'scipy trust-NCG uses the exact block-diagonal Hessian '
+                 'but is CPU-only.',
+        )
+        optimizer = 'jax' if optimizer.startswith('JAX') else 'scipy'
 
     st.divider()
 
@@ -628,6 +639,7 @@ Expects `inputs['c']` (signed contrast) in your data.
                     hess_calc=hess_calc,
                     map_tol=float(map_tol),
                     precision=precision,
+                    optimizer=optimizer,
                     subject_name=subject_name,
                     save=True,
                     verbose=True,
