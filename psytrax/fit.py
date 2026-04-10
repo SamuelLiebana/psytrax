@@ -105,6 +105,7 @@ def fit(data, log_lik_trial, n_params,
             import optax as _optax  # noqa: F401 — check availability before use
             from psytrax._jax_map import getMAP_jax
             _map_fn = getMAP_jax
+            _optimizer_used = 'jax (optax L-BFGS)'
             if verbose:
                 print('psytrax: optimizer jax (optax L-BFGS)')
         except ImportError:
@@ -114,10 +115,12 @@ def fit(data, log_lik_trial, n_params,
                 UserWarning, stacklevel=2,
             )
             _map_fn = None
+            _optimizer_used = 'scipy trust-NCG (optax unavailable)'
             if verbose:
                 print('psytrax: optimizer scipy (optax unavailable)')
     else:
         _map_fn = None   # hyperOpt defaults to getMAP (scipy trust-ncg)
+        _optimizer_used = 'scipy trust-NCG'
         if verbose:
             print('psytrax: optimizer scipy (trust-NCG)')
 
@@ -219,6 +222,7 @@ def fit(data, log_lik_trial, n_params,
         'data': dat,
         'n_trials': N,
         'duration': duration,
+        'optimizer': _optimizer_used,
     }
 
     if not save:

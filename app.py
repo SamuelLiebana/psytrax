@@ -717,6 +717,7 @@ Expects `inputs['c']` (signed contrast) in your data.
         c2.metric('Parameters', res['params'].shape[0])
         c3.metric('Log evidence', f"{res['log_evidence']:.1f}")
         c4.metric('Duration', str(res['duration']).split('.')[0])
+        st.caption(f"Optimizer used: {res.get('optimizer', 'unknown')}")
 
         with open(path, 'rb') as f:
             st.download_button(
