@@ -469,6 +469,7 @@ columns to the required fields.
 
     if model_choice == 'Race model (inverse-Gaussian)':
         from psytrax.models.race import (
+            log_lik_trial as _race_full_llt,
             make_fixed_sig_i_model as _make_fixed_sig_i_model,
             default_hyper_fixed_sig_i as _race_fixed_dhyper,
             DEFAULT_FIXED_SIG_I as _RACE_FIXED_SIG_I,
