@@ -750,8 +750,11 @@ Expects `inputs['c']` (signed contrast) in your data.
             map_text.metric('MAP iters (current cycle)', map_iter)
             status_text.markdown(f'**Current step:** {current_status}')
             log_evd_text.markdown(
-                f'Log evidence — current: **{log_evd_str}** &nbsp;|&nbsp; best: **{best_str}**'
-                + (f' &nbsp;|&nbsp; MAP loss: **{map_loss_str}**' if map_loss_str != '—' else '')
+                f'Log evidence (higher is better) — current: **{log_evd_str}** &nbsp;|&nbsp; best: **{best_str}**'
+                + (
+                    f' &nbsp;|&nbsp; Neg. log posterior (lower is better): **{map_loss_str}**'
+                    if map_loss_str != '—' else ''
+                )
             )
             if fit_log:
                 log_box.code('\n'.join(fit_log), language='text')
