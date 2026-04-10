@@ -275,18 +275,19 @@ For most users, `device='auto'` is the recommended default.
 
     st.subheader('Performance')
     st.markdown("""
-Wall-clock fitting times on Apple M4 CPU, JAX L-BFGS optimizer, float64.
-Times include warm-start, hyperparameter optimisation, and Hessian computation,
-and may vary ±30% depending on data.
+Wall-clock fitting times on Apple M4 CPU, JAX L-BFGS optimizer, float64,
+measured on bundled example mice spanning lower and higher trial counts.
+Times include warm-start, hyperparameter optimisation, and Hessian computation.
 
-| Model | 250 trials | 500 trials | 1 000 trials | 2 000 trials | 5 000 trials | 10 000 trials |
-|-------|-----------|-----------|-------------|-------------|-------------|--------------|
-| Logistic (K=2) | 1.7 s | 1.9 s | 2.3 s | 2.7 s | 5.1 s | 10.4 s |
-| DDM approx (K=3) | 4.1 s | 3.6 s | 7.2 s | 6.8 s | 12.1 s | 22.9 s |
-| Race (K=6) | 7.9 s | 12.0 s | 30.3 s | 48.1 s | 84.1 s | 25.1 s |
+| Model | **DAP044** (520) | **DAP027** (2,535) | **DAP009** (5,289) | **DAP011** (5,681) | **DAP031** (7,836) | **DAP007** (11,411) |
+|---|---|---|---|---|---|---|
+| Logistic (K=2) | 2.1s | 10.8s | 10.3s | 23.0s | 19.1s | 20.3s |
+| DDM approx (K=3) | 5.3s | 11.1s | 28.4s | 45.6s | 40.5s | 35.8s |
+| Race fixed sig_i (K=5) | 12.6s | 28.2s | 13.9s | 76.9s | 72.8s | 101.2s |
 
-Scaling is roughly linear in N. NVIDIA CUDA (float64) is expected to give a further
-**3–8× speedup** for models with K ≥ 3 via `jax.vmap` on-device computation.
+These timings use real datasets rather than synthetic sweeps, so they are not
+perfectly monotonic in trial count. NVIDIA CUDA (float64) is expected to give
+a further **3–8× speedup** for models with K ≥ 3 via `jax.vmap` on-device computation.
 """)
 
     st.subheader('Installation')
