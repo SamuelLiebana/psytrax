@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import psytrax
+from psytrax._jax_map import _raise_if_invalid_solution
 from psytrax.models.logistic import N_PARAMS, default_E0, log_lik_trial
 
 
@@ -97,3 +98,12 @@ def test_fit_rejects_session_length_mismatch():
             hess_calc=None,
             verbose=False,
         )
+
+
+def test_invalid_fit_solution_raises_clear_error():
+    with pytest.raises(RuntimeError, match="invalid parameter region"):
+        _raise_if_invalid_solution(-1e12, 100)
+
+
+def test_plausible_fit_solution_passes_validation():
+    _raise_if_invalid_solution(-50.0, 100)

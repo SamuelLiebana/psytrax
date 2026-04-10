@@ -30,6 +30,8 @@ import jax.numpy as jnp
 
 jax.config.update("jax_enable_x64", True)
 
+_INVALID_LL_THRESHOLD_PER_TRIAL = -100.0
+
 
 # ---------------------------------------------------------------------------
 # JAX-traceable Gaussian random-walk log-prior
@@ -316,6 +318,9 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
         if showOpt:
             print(f'  WARNING: L-BFGS result has sentinel values (ll={total_ll:.2e}), retrying...')
         z_current, grad_norm = _run_lbfgs(z0_flat, map_tol * 1e-2, max_iter=5000)
+        total_ll = float(-neg_log_post_exact(z_current))
+
+    _raise_if_invalid_solution(total_ll, N)
 
     if showOpt:
         print(f'  JAX L-BFGS: final grad norm = {grad_norm:.2e}')
@@ -335,6 +340,29 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
     center       = -pT['ddlogprior'] - lT['ddlogli']['H']
     logterm_post = 0.5 * sparse_logdet(center)
     logEvd       = float(lT['logli']) + float(pT['logprior']) - logterm_post
+    _raise_if_invalid_solution(float(lT['logli']) + float(pT['logprior']), N)
+    if not np.isfinite(logEvd):
+        raise RuntimeError(
+            "psytrax.fit produced a non-finite log-evidence. "
+            "This usually indicates numerical instability in the MAP/Hessian step."
+        )
 
     llstruct = {'lT': lT, 'pT': pT, 'eMode': eMode}
     return hess, logEvd, llstruct
+
+
+def _raise_if_invalid_solution(total_ll, n_trials):
+    """Raise when optimization lands in a model-sentinel region."""
+    if np.isfinite(total_ll) and total_ll >= n_trials * _INVALID_LL_THRESHOLD_PER_TRIAL:
+        return
+
+    n_sentinel_est = "unknown"
+    if np.isfinite(total_ll):
+        n_sentinel_est = int(min(n_trials, max(1, round(-total_ll / 1e12))))
+    raise RuntimeError(
+        "psytrax.fit converged to an invalid parameter region and produced an implausibly "
+        f"low objective ({total_ll:.3e}). This usually means sentinel log-likelihood values "
+        f"are still dominating the fit (estimated invalid trials: {n_sentinel_est}). "
+        "Try the automatic warm-start (E0=None), a better model-specific E0, or looser "
+        "initial hyperparameters."
+    )
