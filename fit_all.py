@@ -25,7 +25,10 @@ import numpy as np
 
 import psytrax
 from psytrax.models.race import (
-    log_lik_trial, N_PARAMS, PARAM_NAMES, default_hyper,
+    DEFAULT_FIXED_SIG_I,
+    default_E0_fixed_sig_i,
+    default_hyper_fixed_sig_i,
+    make_fixed_sig_i_model,
 )
 
 _REPO_DIR = os.path.dirname(__file__)
@@ -45,26 +48,32 @@ def _git_push(mouse, out_path):
         print(f'  WARNING: git push failed: {e}')
 
 
-def fit_mouse(mouse, verbose=True, precision='float64'):
+def fit_mouse(mouse, verbose=True, precision='float64', device='auto',
+              fixed_sig_i=DEFAULT_FIXED_SIG_I):
     data_path = os.path.join(_DATA_DIR, f'{mouse}_data.npy')
     out_path  = os.path.join(_OUT_DIR,  f'{mouse}_race_fit.npy')
 
     raw = np.load(data_path, allow_pickle=True).item()
+    n_trials = len(raw['responses'] if 'responses' in raw else raw['r'])
 
     # session_lengths may have been dropped for mice with NaN RTs (e.g. DAP044)
     has_sessions = 'session_lengths' in raw or 'dayLength' in raw
+    log_lik_trial, n_params, param_names, _, _ = make_fixed_sig_i_model(fixed_sig_i)
 
     result = psytrax.fit(
         data               = raw,
         log_lik_trial      = log_lik_trial,
-        n_params           = N_PARAMS,
-        param_names        = PARAM_NAMES,
-        hyper              = default_hyper(),
+        n_params           = n_params,
+        param_names        = param_names,
+        hyper              = default_hyper_fixed_sig_i(),
+        E0                 = default_E0_fixed_sig_i(n_trials),
         session_boundaries = has_sessions,
         hess_calc          = 'weights',
+        device             = device,
         precision          = precision,
         verbose            = verbose,
     )
+    result['fixed_params'] = {'sig_i': float(fixed_sig_i)}
 
     np.save(out_path, result)
     return result
@@ -78,10 +87,13 @@ def main():
                         help='Skip mice whose fit file already exists')
     parser.add_argument('--push', action='store_true',
                         help='git commit + push each fit as it completes')
+    parser.add_argument('--device', default='auto',
+                        choices=['auto', 'cpu', 'gpu', 'tpu'],
+                        help='Execution device policy (default: auto)')
     parser.add_argument('--precision', default='float64',
                         choices=['float32', 'float64'],
-                        help='JAX precision (default: float32 for speed)')
-parser.add_argument('--quiet', action='store_true',
+                        help='Requested JAX precision (default: float64)')
+    parser.add_argument('--quiet', action='store_true',
                         help='Suppress per-iteration output')
     args = parser.parse_args()
 
@@ -102,7 +114,11 @@ parser.add_argument('--quiet', action='store_true',
                 return 0
         mice = sorted(all_mice, key=_n_trials)
 
-    print(f'Fitting {len(mice)} mice (sorted by trial count, precision={args.precision}): {mice}')
+    print(
+        f'Fitting {len(mice)} mice (sorted by trial count, '
+        f'device={args.device}, precision={args.precision}, '
+        f'fixed sig_i={DEFAULT_FIXED_SIG_I:.4f}): {mice}'
+    )
     if args.push:
         print('Auto-push enabled: each fit will be pushed to GitHub on completion.')
     print()
@@ -130,10 +146,15 @@ parser.add_argument('--quiet', action='store_true',
 
         try:
             result = fit_mouse(mouse, verbose=not args.quiet,
-                               precision=args.precision)
+                               precision=args.precision,
+                               device=args.device)
             elapsed = time.time() - t0
             log_evd = result['log_evidence']
-            print(f'  Done in {elapsed/60:.1f} min — log evidence: {log_evd:.2f} → {out_path}')
+            execution = (result.get('execution') or {}).get('description', 'unknown execution')
+            print(
+                f'  Done in {elapsed/60:.1f} min — log evidence: {log_evd:.2f} '
+                f'[{execution}] → {out_path}'
+            )
             results_summary.append((mouse, N, 'ok', log_evd, elapsed))
             if args.push:
                 _git_push(mouse, out_path)

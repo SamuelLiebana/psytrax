@@ -597,7 +597,9 @@ def _is_retryable_fit_error(exc):
         isinstance(exc, RuntimeError) and (
             "invalid parameter region" in msg or
             "non-finite log-evidence" in msg or
-            "sentinel" in msg
+            "sentinel" in msg or
+            "singular" in msg or
+            "hessian" in msg
         )
     )
 

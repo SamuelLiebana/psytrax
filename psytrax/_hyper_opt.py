@@ -80,7 +80,9 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             msg = str(exc).lower()
             if ("invalid parameter region" not in msg and
                     "non-finite log-evidence" not in msg and
-                    "sentinel" not in msg):
+                    "sentinel" not in msg and
+                    "singular" not in msg and
+                    "hessian" not in msg):
                 raise
             if best_logEvd is None:
                 raise

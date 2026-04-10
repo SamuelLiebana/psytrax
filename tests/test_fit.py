@@ -2,9 +2,11 @@ from importlib.metadata import metadata
 
 import numpy as np
 import pytest
+from scipy.sparse import csc_matrix
 
 import psytrax
 import psytrax._execution as execution_mod
+from psytrax._helper.helperFunctions import sparse_logdet
 from psytrax._jax_map import _raise_if_invalid_solution
 from psytrax.fit import _is_retryable_fit_error, _model_default_E0
 from psytrax.models.logistic import N_PARAMS, default_E0, log_lik_trial
@@ -114,7 +116,14 @@ def test_plausible_fit_solution_passes_validation():
 def test_retryable_fit_error_detection():
     assert _is_retryable_fit_error(RuntimeError("invalid parameter region"))
     assert _is_retryable_fit_error(RuntimeError("non-finite log-evidence"))
+    assert _is_retryable_fit_error(RuntimeError("Posterior Hessian remained exactly singular"))
     assert not _is_retryable_fit_error(ValueError("responses must be finite"))
+
+
+def test_sparse_logdet_regularizes_singular_matrix():
+    mat = csc_matrix(np.array([[1.0, 0.0], [0.0, 0.0]]))
+    value = sparse_logdet(mat)
+    assert np.isfinite(value)
 
 
 def test_model_default_e0_is_discovered_for_builtin_model():

@@ -1,5 +1,5 @@
 from scipy.sparse.linalg import splu
-from scipy.sparse import isspmatrix_csc, diags
+from scipy.sparse import isspmatrix_csc, diags, eye
 import numpy as np
 
 
@@ -19,15 +19,22 @@ def sparse_logdet(A):
     """Log determinant of a sparse CSC matrix via LU decomposition."""
     if not isspmatrix_csc(A):
         raise Exception('sparse_logdet: matrix must be in sparse CSC format')
-    try:
-        aux = splu(A)
-    except RuntimeError:
-        # Matrix is (near-)singular — add a tiny ridge and retry.
-        # This can happen during hyperparameter line searches that visit
-        # degenerate sigma values; the ridge is negligible for well-conditioned A.
-        from scipy.sparse import eye
-        A = A + 1e-8 * eye(A.shape[0], format='csc')
-        aux = splu(A)
+
+    # Hyperparameter searches can briefly visit nearly singular curvature
+    # matrices. Add progressively larger diagonal jitter before giving up.
+    ridges = (0.0, 1e-10, 1e-8, 1e-6, 1e-4, 1e-2)
+    last_error = None
+    for ridge in ridges:
+        try:
+            aux = splu(A if ridge == 0.0 else A + ridge * eye(A.shape[0], format='csc'))
+            break
+        except RuntimeError as exc:
+            last_error = exc
+    else:
+        raise RuntimeError(
+            "Posterior Hessian remained exactly singular after adaptive ridge regularization."
+        ) from last_error
+
     return np.sum(
         np.log(np.abs(aux.L.diagonal())) + np.log(np.abs(aux.U.diagonal())))
 
