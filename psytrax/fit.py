@@ -102,6 +102,7 @@ def fit(data, log_lik_trial, n_params,
         raise ValueError(f"optimizer must be 'jax' or 'scipy', got '{optimizer}'")
     if optimizer == 'jax':
         try:
+            import optax as _optax  # noqa: F401 — check availability before use
             from psytrax._jax_map import getMAP_jax
             _map_fn = getMAP_jax
             if verbose:
