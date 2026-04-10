@@ -522,27 +522,8 @@ Expects `inputs['c']` (signed contrast) in your data.
         hess_calc = st.selectbox('Credible intervals', ['weights', 'None', 'hyper', 'All'],
                                  index=0, key='fit_hess')
         hess_calc = None if hess_calc == 'None' else hess_calc
-        precision = st.radio(
-            'Precision',
-            ['float32 (faster, GPU)', 'float64 (recommended)'],
-            index=1,
-            horizontal=True,
-            key='fit_precision',
-            help='float32 enables GPU acceleration (e.g. Apple Metal). '
-                 'float64 is more numerically precise but slower.',
-        )
-        precision = 'float32' if precision.startswith('float32') else 'float64'
-        optimizer = st.radio(
-            'Optimizer',
-            ['JAX L-BFGS (GPU-native)', 'scipy trust-NCG (CPU only)'],
-            index=0,
-            horizontal=True,
-            key='fit_optimizer',
-            help='JAX L-BFGS runs the entire inner loop on GPU. '
-                 'scipy trust-NCG uses the exact block-diagonal Hessian '
-                 'but is CPU-only.',
-        )
-        optimizer = 'jax' if optimizer.startswith('JAX') else 'scipy'
+        precision = 'float64'
+        optimizer = 'jax'
 
     st.divider()
 
