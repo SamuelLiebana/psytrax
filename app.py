@@ -17,7 +17,10 @@ from scipy.stats import norm as _sp_norm
 # Visualisation helpers
 # ---------------------------------------------------------------------------
 
-_trapezoid = getattr(np, "trapezoid", np.trapz)
+if hasattr(np, "trapezoid"):
+    _trapezoid = np.trapezoid
+else:
+    _trapezoid = np.trapz
 
 def _style_ax(ax, xlabel=None, ylabel=None, title=None):
     ax.set_facecolor('#0e1117')
