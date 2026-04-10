@@ -17,6 +17,8 @@ from scipy.stats import norm as _sp_norm
 # Visualisation helpers
 # ---------------------------------------------------------------------------
 
+_trapezoid = getattr(np, "trapezoid", np.trapz)
+
 def _style_ax(ax, xlabel=None, ylabel=None, title=None):
     ax.set_facecolor('#0e1117')
     ax.tick_params(colors='white')
@@ -98,9 +100,9 @@ def _race_curves(params_window, param_names, c_grid, t_max=30.0, n_t=2000):
         F2 = _ig_cdf(z, d2, v2, t_grid)
         f1 = _ig_pdf(z, d1, v1, t_grid)
         # P(right) = ∫ f_R(t)·(1−F_L(t)) dt
-        p_rights[i] = np.clip(np.trapz(f1 * (1 - F2), t_grid), 0.0, 1.0)
+        p_rights[i] = np.clip(_trapezoid(f1 * (1 - F2), t_grid), 0.0, 1.0)
         # E[min(T_R,T_L)] = ∫ (1−F_R)(1−F_L) dt
-        mean_rts[i] = max(np.trapz((1 - F1) * (1 - F2), t_grid), 0.0)
+        mean_rts[i] = max(_trapezoid((1 - F1) * (1 - F2), t_grid), 0.0)
 
     return p_rights, mean_rts
 
