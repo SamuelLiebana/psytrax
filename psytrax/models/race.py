@@ -27,6 +27,7 @@ N_PARAMS = 6
 PARAM_NAMES = ['wr', 'wl', 'br', 'bl', 'z', 'sig_i']
 N_DYNAMIC_PARAMS = 5
 DYNAMIC_PARAM_NAMES = ['wr', 'wl', 'br', 'bl', 'z']
+DEFAULT_FIXED_SIG_I = 0.1
 
 # Fixed observation noise (not fitted)
 _SIG_O = 1.0
@@ -115,7 +116,7 @@ def default_E0(N, n_params=N_PARAMS):
         np.linspace(0.4,  0.7,  N),  # br
         np.linspace(0.4,  0.7,  N),  # bl
         np.ones(N),                   # z
-        np.full(N, 0.1),              # sig_i
+        np.full(N, DEFAULT_FIXED_SIG_I),  # sig_i
     ])
     return E0
 

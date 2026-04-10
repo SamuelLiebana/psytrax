@@ -471,6 +471,7 @@ columns to the required fields.
         from psytrax.models.race import (
             make_fixed_sig_i_model as _make_fixed_sig_i_model,
             default_hyper_fixed_sig_i as _race_fixed_dhyper,
+            DEFAULT_FIXED_SIG_I as _RACE_FIXED_SIG_I,
         )
         _race_fixed_sig_i = True
         _llt = _race_full_llt
@@ -481,7 +482,7 @@ columns to the required fields.
 
         st.markdown("""
 **Race model** — two independent inverse-Gaussian accumulators racing to threshold.
-`sig_i` is held fixed over learning at a user-chosen scalar value.
+`sig_i` is held fixed over learning at a built-in nuisance value.
 The learning fit therefore uses 5 trial-varying parameters: `wr, wl, br, bl, z`.
 Expects `inputs['c']` and `times`. Subtract non-decision time from RTs before uploading.
 """)
@@ -570,17 +571,7 @@ Expects `inputs['c']` (signed contrast) in your data.
                                  index=0, key='fit_hess')
         hess_calc = None if hess_calc == 'None' else hess_calc
         precision = 'float64'
-        if model_choice == 'Race model (inverse-Gaussian)' and _race_fixed_sig_i:
-            fixed_sig_i = st.number_input(
-                'Fixed sig_i',
-                min_value=0.0,
-                value=0.1,
-                step=0.01,
-                key='fit_fixed_sig_i',
-                help='sig_i is treated as a single nuisance parameter held constant across learning.',
-            )
-        else:
-            fixed_sig_i = None
+        fixed_sig_i = _RACE_FIXED_SIG_I if model_choice == 'Race model (inverse-Gaussian)' and _race_fixed_sig_i else None
 
     st.divider()
 
