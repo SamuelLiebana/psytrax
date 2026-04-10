@@ -101,12 +101,24 @@ def fit(data, log_lik_trial, n_params,
     if optimizer not in ('jax', 'scipy'):
         raise ValueError(f"optimizer must be 'jax' or 'scipy', got '{optimizer}'")
     if optimizer == 'jax':
-        from psytrax._jax_map import getMAP_jax
-        _map_fn = getMAP_jax
+        try:
+            from psytrax._jax_map import getMAP_jax
+            _map_fn = getMAP_jax
+            if verbose:
+                print('psytrax: optimizer jax (optax L-BFGS)')
+        except ImportError:
+            warnings.warn(
+                "optax not installed — falling back to scipy trust-NCG optimizer. "
+                "Install with: pip install optax",
+                UserWarning, stacklevel=2,
+            )
+            _map_fn = None
+            if verbose:
+                print('psytrax: optimizer scipy (optax unavailable)')
     else:
         _map_fn = None   # hyperOpt defaults to getMAP (scipy trust-ncg)
-    if verbose:
-        print(f'psytrax: optimizer {optimizer}')
+        if verbose:
+            print('psytrax: optimizer scipy (trust-NCG)')
 
     # ------------------------------------------------------------------
     # Load / normalise data
