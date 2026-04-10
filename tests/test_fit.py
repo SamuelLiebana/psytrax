@@ -9,7 +9,7 @@ from psytrax.models.logistic import N_PARAMS, default_E0, log_lik_trial
 
 def test_package_metadata_declares_runtime_dependencies():
     requires = metadata("psytrax").get_all("Requires-Dist") or []
-    for dep in ("jax", "numpy", "scipy", "tqdm"):
+    for dep in ("jax", "optax", "numpy", "scipy", "tqdm"):
         assert any(req.lower().startswith(dep) for req in requires)
 
 

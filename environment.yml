@@ -18,6 +18,7 @@ dependencies:
     #   NVIDIA CUDA 12: jax[cuda12]
     #   NVIDIA CUDA 11: jax[cuda11_pip]
     - jax[cpu]
+    - optax
     - numpy_indexed
     - tqdm
     - streamlit

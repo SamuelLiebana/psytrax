@@ -275,7 +275,14 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
     z0_flat = _whiten(E0_flat, K, N, L_diag, L_sub)
 
     # ---- run L-BFGS via optax ----
-    import optax
+    try:
+        import optax
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "psytrax.fit requires the optional optimizer dependency 'optax'. "
+            "Install psytrax with `pip install -r requirements.txt` for the app, "
+            "or `pip install -e .[dev]` after updating package metadata."
+        ) from exc
 
     def _run_lbfgs(z0, tol, max_iter=2000):
         solver = optax.lbfgs(memory_size=20, scale_init_precond=True)
