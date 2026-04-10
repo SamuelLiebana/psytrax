@@ -124,6 +124,26 @@ def _race_model_info(param_names, result=None):
     is_race = param_set == full or (param_set == dynamic and 'sig_i' in fixed_params)
     return is_race, fixed_params
 
+
+def _shared_ylim(series_list, pad_frac=0.05, min_pad=0.05):
+    """Return a shared y-axis range covering all finite values in the series list."""
+    vals = []
+    for series in series_list:
+        arr = np.asarray(series, dtype=float).ravel()
+        arr = arr[np.isfinite(arr)]
+        if arr.size:
+            vals.append(arr)
+    if not vals:
+        return None
+    all_vals = np.concatenate(vals)
+    ymin = float(np.min(all_vals))
+    ymax = float(np.max(all_vals))
+    span = ymax - ymin
+    pad = max(min_pad, span * pad_frac)
+    if span == 0:
+        pad = max(min_pad, abs(ymin) * pad_frac, 0.01)
+    return ymin - pad, ymax + pad
+
 st.set_page_config(page_title='psytrax', layout='wide')
 
 # ---------------------------------------------------------------------------
@@ -975,8 +995,10 @@ elif page == 'Visualise Results':
             with st.spinner('Computing chronometric curves…'):
                 fig_cevo, axes_cevo = plt.subplots(2, 2, figsize=(11, 8))
                 fig_cevo.patch.set_facecolor('#0e1117')
+                panel_data = []
+                y_series = []
 
-                for wi, ax in enumerate(axes_cevo.flat):
+                for wi in range(len(axes_cevo.flat)):
                     t0, t1 = int(edges[wi]), int(edges[wi + 1])
                     mask   = np.zeros(N, dtype=bool)
                     mask[t0:t1] = True
@@ -986,16 +1008,22 @@ elif page == 'Visualise Results':
                     c_uniq_win  = np.unique(c_win)
                     rt_win_mean = np.array([rt_win[c_win == cv].mean() for cv in c_uniq_win])
                     n_win       = np.array([np.sum(c_win == cv) for cv in c_uniq_win])
+                    _, rt_m = _race_curves(params[:, t0:t1], param_names, c_grid,
+                                           fixed_params=fixed_params)
+                    panel_data.append((t0, t1, c_uniq_win, rt_win_mean, n_win, rt_m))
+                    y_series.extend([rt_win_mean, rt_m])
 
+                shared_ylim = _shared_ylim(y_series)
+
+                for ax, (t0, t1, c_uniq_win, rt_win_mean, n_win, rt_m) in zip(axes_cevo.flat, panel_data):
                     _style_ax(ax, xlabel='Signed contrast', ylabel='Mean RT (s)',
                               title=f'Trials {t0 + 1}–{t1}')
                     ax.scatter(c_uniq_win, rt_win_mean, s=[max(10, n / 5) for n in n_win],
                                color='white', zorder=3)
-
-                    _, rt_m = _race_curves(params[:, t0:t1], param_names, c_grid,
-                                           fixed_params=fixed_params)
                     ax.plot(c_grid, rt_m, color='#4e9af1', lw=2)
                     ax.axvline(0, color='white', lw=0.5, ls='--', alpha=0.4)
+                    if shared_ylim is not None:
+                        ax.set_ylim(*shared_ylim)
 
                 fig_cevo.suptitle('Chronometric curve evolution', color='white', fontsize=13)
                 fig_cevo.tight_layout()
@@ -1180,8 +1208,10 @@ elif page == 'Compare Models':
             with st.spinner('Computing chronometric curves…'):
                 fig_c, axes_c = plt.subplots(2, 2, figsize=(11, 8))
                 fig_c.patch.set_facecolor('#0e1117')
+                panel_data = []
+                y_series = []
 
-                for wi, ax in enumerate(axes_c.flat):
+                for wi in range(len(axes_c.flat)):
                     t0, t1 = int(edges[wi]), int(edges[wi + 1])
                     mask   = np.zeros(N_cm, dtype=bool)
                     mask[t0:t1] = True
@@ -1190,22 +1220,30 @@ elif page == 'Compare Models':
                     c_uniq_win  = np.unique(c_win)
                     rt_win_mean = np.array([rt_win[c_win == cv].mean() for cv in c_uniq_win])
                     n_win       = np.array([np.sum(c_win == cv) for cv in c_uniq_win])
-
-                    _style_ax(ax, xlabel='Signed contrast', ylabel='Mean RT (s)',
-                              title=f'Trials {t0 + 1}–{t1}')
-                    ax.scatter(c_uniq_win, rt_win_mean, s=[max(10, n / 5) for n in n_win],
-                               color='white', zorder=3, label='data')
-
+                    model_curves = []
                     for mi, (mname, res) in enumerate(results.items()):
                         pn  = res['param_names']
                         par = res['params'][:, t0:t1]
                         race_flag, fixed_params = _race_model_info(pn, result=res)
                         if race_flag:
                             _, rt_m = _race_curves(par, pn, c_grid, fixed_params=fixed_params)
-                            ax.plot(c_grid, rt_m, color=colors[mi % len(colors)],
-                                    lw=2, label=mname)
+                            model_curves.append((mname, colors[mi % len(colors)], rt_m))
+                            y_series.append(rt_m)
+                    panel_data.append((t0, t1, c_uniq_win, rt_win_mean, n_win, model_curves))
+                    y_series.append(rt_win_mean)
 
+                shared_ylim = _shared_ylim(y_series)
+
+                for ax, (t0, t1, c_uniq_win, rt_win_mean, n_win, model_curves) in zip(axes_c.flat, panel_data):
+                    _style_ax(ax, xlabel='Signed contrast', ylabel='Mean RT (s)',
+                              title=f'Trials {t0 + 1}–{t1}')
+                    ax.scatter(c_uniq_win, rt_win_mean, s=[max(10, n / 5) for n in n_win],
+                               color='white', zorder=3, label='data')
+                    for mname, color, rt_m in model_curves:
+                        ax.plot(c_grid, rt_m, color=color, lw=2, label=mname)
                     ax.axvline(0, color='white', lw=0.5, ls='--', alpha=0.4)
+                    if shared_ylim is not None:
+                        ax.set_ylim(*shared_ylim)
                     ax.legend(facecolor='#1a1a2e', edgecolor='#333333', labelcolor='white',
                               fontsize=7)
 
