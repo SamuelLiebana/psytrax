@@ -25,6 +25,7 @@ using the existing numpy/scipy code (cheap relative to the optimisation).
 """
 
 import numpy as np
+from contextlib import nullcontext
 import jax
 import jax.numpy as jnp
 
@@ -180,7 +181,8 @@ def _unwhiten(z_flat, K, N, L_diag, L_sub):
 # ---------------------------------------------------------------------------
 
 def getMAP_jax(dat, hyper, n_params, log_lik_fns,
-               E0=None, method=None, showOpt=0, pbar=None, map_tol=1e-6):
+               E0=None, method=None, showOpt=0, pbar=None, map_tol=1e-6,
+               execution_plan=None):
     """MAP estimation using JAX L-BFGS in prior-whitened space.
 
     The inner optimisation loop runs entirely in JAX (GPU-native) in a
@@ -193,6 +195,7 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
     Args / Returns: same as psytrax._map.getMAP
     """
     from psytrax._map import getPosteriorTerms, _JAX_DTYPE
+    import psytrax._map as _map_module
     from psytrax._helper.helperFunctions import sparse_logdet
 
     K = n_params
@@ -330,7 +333,24 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
     eMode = np.array(E_current, dtype=np.float64)
 
     # ---- Hessian + Laplace evidence (numpy/scipy, cheap one-time cost) ----
-    pT, lT = getPosteriorTerms(eMode, dat, hyper, log_lik_fns, method=None)
+    evidence_precision = getattr(execution_plan, "evidence_precision", "float64")
+    evidence_backend = getattr(execution_plan, "evidence_backend", "cpu")
+    evidence_dtype = jnp.float32 if evidence_precision == "float32" else jnp.float64
+    prev_dtype = _map_module._JAX_DTYPE
+    ctx = nullcontext()
+    try:
+        devs = jax.devices(evidence_backend)
+        if devs:
+            ctx = jax.default_device(devs[0])
+    except Exception:
+        pass
+
+    try:
+        _map_module._JAX_DTYPE = evidence_dtype
+        with ctx:
+            pT, lT = getPosteriorTerms(eMode, dat, hyper, log_lik_fns, method=None)
+    finally:
+        _map_module._JAX_DTYPE = prev_dtype
 
     hess = {
         'H':          lT['ddlogli']['H'],

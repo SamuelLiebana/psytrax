@@ -1,4 +1,6 @@
 import os
+import importlib
+import warnings
 import numpy as np
 from datetime import datetime
 
@@ -9,6 +11,11 @@ from psytrax._likelihood import make_likelihood_fns
 from psytrax._hyper_opt import hyperOpt
 from psytrax._helper.helperFunctions import trim
 from psytrax._device import setup_device
+from psytrax._execution import (
+    configure_execution_plan,
+    fallback_execution_plans,
+    resolve_execution_plan,
+)
 import psytrax._map as _map_module
 
 
@@ -87,16 +94,16 @@ def fit(data, log_lik_trial, n_params,
     # ------------------------------------------------------------------
     # Device + precision selection
     # ------------------------------------------------------------------
-    setup_device(device, verbose=verbose)
+    plan = resolve_execution_plan(device=device, precision=precision, verbose=verbose)
+    configure_execution_plan(plan)
 
-    if precision not in ('float32', 'float64'):
-        raise ValueError(f"precision must be 'float32' or 'float64', got '{precision}'")
-    _dtype = jnp.float32 if precision == 'float32' else jnp.float64
+    _dtype = jnp.float32 if plan.map_precision == 'float32' else jnp.float64
     _map_module._JAX_DTYPE = _dtype
+    setup_device(plan.map_backend, verbose=verbose, dtype=_dtype)
     if verbose:
-        print(f'psytrax: JAX precision {precision}')
-
-    if verbose:
+        print(f'psytrax: execution strategy {plan.description}')
+        print(f'psytrax: MAP precision {plan.map_precision}')
+        print(f'psytrax: evidence precision {plan.evidence_precision}')
         print('psytrax: optimizer JAX L-BFGS (prior-whitened)')
 
     # ------------------------------------------------------------------
@@ -158,31 +165,66 @@ def fit(data, log_lik_trial, n_params,
     # ------------------------------------------------------------------
     # Initialisation
     # ------------------------------------------------------------------
-    if E0 is None:
-        if verbose:
-            print('Finding warm-start initialisation (constant-parameter fit)...')
-        const_params = _warm_start_constant(dat, log_lik_fns, K, N, verbose=verbose, dtype=_dtype)
-        E0 = np.tile(const_params[:, np.newaxis], N)
-    else:
-        _check_E0_validity(E0, dat, log_lik_fns, K, N)
+    init_candidates = _build_initialization_candidates(
+        E0=E0,
+        dat=dat,
+        log_lik_trial=log_lik_trial,
+        log_lik_fns=log_lik_fns,
+        K=K,
+        N=N,
+        dtype=_dtype,
+        verbose=verbose,
+    )
 
     # ------------------------------------------------------------------
     # Run hyperparameter optimisation
     # ------------------------------------------------------------------
     start = datetime.now()
-    best_hyper, log_evd, eMode, hess_info = hyperOpt(
-        dat=dat,
-        hyper=hyper,
-        n_params=K,
-        log_lik_fns=log_lik_fns,
-        optList=opt_list,
-        E0=E0,
-        method=None,
-        showOpt=int(verbose),
-        hess_calc=hess_calc,
-        show_progress=verbose,
-        map_tol=map_tol,
-    )
+    best_hyper = log_evd = eMode = hess_info = None
+    last_retryable_error = None
+    plan_candidates = [plan, *fallback_execution_plans(plan)]
+
+    for plan_idx, attempt_plan in enumerate(plan_candidates):
+        attempt_dtype = jnp.float32 if attempt_plan.map_precision == 'float32' else jnp.float64
+        configure_execution_plan(attempt_plan)
+        _map_module._JAX_DTYPE = attempt_dtype
+        setup_device(attempt_plan.map_backend, verbose=verbose, dtype=attempt_dtype)
+
+        for init_name, init_E0 in init_candidates:
+            current_hyper = _clone_hyper(hyper)
+            try:
+                if verbose and (plan_idx > 0 or init_name != init_candidates[0][0]):
+                    print(
+                        "psytrax: retrying fit with "
+                        f"{attempt_plan.description} and {init_name}"
+                    )
+                best_hyper, log_evd, eMode, hess_info = hyperOpt(
+                    dat=dat,
+                    hyper=current_hyper,
+                    n_params=K,
+                    log_lik_fns=log_lik_fns,
+                    optList=opt_list,
+                    E0=init_E0,
+                    method=None,
+                    showOpt=int(verbose),
+                    hess_calc=hess_calc,
+                    show_progress=verbose,
+                    map_tol=map_tol,
+                    execution_plan=attempt_plan,
+                )
+                plan = attempt_plan
+                break
+            except Exception as exc:
+                if not _is_retryable_fit_error(exc):
+                    raise
+                last_retryable_error = exc
+                if verbose:
+                    print(f'psytrax: fit attempt failed, will retry if alternatives remain: {exc}')
+        if best_hyper is not None:
+            break
+
+    if best_hyper is None:
+        raise last_retryable_error
     duration = datetime.now() - start
 
     params = np.reshape(eMode, (K, N), order='C')
@@ -196,6 +238,7 @@ def fit(data, log_lik_trial, n_params,
         'data': dat,
         'n_trials': N,
         'duration': duration,
+        'execution': plan.as_dict(),
     }
 
     if not save:
@@ -404,7 +447,12 @@ def _warm_start_constant(dat, log_lik_fns, K, N, verbose=False,
 
     # Try two starting points: small positive (avoids z=0 sentinel region in
     # constrained models like the race model) and a unit vector.
-    starts = [np.full(K, 0.5), np.full(K, 1.0)]
+    starts = [
+        np.full(K, 0.1),
+        np.full(K, 0.5),
+        np.full(K, 1.0),
+        np.full(K, 2.0),
+    ]
     best_result = None
     for x0 in starts:
         r = _minimize(
@@ -455,3 +503,72 @@ def _check_E0_validity(E0, dat, log_lik_fns, K, N):
             UserWarning,
             stacklevel=4,
         )
+
+
+def _build_initialization_candidates(E0, dat, log_lik_trial, log_lik_fns, K, N, dtype, verbose):
+    """Return ordered E0 candidates for retries and constrained-model recovery."""
+    candidates = []
+
+    if E0 is not None:
+        arr = np.asarray(E0, dtype=float)
+        _check_E0_validity(arr, dat, log_lik_fns, K, N)
+        candidates.append(("provided E0", arr))
+
+    warm_start = None
+    if E0 is None or len(candidates) == 1:
+        if verbose:
+            print('Finding warm-start initialisation (constant-parameter fit)...')
+        const_params = _warm_start_constant(dat, log_lik_fns, K, N, verbose=verbose, dtype=dtype)
+        warm_start = np.tile(const_params[:, np.newaxis], N)
+        candidates.append(("automatic warm-start", warm_start))
+
+    model_default = _model_default_E0(log_lik_trial, N, K)
+    if model_default is not None and not any(np.array_equal(model_default, e0) for _, e0 in candidates):
+        _check_E0_validity(model_default, dat, log_lik_fns, K, N)
+        candidates.append(("model default_E0", model_default))
+
+    if warm_start is not None and model_default is not None:
+        blended = 0.5 * (warm_start + model_default)
+        if not any(np.array_equal(blended, e0) for _, e0 in candidates):
+            candidates.append(("blended warm-start", blended))
+
+    return candidates
+
+
+def _model_default_E0(log_lik_trial, N, K):
+    module_name = getattr(log_lik_trial, "__module__", None)
+    if not module_name:
+        return None
+    try:
+        module = importlib.import_module(module_name)
+    except Exception:
+        return None
+    default_E0 = getattr(module, "default_E0", None)
+    if not callable(default_E0):
+        return None
+    try:
+        candidate = np.asarray(default_E0(N), dtype=float)
+    except Exception:
+        return None
+    return candidate if candidate.shape == (K, N) else None
+
+
+def _clone_hyper(hyper):
+    clone = {}
+    for key, value in hyper.items():
+        if isinstance(value, np.ndarray):
+            clone[key] = value.copy()
+        else:
+            clone[key] = value
+    return clone
+
+
+def _is_retryable_fit_error(exc):
+    msg = str(exc).lower()
+    return (
+        isinstance(exc, RuntimeError) and (
+            "invalid parameter region" in msg or
+            "non-finite log-evidence" in msg or
+            "sentinel" in msg
+        )
+    )

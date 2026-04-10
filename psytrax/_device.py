@@ -1,24 +1,29 @@
 """JAX device selection utilities.
 
-GPU installation:
-  Apple Silicon (Metal):  pip install jax-metal
-  NVIDIA CUDA 12:         pip install jax[cuda12]
-  NVIDIA CUDA 11:         pip install jax[cuda11_pip] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+GPU installation (float64-capable backends only):
+  NVIDIA CUDA 12:  pip install jax[cuda12]
+  NVIDIA CUDA 11:  pip install jax[cuda11_pip]
 
-After installing the appropriate backend, pass device='gpu' (or 'auto') to psytrax.fit().
+Note: Apple Metal is float32-only. psytrax therefore uses a hybrid strategy
+on Apple Silicon when Metal is available: float32 MAP optimisation on Metal,
+followed by float64 Hessian / evidence computation on CPU.
+
+After installing a CUDA backend, pass device='gpu' (or 'auto') to psytrax.fit().
 """
 
 import warnings
 import jax
+import jax.numpy as jnp
 
 
-def setup_device(device='auto', verbose=True):
-    """Select a JAX compute device.
+def setup_device(device='auto', verbose=True, dtype=jnp.float64):
+    """Select a JAX compute device for the requested backend/dtype.
 
     Args:
         device : 'auto' | 'cpu' | 'gpu' | 'tpu'
             'auto' tries GPU/TPU first and falls back to CPU.
         verbose : bool, print the selected device.
+        dtype : JAX dtype that must be placeable on the device.
 
     Returns:
         The JAX device object that was selected.
@@ -28,17 +33,18 @@ def setup_device(device='auto', verbose=True):
     for backend in backends:
         try:
             devs = jax.devices(backend)
-            if devs:
-                selected = devs[0]
-                jax.config.update('jax_default_device', selected)
-                if verbose:
-                    print(f'psytrax: using device {selected}')
-                return selected
-        except RuntimeError:
+            if not devs:
+                continue
+            selected = devs[0]
+            jax.device_put(jnp.array(1.0, dtype=dtype), selected)
+            jax.config.update('jax_default_device', selected)
+            if verbose:
+                print(f'psytrax: using device {selected}')
+            return selected
+        except Exception:
             continue
 
-    # Should never reach here (cpu always exists), but just in case
-    warnings.warn(f"Could not find device '{device}', using default JAX device.")
+    warnings.warn(f"Could not find a compatible device for '{device}', using default JAX device.")
     return jax.devices()[0]
 
 

@@ -140,14 +140,14 @@ See `examples/compare_models_DAP009.py` for a full comparison on real mouse data
 
 ## GPU support
 
-psytrax requires float64 precision for stable Hessian computation and Laplace evidence. This means **Apple Metal is not supported** — Metal is float32-only. NVIDIA CUDA supports float64 and will accelerate fitting:
+psytrax requires float64 precision for stable Hessian computation and Laplace evidence. On Apple Silicon, psytrax uses a **hybrid** path when Metal is available: Metal float32 for MAP optimisation, then CPU float64 for Hessian / evidence. NVIDIA CUDA supports float64 directly and will accelerate fitting:
 
 | Platform | Command |
 |----------|---------|
 | NVIDIA CUDA 12 | `pip install jax[cuda12]` |
 | NVIDIA CUDA 11 | `pip install jax[cuda11_pip]` |
 
-Then pass `device='gpu'` (or `'auto'`, the default) to `psytrax.fit()`.
+For most users, `device='auto'` is the recommended default.
 
 ---
 

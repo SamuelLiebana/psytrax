@@ -11,7 +11,7 @@ from psytrax._helper.helperFunctions import DT_X_D, make_invSigma, sparse_logdet
 
 def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
              method=None, showOpt=0, jump=2, hess_calc='weights', show_progress=True,
-             map_tol=1e-6):
+             map_tol=1e-6, execution_plan=None):
     """Optimise hyperparameters and return MAP weights.
 
     Uses the decoupled Laplace approximation to find the hyperparameter values
@@ -68,10 +68,38 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         current_E0 = E0 if first_iter else llstruct['eMode']  # noqa: F821
         first_iter = False
 
-        Hess, logEvd, llstruct = map_fn(
-            dat, current_hyper, K, log_lik_fns,
-            E0=current_E0, method=method, showOpt=0, pbar=pbar, map_tol=map_tol,
-        )
+        try:
+            Hess, logEvd, llstruct = map_fn(
+                dat, current_hyper, K, log_lik_fns,
+                E0=current_E0, method=method, showOpt=0, pbar=pbar, map_tol=map_tol,
+                execution_plan=execution_plan,
+            )
+        except RuntimeError as exc:
+            msg = str(exc).lower()
+            if ("invalid parameter region" not in msg and
+                    "non-finite log-evidence" not in msg and
+                    "sentinel" not in msg):
+                raise
+            if best_logEvd is None:
+                raise
+            current_jump -= 1
+            for val in optList:
+                current_hyper[val] = (current_hyper[val] + best_hyper[val]) / 2
+            if showOpt:
+                print(f'\nMAP step became invalid at current hyperparameters, backing off: {exc}')
+            if not current_jump:
+                eMode = best_llstruct['eMode']
+                H = best_llstruct['lT']['ddlogli']['H']
+                ddlogprior = best_llstruct['pT']['ddlogprior']
+                LL_v = -(H + ddlogprior) @ eMode
+                opt_keywords.update({
+                    'hyper': best_hyper,
+                    'LL_terms': best_llstruct['lT']['ddlogli'],
+                    'LL_v': LL_v,
+                    'eMode': eMode,
+                })
+                break
+            continue
         if pbar is not None:
             pbar.update(1)
             pbar.set_postfix({

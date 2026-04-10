@@ -225,16 +225,17 @@ estimation and the Laplace approximation.
 
     st.subheader('GPU support')
     st.markdown("""
-psytrax requires float64 precision for stable Hessian computation and Laplace evidence.
-**Apple Metal is not supported** — Metal is float32-only.
-NVIDIA CUDA supports float64 and will accelerate fitting:
+psytrax automatically selects the fastest safe execution path for the detected
+hardware. On Apple Silicon it uses an experimental **hybrid** path:
+Metal float32 for MAP optimisation, then CPU float64 for Hessian / evidence.
+NVIDIA CUDA supports float64 directly and will accelerate fitting:
 
 | Platform | Command |
 |----------|---------|
 | NVIDIA CUDA 12 | `pip install jax[cuda12]` |
 | NVIDIA CUDA 11 | `pip install jax[cuda11_pip]` |
 
-Then pass `device='gpu'` (or `'auto'`, the default) to `psytrax.fit()`.
+For most users, `device='auto'` is the recommended default.
 """)
 
     st.subheader('Performance')
@@ -662,7 +663,7 @@ Expects `inputs['c']` (signed contrast) in your data.
         _q      = st.session_state['_fit_queue']
         _thread = st.session_state['_fit_thread']
 
-        st.markdown('**Fitting in progress…** &nbsp; `JAX L-BFGS · float64`')
+        st.markdown('**Fitting in progress…** &nbsp; `JAX L-BFGS`')
         col_cyc, col_map = st.columns(2)
         cycle_text   = col_cyc.empty()
         map_text     = col_map.empty()
@@ -718,6 +719,14 @@ Expects `inputs['c']` (signed contrast) in your data.
         c2.metric('Parameters', res['params'].shape[0])
         c3.metric('Log evidence', f"{res['log_evidence']:.1f}")
         c4.metric('Duration', str(res['duration']).split('.')[0])
+        execution = res.get('execution')
+        if execution:
+            st.caption(
+                "Execution: "
+                f"{execution.get('description', 'unknown')} "
+                f"(MAP {execution.get('map_precision', '?')}, "
+                f"evidence {execution.get('evidence_precision', '?')})"
+            )
 
         with open(path, 'rb') as f:
             st.download_button(
