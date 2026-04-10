@@ -16,6 +16,11 @@ For the web app or general use (installs all dependencies including Streamlit):
 pip install -r requirements.txt
 ```
 
+For Streamlit Community Cloud deployment, keep `requirements.txt` as the only
+recognized Python dependency file in the repo root. Community Cloud prioritizes
+`environment.yml` over `requirements.txt` and will ignore the latter if both are
+present.
+
 For development and tests only:
 
 ```bash
