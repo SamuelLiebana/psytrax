@@ -1,5 +1,4 @@
 import os
-import warnings
 import numpy as np
 from datetime import datetime
 
@@ -23,7 +22,6 @@ def fit(data, log_lik_trial, n_params,
         hess_calc='weights',
         device='auto',
         precision='float64',
-        optimizer='jax',
         map_tol=1e-6,
         subject_name=None,
         save=False,
@@ -98,31 +96,8 @@ def fit(data, log_lik_trial, n_params,
     if verbose:
         print(f'psytrax: JAX precision {precision}')
 
-    if optimizer not in ('jax', 'scipy'):
-        raise ValueError(f"optimizer must be 'jax' or 'scipy', got '{optimizer}'")
-    if optimizer == 'jax':
-        try:
-            import optax as _optax  # noqa: F401 — check availability before use
-            from psytrax._jax_map import getMAP_jax
-            _map_fn = getMAP_jax
-            _optimizer_used = 'jax (optax L-BFGS)'
-            if verbose:
-                print('psytrax: optimizer jax (optax L-BFGS)')
-        except ImportError:
-            warnings.warn(
-                "optax not installed — falling back to scipy trust-NCG optimizer. "
-                "Install with: pip install optax",
-                UserWarning, stacklevel=2,
-            )
-            _map_fn = None
-            _optimizer_used = 'scipy trust-NCG (optax unavailable)'
-            if verbose:
-                print('psytrax: optimizer scipy (optax unavailable)')
-    else:
-        _map_fn = None   # hyperOpt defaults to getMAP (scipy trust-ncg)
-        _optimizer_used = 'scipy trust-NCG'
-        if verbose:
-            print('psytrax: optimizer scipy (trust-NCG)')
+    if verbose:
+        print('psytrax: optimizer JAX L-BFGS (prior-whitened)')
 
     # ------------------------------------------------------------------
     # Load / normalise data
@@ -207,7 +182,6 @@ def fit(data, log_lik_trial, n_params,
         hess_calc=hess_calc,
         show_progress=verbose,
         map_tol=map_tol,
-        map_fn=_map_fn,
     )
     duration = datetime.now() - start
 
@@ -222,7 +196,6 @@ def fit(data, log_lik_trial, n_params,
         'data': dat,
         'n_trials': N,
         'duration': duration,
-        'optimizer': _optimizer_used,
     }
 
     if not save:

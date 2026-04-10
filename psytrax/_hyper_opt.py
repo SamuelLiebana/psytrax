@@ -3,7 +3,7 @@ from scipy.optimize import minimize
 from scipy.sparse import linalg
 from tqdm.auto import tqdm
 
-from psytrax._map import getMAP, getPosteriorTerms
+from psytrax._map import getPosteriorTerms
 from psytrax._helper.invBlkTriDiag import getCredibleInterval
 from psytrax._helper.jacHessCheck import compHess
 from psytrax._helper.helperFunctions import DT_X_D, make_invSigma, sparse_logdet
@@ -11,7 +11,7 @@ from psytrax._helper.helperFunctions import DT_X_D, make_invSigma, sparse_logdet
 
 def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
              method=None, showOpt=0, jump=2, hess_calc='weights', show_progress=True,
-             map_tol=1e-6, map_fn=None):
+             map_tol=1e-6):
     """Optimise hyperparameters and return MAP weights.
 
     Uses the decoupled Laplace approximation to find the hyperparameter values
@@ -36,8 +36,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         best_eMode  : array, MAP parameter estimates (K*N,)
         hess_info   : dict with credible intervals / Hessian info
     """
-    if map_fn is None:
-        map_fn = getMAP
+    from psytrax._jax_map import getMAP_jax as map_fn
 
     K = n_params
     N = len(dat['r'])

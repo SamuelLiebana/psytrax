@@ -523,7 +523,6 @@ Expects `inputs['c']` (signed contrast) in your data.
                                  index=0, key='fit_hess')
         hess_calc = None if hess_calc == 'None' else hess_calc
         precision = 'float64'
-        optimizer = 'jax'
 
     st.divider()
 
@@ -620,7 +619,6 @@ Expects `inputs['c']` (signed contrast) in your data.
                     hess_calc=hess_calc,
                     map_tol=float(map_tol),
                     precision=precision,
-                    optimizer=optimizer,
                     subject_name=subject_name,
                     save=True,
                     verbose=True,
@@ -642,7 +640,7 @@ Expects `inputs['c']` (signed contrast) in your data.
         _q      = st.session_state['_fit_queue']
         _thread = st.session_state['_fit_thread']
 
-        st.markdown('**Fitting in progress…**')
+        st.markdown('**Fitting in progress…** &nbsp; `JAX L-BFGS · float64`')
         col_cyc, col_map = st.columns(2)
         cycle_text   = col_cyc.empty()
         map_text     = col_map.empty()
@@ -698,7 +696,6 @@ Expects `inputs['c']` (signed contrast) in your data.
         c2.metric('Parameters', res['params'].shape[0])
         c3.metric('Log evidence', f"{res['log_evidence']:.1f}")
         c4.metric('Duration', str(res['duration']).split('.')[0])
-        st.caption(f"Optimizer used: {res.get('optimizer', 'unknown')}")
 
         with open(path, 'rb') as f:
             st.download_button(
