@@ -69,7 +69,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         first_iter = False
 
         try:
-            _emit_status(status_callback, "Running MAP optimisation…", stage="map")
+            _emit_status(status_callback, "Re-running MAP at current hyperparameters…", stage="map")
             Hess, logEvd, llstruct = map_fn(
                 dat, current_hyper, K, log_lik_fns,
                 E0=current_E0, method=method, showOpt=0, pbar=pbar, map_tol=map_tol,
@@ -127,7 +127,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             print(f'\nLog-evidence: {np.round(logEvd, 5)}')
             for val in optList:
                 print(val, np.round(np.log2(current_hyper[val]), 4))
-        _emit_status(status_callback, f"Completed hyper cycle with log-evidence {logEvd:.3f}.",
+        _emit_status(status_callback, f"Evaluated current hyperparameters (log-evidence {logEvd:.3f}).",
                      stage="cycle", log_evidence=float(logEvd))
 
         if not current_jump:
@@ -167,7 +167,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             opts = {'disp': False, 'maxiter': 15}
             callback = None
 
-        _emit_status(status_callback, "Optimising hyperparameters…", stage="hyper")
+        _emit_status(status_callback, "Updating hyperparameters for the next cycle…", stage="hyper")
         # L-BFGS-B with bounds keeps the line search away from degenerate sigma
         # values (log2 in [-15, 5] ↔ sigma in [~3e-5, 32]) that make the
         # log-evidence Hessian singular.
