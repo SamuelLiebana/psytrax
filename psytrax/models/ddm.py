@@ -53,8 +53,8 @@ _N_LARGE         = 20     # terms in Ratcliff (large-τ) series
 _K_SMALL         = 20     # half-width of image-charge (small-τ) series
 
 # Static arrays computed once at import time
-_K_VEC     = jnp.arange(1, _N_LARGE + 1,   dtype=jnp.float64)           # 1..N
-_IMG_VEC   = jnp.arange(-_K_SMALL, _K_SMALL + 1, dtype=jnp.float64)    # −K..K
+_K_VEC     = np.arange(1, _N_LARGE + 1,         dtype=np.float64)       # 1..N  (numpy; cast by JAX inside JIT)
+_IMG_VEC   = np.arange(-_K_SMALL, _K_SMALL + 1, dtype=np.float64)       # −K..K
 
 
 def log_lik_trial(params, dat_trial):

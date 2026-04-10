@@ -4,8 +4,12 @@ Generates synthetic data, fits each model at several trial counts, and
 prints a Markdown table suitable for the README.
 
 Usage:
-    python benchmark.py
-    python benchmark.py --n-repeats 3   # average over N runs per cell
+    python benchmark.py                          # auto-detect device
+    python benchmark.py --precision float32      # force float32
+    python benchmark.py --n-repeats 3            # median over N runs per cell
+
+To benchmark CPU explicitly when Metal is installed:
+    JAX_PLATFORMS=cpu python benchmark.py
 """
 
 import argparse
@@ -36,42 +40,61 @@ def make_data(N, rng, with_rt=True):
     return dat
 
 
-def fit_once(mod, N, rng):
-    import psytrax
-    needs_rt = mod[2]
-    dat = make_data(N, rng, with_rt=needs_rt)
-    import importlib
+def fit_once(mod, N, rng, precision='float64'):
+    import psytrax, importlib
     m = importlib.import_module(mod[1])
-    t0 = time.perf_counter()
-    psytrax.fit(
-        data          = dat,
-        log_lik_trial = m.log_lik_trial,
-        n_params      = m.N_PARAMS,
-        param_names   = m.PARAM_NAMES,
-        hyper         = m.default_hyper(),
-        hess_calc     = 'weights',
-        verbose       = False,
-    )
-    return time.perf_counter() - t0
+    # Retry with different seeds if a rare degenerate posterior is encountered.
+    for seed_offset in range(5):
+        seed_rng = np.random.default_rng(rng.integers(1_000_000) + seed_offset)
+        dat = make_data(N, seed_rng, with_rt=mod[2])
+        try:
+            t0 = time.perf_counter()
+            psytrax.fit(
+                data          = dat,
+                log_lik_trial = m.log_lik_trial,
+                n_params      = m.N_PARAMS,
+                param_names   = m.PARAM_NAMES,
+                hyper         = m.default_hyper(),
+                hess_calc     = 'weights',
+                precision     = precision,
+                verbose       = False,
+            )
+            return time.perf_counter() - t0
+        except Exception:
+            if seed_offset == 4:
+                raise
+            continue
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--n-repeats', type=int, default=2,
                         help='Fits per cell (result = median)')
+    parser.add_argument('--precision', default=None,
+                        choices=['float32', 'float64'],
+                        help='Override precision (default: float64 on CPU, float32 on Metal)')
     args = parser.parse_args()
 
     import jax
     device = jax.devices()[0]
     device_str = str(device)
+    is_metal = 'METAL' in device_str.upper()
+    if is_metal:
+        print('\nApple Metal detected — Metal is float32-only and is not compatible')
+        print('with psytrax (requires float64 for stable Hessian computation).')
+        print('Run with JAX_PLATFORMS=cpu to benchmark the CPU backend.')
+        print('For GPU acceleration use NVIDIA CUDA (jax[cuda12]).')
+        raise SystemExit(1)
+    precision = args.precision or 'float64'
     print(f'\nDevice: {device_str}')
+    print(f'Precision: {precision}')
     print(f'Repeats per cell: {args.n_repeats}\n')
 
     rng = np.random.default_rng(42)
 
     # Warm up JAX JIT (first fit is always slower due to compilation)
     print('Warming up JIT... ', end='', flush=True)
-    fit_once(MODELS[0], 100, rng)
+    fit_once(MODELS[0], 500, rng, precision=precision)
     print('done.\n')
 
     # Header
@@ -89,7 +112,7 @@ def main():
         for N in N_TRIALS:
             times = []
             for _ in range(args.n_repeats):
-                t = fit_once(mod, N, rng)
+                t = fit_once(mod, N, rng, precision=precision)
                 times.append(t)
             med = float(np.median(times))
             row_times.append(med)
@@ -109,7 +132,7 @@ def main():
         cells = ' | '.join(f'{results[(label, N)]:.1f}s' for N in N_TRIALS)
         print(f'| {label} | {cells} |')
 
-    print(f'\n*Device: {device_str}. JAX L-BFGS optimizer, float64.*')
+    print(f'\n*Device: {device_str}, {precision}. JAX L-BFGS optimizer.*')
 
 
 if __name__ == '__main__':

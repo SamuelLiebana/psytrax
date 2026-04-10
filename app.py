@@ -220,11 +220,12 @@ estimation and the Laplace approximation.
 
     st.subheader('GPU support')
     st.markdown("""
-JAX automatically uses a GPU if one is available. Install the right backend first:
+psytrax requires float64 precision for stable Hessian computation and Laplace evidence.
+**Apple Metal is not supported** — Metal is float32-only.
+NVIDIA CUDA supports float64 and will accelerate fitting:
 
 | Platform | Command |
 |----------|---------|
-| Apple Silicon (Metal) | `pip install jax-metal` |
 | NVIDIA CUDA 12 | `pip install jax[cuda12]` |
 | NVIDIA CUDA 11 | `pip install jax[cuda11_pip]` |
 
@@ -233,21 +234,18 @@ Then pass `device='gpu'` (or `'auto'`, the default) to `psytrax.fit()`.
 
     st.subheader('Performance')
     st.markdown("""
-Wall-clock fitting times on CPU (Apple M-series), JAX L-BFGS optimizer, float64.
-Times include warm-start, hyperparameter optimisation, and Hessian computation, and
-may vary ±30% depending on data (the hyperparameter loop runs until log-evidence
-stops improving).
+Wall-clock fitting times on Apple M4 CPU, JAX L-BFGS optimizer, float64.
+Times include warm-start, hyperparameter optimisation, and Hessian computation,
+and may vary ±30% depending on data.
 
 | Model | 250 trials | 500 trials | 1 000 trials | 2 000 trials | 5 000 trials | 10 000 trials |
 |-------|-----------|-----------|-------------|-------------|-------------|--------------|
-| Logistic (K=2) | 1.7 s | 1.9 s | 2.3 s | 2.8 s | 5.4 s | 10.4 s |
-| DDM approx (K=3) | 4.2 s | 3.7 s | 6.7 s | 6.8 s | 11.7 s | 20.5 s |
-| Race (K=6) | 5.9 s | 9.1 s | 24.0 s | 42.9 s | 84.0 s | 26.3 s |
+| Logistic (K=2) | 1.7 s | 1.9 s | 2.3 s | 2.7 s | 5.1 s | 10.4 s |
+| DDM approx (K=3) | 4.1 s | 3.6 s | 7.2 s | 6.8 s | 12.1 s | 22.9 s |
+| Race (K=6) | 7.9 s | 12.0 s | 30.3 s | 48.1 s | 84.1 s | 25.1 s |
 
-Scaling is roughly linear in N. The Race model is slower per trial because it
-evaluates an inverse-Gaussian first-passage-time likelihood.
-GPU acceleration (Apple Metal, NVIDIA CUDA) gives a further **3–8× speedup** for
-models with K ≥ 3, since the entire MAP loop runs on-device via `jax.vmap`.
+Scaling is roughly linear in N. NVIDIA CUDA (float64) is expected to give a further
+**3–8× speedup** for models with K ≥ 3 via `jax.vmap` on-device computation.
 """)
 
     st.subheader('Installation')

@@ -135,11 +135,10 @@ See `examples/compare_models_DAP009.py` for a full comparison on real mouse data
 
 ## GPU support
 
-JAX automatically uses a GPU if one is available. Install the right backend first:
+psytrax requires float64 precision for stable Hessian computation and Laplace evidence. This means **Apple Metal is not supported** — Metal is float32-only. NVIDIA CUDA supports float64 and will accelerate fitting:
 
 | Platform | Command |
 |----------|---------|
-| Apple Silicon (Metal) | `pip install jax-metal` |
 | NVIDIA CUDA 12 | `pip install jax[cuda12]` |
 | NVIDIA CUDA 11 | `pip install jax[cuda11_pip]` |
 
@@ -151,15 +150,17 @@ Then pass `device='gpu'` (or `'auto'`, the default) to `psytrax.fit()`.
 
 Wall-clock fitting times (CPU, Apple M-series) measured with the JAX L-BFGS optimizer at float64 precision. Times include warm-start, hyperparameter optimisation, and Hessian computation. They reflect typical convergence and may vary ±30% depending on data (the hyperparameter loop runs until the log-evidence stops improving).
 
+Measured on Apple M4 CPU (JAX L-BFGS, float64). Times include warm-start, hyperparameter optimisation, and Hessian computation, and may vary ±30% depending on data (the hyperparameter loop runs until the log-evidence stops improving).
+
 | Model | 250 trials | 500 trials | 1 000 trials | 2 000 trials | 5 000 trials | 10 000 trials |
 |-------|-----------|-----------|-------------|-------------|-------------|--------------|
-| Logistic (K=2) | 1.7 s | 1.9 s | 2.3 s | 2.8 s | 5.4 s | 10.4 s |
-| DDM approx (K=3) | 4.2 s | 3.7 s | 6.7 s | 6.8 s | 11.7 s | 20.5 s |
-| Race (K=6) | 5.9 s | 9.1 s | 24.0 s | 42.9 s | 84.0 s | 26.3 s |
+| Logistic (K=2) | 1.7 s | 1.9 s | 2.3 s | 2.7 s | 5.1 s | 10.4 s |
+| DDM approx (K=3) | 4.1 s | 3.6 s | 7.2 s | 6.8 s | 12.1 s | 22.9 s |
+| Race (K=6) | 7.9 s | 12.0 s | 30.3 s | 48.1 s | 84.1 s | 25.1 s |
 
-Scaling is roughly linear in N for a fixed number of optimisation cycles. The Race model is slower per trial because it evaluates an inverse-Gaussian first-passage-time likelihood (more expensive than a sigmoid or Gaussian CDF).
+Scaling is roughly linear in N. The Race model is slower per trial because it evaluates an inverse-Gaussian first-passage-time likelihood. Times vary across runs because the number of hyperparameter optimisation cycles is data-dependent.
 
-**GPU acceleration** (Apple Metal, NVIDIA CUDA) gives a further 3–8× speedup for models with K ≥ 3, since the per-trial likelihood is computed via `jax.vmap` and the entire MAP loop runs on-device. The logistic model (K=2) benefits less because the bottleneck there is the Python-level hyperparameter loop rather than the per-trial computation.
+NVIDIA CUDA (float64) is expected to give a further **3–8× speedup** for models with K ≥ 3, since the per-trial likelihood and the entire MAP loop run on-device via `jax.vmap`.
 
 ---
 
