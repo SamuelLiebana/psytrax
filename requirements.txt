@@ -1,6 +1,6 @@
 # Core psytrax dependencies
-jax[cpu]
-optax>=0.2
+jax[cpu]>=0.4.1
+optax>=0.2.3
 numpy>=1.23
 scipy>=1.12
 tqdm>=4.60
