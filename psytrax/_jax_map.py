@@ -11,7 +11,6 @@ using the existing numpy/scipy code (cheap relative to the optimisation).
 import numpy as np
 import jax
 import jax.numpy as jnp
-import optax
 
 jax.config.update("jax_enable_x64", True)
 
@@ -132,11 +131,12 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
         E0_flat = E0.flatten().astype(dtype)
 
     # ---- run L-BFGS via optax ----
+    import optax
     solver = optax.lbfgs(
         memory_size=20,
         scale_init_precond=True,
     )
-    value_and_grad_fn = optax.value_and_grad_from_state(neg_log_post)
+    value_and_grad_fn = optax.value_and_grad_from_state(neg_log_post)  # noqa: F821
 
     opt_state = solver.init(E0_flat)
     E_current = E0_flat
