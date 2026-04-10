@@ -4,6 +4,7 @@ Run with:  streamlit run app.py
 """
 
 import io
+import os
 import threading
 import queue
 import numpy as np
@@ -146,6 +147,12 @@ def _shared_ylim(series_list, pad_frac=0.05, min_pad=0.05):
 
 st.set_page_config(page_title='psytrax', layout='wide')
 
+_APP_DIR = os.path.dirname(__file__)
+_DOC_ASSET_DIR = os.path.join(_APP_DIR, 'examples', 'assets')
+_DAP011_TRAJ = os.path.join(_DOC_ASSET_DIR, 'dap011_race_trajectories.png')
+_DAP011_PSY = os.path.join(_DOC_ASSET_DIR, 'dap011_race_psychometric.png')
+_DAP011_CHRONO = os.path.join(_DOC_ASSET_DIR, 'dap011_race_chronometric.png')
+
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
@@ -170,6 +177,21 @@ the marginal likelihood (evidence) using the Laplace approximation.
 It is model-agnostic: you supply a **per-trial log-likelihood function** and psytrax
 handles all the inference machinery.
 """)
+
+    st.subheader('See a real fit')
+    st.caption('Example output from the bundled DAP011 race-model fit.')
+    if all(os.path.exists(path) for path in (_DAP011_TRAJ, _DAP011_PSY, _DAP011_CHRONO)):
+        st.image(_DAP011_TRAJ, caption='Parameter trajectories recovered across learning',
+                 use_container_width=True)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.image(_DAP011_PSY, caption='Psychometric evolution over learning',
+                     use_container_width=True)
+        with col2:
+            st.image(_DAP011_CHRONO, caption='Chronometric evolution over learning',
+                     use_container_width=True)
+    else:
+        st.info('Documentation example figures are missing from this checkout.')
 
     st.subheader('Quick start')
     st.code("""

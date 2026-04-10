@@ -8,6 +8,21 @@ It is model-agnostic: you supply a **per-trial log-likelihood function** and psy
 
 ---
 
+## See what it does
+
+These example outputs come from the bundled DAP011 race-model fit in `example_fits/DAP011_race_fit.npy`.
+
+![DAP011 race-model parameter trajectories](examples/assets/dap011_race_trajectories.png)
+
+<p align="center">
+  <img src="examples/assets/dap011_race_psychometric.png" alt="DAP011 psychometric evolution" width="49%" />
+  <img src="examples/assets/dap011_race_chronometric.png" alt="DAP011 chronometric evolution" width="49%" />
+</p>
+
+psytrax does not just return a best-fitting scalar. It recovers trial-by-trial parameter trajectories and turns them into learning-dependent psychometric and chronometric predictions like the ones above.
+
+---
+
 ## Installation
 
 For the web app or general use (installs all dependencies including Streamlit):
