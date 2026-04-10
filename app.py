@@ -78,7 +78,7 @@ def _mlp_psychometric(params_window, param_names, c_grid):
     return p_right
 
 
-def _race_curves(params_window, param_names, c_grid, t_max=30.0, n_t=2000):
+def _race_curves(params_window, param_names, c_grid, fixed_params=None, t_max=30.0, n_t=2000):
     """Compute P(right|c) and E[min(T_R,T_L)|c] for the race model.
 
     Uses the mean of params over the window for a deterministic prediction.
@@ -88,7 +88,13 @@ def _race_curves(params_window, param_names, c_grid, t_max=30.0, n_t=2000):
     idx = {name: i for i, name in enumerate(param_names)}
     wr  = mp[idx['wr']];  wl  = mp[idx['wl']]
     br  = mp[idx['br']];  bl  = mp[idx['bl']]
-    z   = mp[idx['z']];   si  = mp[idx['sig_i']]
+    z   = mp[idx['z']]
+    if 'sig_i' in idx:
+        si = mp[idx['sig_i']]
+    elif fixed_params and 'sig_i' in fixed_params:
+        si = float(fixed_params['sig_i'])
+    else:
+        raise KeyError("Race-model visualisation requires either a sig_i parameter row or fixed_params['sig_i'].")
 
     t_grid = np.linspace(1e-4, t_max, n_t)
     p_rights = np.zeros(len(c_grid))
@@ -108,6 +114,15 @@ def _race_curves(params_window, param_names, c_grid, t_max=30.0, n_t=2000):
         mean_rts[i] = max(_trapezoid((1 - F1) * (1 - F2), t_grid), 0.0)
 
     return p_rights, mean_rts
+
+
+def _race_model_info(param_names, result=None):
+    fixed_params = (result or {}).get('fixed_params') or {}
+    dynamic = {'wr', 'wl', 'br', 'bl', 'z'}
+    full = dynamic | {'sig_i'}
+    param_set = set(param_names)
+    is_race = param_set == full or (param_set == dynamic and 'sig_i' in fixed_params)
+    return is_race, fixed_params
 
 st.set_page_config(page_title='psytrax', layout='wide')
 
@@ -454,14 +469,20 @@ columns to the required fields.
 
     if model_choice == 'Race model (inverse-Gaussian)':
         from psytrax.models.race import (
-            log_lik_trial as _llt,
-            N_PARAMS as _K,
-            PARAM_NAMES as _pnames,
-            default_hyper as _dhyper,
+            make_fixed_sig_i_model as _make_fixed_sig_i_model,
+            default_hyper_fixed_sig_i as _race_fixed_dhyper,
         )
+        _race_fixed_sig_i = True
+        _llt = _race_full_llt
+        _K = 5
+        _pnames = ['wr', 'wl', 'br', 'bl', 'z']
+
+        _dhyper = _race_fixed_dhyper
+
         st.markdown("""
 **Race model** — two independent inverse-Gaussian accumulators racing to threshold.
-6 parameters: `wr, wl, br, bl, z, sig_i`.
+`sig_i` is held fixed over learning at a user-chosen scalar value.
+The learning fit therefore uses 5 trial-varying parameters: `wr, wl, br, bl, z`.
 Expects `inputs['c']` and `times`. Subtract non-decision time from RTs before uploading.
 """)
     elif model_choice == 'DDM — exact (Navarro & Fuss 2009)':
@@ -478,6 +499,7 @@ Navarro & Fuss (2009) / Bogacz et al. (2006) hybrid series solution.
 `z` (relative starting point, 0–1).
 Expects `inputs['c']` and `times`. Subtract non-decision time from RTs before uploading.
 """)
+        _race_fixed_sig_i = False
     elif model_choice == 'DDM — approx (inverse-Gaussian)':
         from psytrax.models.ddm_approx import (
             log_lik_trial as _llt,
@@ -491,6 +513,7 @@ barrier). Faster than the exact DDM; accurate when error rates are low.
 3 parameters: `w` (contrast weight), `b` (bias), `z` (threshold).
 Expects `inputs['c']` and `times`. Subtract non-decision time from RTs before uploading.
 """)
+        _race_fixed_sig_i = False
     else:
         import jax, jax.numpy as jnp
 
@@ -511,6 +534,7 @@ Expects `inputs['c']` and `times`. Subtract non-decision time from RTs before up
 
 Expects `inputs['c']` (signed contrast) in your data.
 """)
+        _race_fixed_sig_i = False
 
     st.divider()
 
@@ -546,6 +570,17 @@ Expects `inputs['c']` (signed contrast) in your data.
                                  index=0, key='fit_hess')
         hess_calc = None if hess_calc == 'None' else hess_calc
         precision = 'float64'
+        if model_choice == 'Race model (inverse-Gaussian)' and _race_fixed_sig_i:
+            fixed_sig_i = st.number_input(
+                'Fixed sig_i',
+                min_value=0.0,
+                value=0.1,
+                step=0.01,
+                key='fit_fixed_sig_i',
+                help='sig_i is treated as a single nuisance parameter held constant across learning.',
+            )
+        else:
+            fixed_sig_i = None
 
     st.divider()
 
@@ -598,6 +633,7 @@ Expects `inputs['c']` (signed contrast) in your data.
 
         st.session_state['fit_running'] = True
         st.session_state['fit_result_path'] = None
+        st.session_state['fit_log'] = []
         st.session_state['fit_error'] = None
 
         _q = queue.Queue()
@@ -624,18 +660,17 @@ Expects `inputs['c']` (signed contrast) in your data.
             def __enter__(self): return self
             def __exit__(self, *a): pass
 
+        def _status_cb(payload):
+            _q.put(('status', payload))
+
         _orig_tqdm = _hyper_opt_mod.tqdm
         _hyper_opt_mod.tqdm = _QueueTqdm
 
         def _run_fit():
             try:
                 os.makedirs('fits', exist_ok=True)
-                result = psytrax.fit(
+                fit_kwargs = dict(
                     data=raw,
-                    log_lik_trial=_llt,
-                    n_params=_K,
-                    param_names=_pnames,
-                    hyper=hyper,
                     shared_sigma=shared_sigma,
                     session_boundaries=session_boundaries,
                     n_trials=n_trials_opt,
@@ -645,7 +680,34 @@ Expects `inputs['c']` (signed contrast) in your data.
                     subject_name=subject_name,
                     save=True,
                     verbose=True,
+                    status_callback=_status_cb,
                 )
+
+                fixed_params = {}
+                if model_choice == 'Race model (inverse-Gaussian)' and _race_fixed_sig_i:
+                    fixed_params['sig_i'] = float(fixed_sig_i)
+                    _status_cb({'stage': 'setup', 'message': f'Using fixed sig_i = {fixed_sig_i:.4f}.'})
+                    _llt_fit, _K_fit, _pnames_fit, _dhyper_fit, _ = _make_fixed_sig_i_model(fixed_sig_i)
+                    fit_kwargs.update(
+                        log_lik_trial=_llt_fit,
+                        n_params=_K_fit,
+                        param_names=_pnames_fit,
+                    )
+                else:
+                    fit_kwargs.update(
+                        log_lik_trial=_llt,
+                        n_params=_K,
+                        param_names=_pnames,
+                    )
+
+                result = psytrax.fit(
+                    hyper=hyper,
+                    **fit_kwargs,
+                )
+                if fixed_params:
+                    _saved = np.load(result, allow_pickle=True).item()
+                    _saved['fixed_params'] = fixed_params
+                    np.save(result, _saved)
                 _q.put(('done', result))
             except Exception as e:
                 import traceback
@@ -667,10 +729,14 @@ Expects `inputs['c']` (signed contrast) in your data.
         col_cyc, col_map = st.columns(2)
         cycle_text   = col_cyc.empty()
         map_text     = col_map.empty()
+        status_text  = st.empty()
         log_evd_text = st.empty()
+        log_box      = st.empty()
 
         # Poll the queue while the thread is alive, streaming updates to the browser
         cycle, map_iter, log_evd_str, best_str, map_loss_str = 0, 0, '—', '—', '—'
+        current_status = 'Preparing fit…'
+        fit_log = st.session_state.get('fit_log', [])
         while _thread.is_alive():
             while not _q.empty():
                 try:
@@ -680,14 +746,23 @@ Expects `inputs['c']` (signed contrast) in your data.
                         log_evd_str  = postfix.get('log_evd',  '—')
                         best_str     = postfix.get('best',     '—')
                         map_loss_str = postfix.get('MAP loss', map_loss_str)
+                    elif msg[0] == 'status':
+                        payload = msg[1]
+                        current_status = payload.get('message', current_status)
+                        fit_log.append(current_status)
+                        fit_log = fit_log[-12:]
+                        st.session_state['fit_log'] = fit_log
                 except queue.Empty:
                     break
             cycle_text.metric('Cycles completed', cycle)
             map_text.metric('MAP iters (current cycle)', map_iter)
+            status_text.markdown(f'**Current step:** {current_status}')
             log_evd_text.markdown(
                 f'Log evidence — current: **{log_evd_str}** &nbsp;|&nbsp; best: **{best_str}**'
                 + (f' &nbsp;|&nbsp; MAP loss: **{map_loss_str}**' if map_loss_str != '—' else '')
             )
+            if fit_log:
+                log_box.code('\n'.join(fit_log), language='text')
             time.sleep(0.5)
 
         # Thread finished — drain any remaining messages
@@ -791,7 +866,7 @@ elif page == 'Visualise Results':
     RACE_PARAMS     = {'wr', 'wl', 'br', 'bl', 'z', 'sig_i'}
     LOGISTIC_PARAMS = {'w', 'b'}
     param_set  = set(param_names)
-    is_race    = param_set == RACE_PARAMS
+    is_race, fixed_params = _race_model_info(param_names, result=result)
     is_logistic= param_set == LOGISTIC_PARAMS
     is_mlp     = _is_mlp(param_names)
     # Locate RT array (stored as 'T' or 'times')
@@ -878,7 +953,7 @@ elif page == 'Visualise Results':
 
             params_win = params[:, t0:t1]
             if is_race:
-                p_m, _ = _race_curves(params_win, param_names, c_grid)
+                p_m, _ = _race_curves(params_win, param_names, c_grid, fixed_params=fixed_params)
                 ax.plot(c_grid, p_m, color='#4e9af1', lw=2)
             elif is_logistic:
                 iw = param_names.index('w'); ib = param_names.index('b')
@@ -922,7 +997,8 @@ elif page == 'Visualise Results':
                     ax.scatter(c_uniq_win, rt_win_mean, s=[max(10, n / 5) for n in n_win],
                                color='white', zorder=3)
 
-                    _, rt_m = _race_curves(params[:, t0:t1], param_names, c_grid)
+                    _, rt_m = _race_curves(params[:, t0:t1], param_names, c_grid,
+                                           fixed_params=fixed_params)
                     ax.plot(c_grid, rt_m, color='#4e9af1', lw=2)
                     ax.axvline(0, color='white', lw=0.5, ls='--', alpha=0.4)
 
@@ -1051,8 +1127,7 @@ elif page == 'Compare Models':
 
         # Detect if any model has RT data
         _rt_key_cm = next((k for k in ('T', 'times') if k in dat and dat[k] is not None), None)
-        any_race   = any(set(r['param_names']) == {'wr', 'wl', 'br', 'bl', 'z', 'sig_i'}
-                         for r in results.values())
+        any_race   = any(_race_model_info(r['param_names'], result=r)[0] for r in results.values())
 
         # --- Psychometric evolution ---
         st.subheader('Psychometric curve: evolution over learning')
@@ -1079,8 +1154,9 @@ elif page == 'Compare Models':
                     pn  = res['param_names']
                     par = res['params'][:, t0:t1]
                     col = colors[mi % len(colors)]
-                    if set(pn) == {'wr', 'wl', 'br', 'bl', 'z', 'sig_i'}:
-                        p_m, _ = _race_curves(par, pn, c_grid)
+                    race_flag, fixed_params = _race_model_info(pn, result=res)
+                    if race_flag:
+                        p_m, _ = _race_curves(par, pn, c_grid, fixed_params=fixed_params)
                         ax.plot(c_grid, p_m, color=col, lw=2, label=mname)
                     elif set(pn) == {'w', 'b'}:
                         iw = pn.index('w'); ib = pn.index('b')
@@ -1128,8 +1204,9 @@ elif page == 'Compare Models':
                     for mi, (mname, res) in enumerate(results.items()):
                         pn  = res['param_names']
                         par = res['params'][:, t0:t1]
-                        if set(pn) == {'wr', 'wl', 'br', 'bl', 'z', 'sig_i'}:
-                            _, rt_m = _race_curves(par, pn, c_grid)
+                        race_flag, fixed_params = _race_model_info(pn, result=res)
+                        if race_flag:
+                            _, rt_m = _race_curves(par, pn, c_grid, fixed_params=fixed_params)
                             ax.plot(c_grid, rt_m, color=colors[mi % len(colors)],
                                     lw=2, label=mname)
 

@@ -32,6 +32,7 @@ def fit(data, log_lik_trial, n_params,
         map_tol=1e-6,
         subject_name=None,
         save=False,
+        status_callback=None,
         verbose=False):
     """Fit a decision model to behavioural data using Empirical Bayes + Laplace.
 
@@ -94,12 +95,14 @@ def fit(data, log_lik_trial, n_params,
     # ------------------------------------------------------------------
     # Device + precision selection
     # ------------------------------------------------------------------
+    _emit_status(status_callback, "Preparing execution strategy…", stage="setup")
     plan = resolve_execution_plan(device=device, precision=precision, verbose=verbose)
     configure_execution_plan(plan)
 
     _dtype = jnp.float32 if plan.map_precision == 'float32' else jnp.float64
     _map_module._JAX_DTYPE = _dtype
     setup_device(plan.map_backend, verbose=verbose, dtype=_dtype)
+    _emit_status(status_callback, f"Using {plan.description}.", stage="setup")
     if verbose:
         print(f'psytrax: execution strategy {plan.description}')
         print(f'psytrax: MAP precision {plan.map_precision}')
@@ -118,6 +121,7 @@ def fit(data, log_lik_trial, n_params,
 
     dat = _normalise_dat(raw)
     _validate_dat(dat)
+    _emit_status(status_callback, "Validated input data.", stage="data")
 
     N_total = len(dat['r'])
     if n_trials is not None:
@@ -161,6 +165,7 @@ def fit(data, log_lik_trial, n_params,
     # Build batched likelihood functions
     # ------------------------------------------------------------------
     log_lik_fns = make_likelihood_fns(log_lik_trial)
+    _emit_status(status_callback, "Built JAX likelihood functions.", stage="likelihood")
 
     # ------------------------------------------------------------------
     # Initialisation
@@ -173,6 +178,7 @@ def fit(data, log_lik_trial, n_params,
         K=K,
         N=N,
         dtype=_dtype,
+        status_callback=status_callback,
         verbose=verbose,
     )
 
@@ -198,6 +204,11 @@ def fit(data, log_lik_trial, n_params,
                         "psytrax: retrying fit with "
                         f"{attempt_plan.description} and {init_name}"
                     )
+                _emit_status(
+                    status_callback,
+                    f"Attempting fit with {attempt_plan.description} and {init_name}.",
+                    stage="fit_attempt",
+                )
                 best_hyper, log_evd, eMode, hess_info = hyperOpt(
                     dat=dat,
                     hyper=current_hyper,
@@ -211,6 +222,7 @@ def fit(data, log_lik_trial, n_params,
                     show_progress=verbose,
                     map_tol=map_tol,
                     execution_plan=attempt_plan,
+                    status_callback=status_callback,
                 )
                 plan = attempt_plan
                 break
@@ -218,6 +230,11 @@ def fit(data, log_lik_trial, n_params,
                 if not _is_retryable_fit_error(exc):
                     raise
                 last_retryable_error = exc
+                _emit_status(
+                    status_callback,
+                    f"Fit attempt became invalid and will retry: {exc}",
+                    stage="retry",
+                )
                 if verbose:
                     print(f'psytrax: fit attempt failed, will retry if alternatives remain: {exc}')
         if best_hyper is not None:
@@ -240,6 +257,7 @@ def fit(data, log_lik_trial, n_params,
         'duration': duration,
         'execution': plan.as_dict(),
     }
+    _emit_status(status_callback, "Fit complete.", stage="done")
 
     if not save:
         return results
@@ -401,7 +419,7 @@ def _to_jax(dat, dtype=None):
 
 
 def _warm_start_constant(dat, log_lik_fns, K, N, verbose=False,
-                         dtype=None):
+                         dtype=None, status_callback=None):
     """Find constant MAP parameters by maximising total log-likelihood.
 
     Optimises a single (K,) parameter vector shared across all N trials,
@@ -424,6 +442,7 @@ def _warm_start_constant(dat, log_lik_fns, K, N, verbose=False,
         dtype = _map_module._JAX_DTYPE
     log_lik_fn = log_lik_fns[0]
     dat_jax = _to_jax(dat, dtype=dtype)
+    _emit_status(status_callback, "Compiling warm-start objective…", stage="warm_start")
 
     # Define the objective once so JAX compiles it only on the first call and
     # reuses the cached compiled version for every subsequent iteration.
@@ -454,6 +473,7 @@ def _warm_start_constant(dat, log_lik_fns, K, N, verbose=False,
         np.full(K, 2.0),
     ]
     best_result = None
+    _emit_status(status_callback, "Optimising constant warm-start…", stage="warm_start")
     for x0 in starts:
         r = _minimize(
             neg_ll_and_grad,
@@ -466,6 +486,11 @@ def _warm_start_constant(dat, log_lik_fns, K, N, verbose=False,
             best_result = r
     if verbose:
         print(f'  Warm-start log-likelihood: {-best_result.fun:.4f}  ({best_result.message})')
+    _emit_status(
+        status_callback,
+        f"Warm-start complete (log-likelihood {-best_result.fun:.2f}).",
+        stage="warm_start",
+    )
     return np.array(best_result.x)
 
 
@@ -505,7 +530,8 @@ def _check_E0_validity(E0, dat, log_lik_fns, K, N):
         )
 
 
-def _build_initialization_candidates(E0, dat, log_lik_trial, log_lik_fns, K, N, dtype, verbose):
+def _build_initialization_candidates(E0, dat, log_lik_trial, log_lik_fns, K, N, dtype,
+                                     status_callback, verbose):
     """Return ordered E0 candidates for retries and constrained-model recovery."""
     candidates = []
 
@@ -518,7 +544,9 @@ def _build_initialization_candidates(E0, dat, log_lik_trial, log_lik_fns, K, N, 
     if E0 is None or len(candidates) == 1:
         if verbose:
             print('Finding warm-start initialisation (constant-parameter fit)...')
-        const_params = _warm_start_constant(dat, log_lik_fns, K, N, verbose=verbose, dtype=dtype)
+        const_params = _warm_start_constant(
+            dat, log_lik_fns, K, N, verbose=verbose, dtype=dtype, status_callback=status_callback
+        )
         warm_start = np.tile(const_params[:, np.newaxis], N)
         candidates.append(("automatic warm-start", warm_start))
 
@@ -572,3 +600,13 @@ def _is_retryable_fit_error(exc):
             "sentinel" in msg
         )
     )
+
+
+def _emit_status(callback, message, stage=None, **extra):
+    if callback is None:
+        return
+    payload = {"message": message}
+    if stage is not None:
+        payload["stage"] = stage
+    payload.update(extra)
+    callback(payload)

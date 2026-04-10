@@ -182,7 +182,7 @@ def _unwhiten(z_flat, K, N, L_diag, L_sub):
 
 def getMAP_jax(dat, hyper, n_params, log_lik_fns,
                E0=None, method=None, showOpt=0, pbar=None, map_tol=1e-6,
-               execution_plan=None):
+               execution_plan=None, status_callback=None):
     """MAP estimation using JAX L-BFGS in prior-whitened space.
 
     The inner optimisation loop runs entirely in JAX (GPU-native) in a
@@ -306,9 +306,14 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
             return optax.apply_updates(z, updates), new_state, value, grad
 
         grad_norm = float('inf')
-        for _ in range(max_iter):
+        _emit_status(status_callback, "Compiling MAP objective…", stage="map")
+        for step_idx in range(max_iter):
             z_cur, opt_state, val, grad = step(z_cur, opt_state)
             grad_norm = float(jnp.max(jnp.abs(grad)))
+            if pbar is not None and (step_idx == 0 or (step_idx + 1) % 10 == 0):
+                pbar.set_postfix({'MAP loss': f'{float(val):.3f}'})
+            if step_idx == 0:
+                _emit_status(status_callback, "Running MAP iterations…", stage="map")
             if grad_norm < tol:
                 break
         return z_cur, grad_norm
@@ -320,6 +325,7 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
     if total_ll < -N * 100:
         if showOpt:
             print(f'  WARNING: L-BFGS result has sentinel values (ll={total_ll:.2e}), retrying...')
+        _emit_status(status_callback, "Retrying MAP with tighter tolerance…", stage="retry")
         z_current, grad_norm = _run_lbfgs(z0_flat, map_tol * 1e-2, max_iter=5000)
         total_ll = float(-neg_log_post_exact(z_current))
 
@@ -347,6 +353,7 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
 
     try:
         _map_module._JAX_DTYPE = evidence_dtype
+        _emit_status(status_callback, "Computing Hessian and Laplace evidence…", stage="evidence")
         with ctx:
             pT, lT = getPosteriorTerms(eMode, dat, hyper, log_lik_fns, method=None)
     finally:
@@ -386,3 +393,13 @@ def _raise_if_invalid_solution(total_ll, n_trials):
         "Try the automatic warm-start (E0=None), a better model-specific E0, or looser "
         "initial hyperparameters."
     )
+
+
+def _emit_status(callback, message, stage=None, **extra):
+    if callback is None:
+        return
+    payload = {"message": message}
+    if stage is not None:
+        payload["stage"] = stage
+    payload.update(extra)
+    callback(payload)

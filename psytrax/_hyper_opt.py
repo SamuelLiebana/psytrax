@@ -11,7 +11,7 @@ from psytrax._helper.helperFunctions import DT_X_D, make_invSigma, sparse_logdet
 
 def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
              method=None, showOpt=0, jump=2, hess_calc='weights', show_progress=True,
-             map_tol=1e-6, execution_plan=None):
+             map_tol=1e-6, execution_plan=None, status_callback=None):
     """Optimise hyperparameters and return MAP weights.
 
     Uses the decoupled Laplace approximation to find the hyperparameter values
@@ -69,10 +69,12 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         first_iter = False
 
         try:
+            _emit_status(status_callback, "Running MAP optimisation…", stage="map")
             Hess, logEvd, llstruct = map_fn(
                 dat, current_hyper, K, log_lik_fns,
                 E0=current_E0, method=method, showOpt=0, pbar=pbar, map_tol=map_tol,
                 execution_plan=execution_plan,
+                status_callback=status_callback,
             )
         except RuntimeError as exc:
             msg = str(exc).lower()
@@ -85,6 +87,8 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             current_jump -= 1
             for val in optList:
                 current_hyper[val] = (current_hyper[val] + best_hyper[val]) / 2
+            _emit_status(status_callback, f"MAP step invalid, backing off hyperparameters: {exc}",
+                         stage="retry")
             if showOpt:
                 print(f'\nMAP step became invalid at current hyperparameters, backing off: {exc}')
             if not current_jump:
@@ -123,6 +127,8 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             print(f'\nLog-evidence: {np.round(logEvd, 5)}')
             for val in optList:
                 print(val, np.round(np.log2(current_hyper[val]), 4))
+        _emit_status(status_callback, f"Completed hyper cycle with log-evidence {logEvd:.3f}.",
+                     stage="cycle", log_evidence=float(logEvd))
 
         if not current_jump:
             eMode = best_llstruct['eMode']
@@ -161,6 +167,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             opts = {'disp': False, 'maxiter': 15}
             callback = None
 
+        _emit_status(status_callback, "Optimising hyperparameters…", stage="hyper")
         # L-BFGS-B with bounds keeps the line search away from degenerate sigma
         # values (log2 in [-15, 5] ↔ sigma in [~3e-5, 32]) that make the
         # log-evidence Hessian singular.
@@ -181,6 +188,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             print(f'Recovered hypers: {np.array(result.x)}')
             print(f'Log-evidence:     {np.round(-result.fun, 5)}')
             print(f'Hyper change:     {np.round(diff, 4)}')
+        _emit_status(status_callback, f"Hyperparameter update size {diff:.4f}.", stage="hyper")
 
         if diff > 0.1:
             _unpack_optvals(result.x, current_hyper, optList, K)
@@ -205,6 +213,16 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         hess_info['hyp_std'] = np.sqrt(np.diag(np.linalg.inv(num_hess)))
 
     return best_hyper, best_logEvd, best_eMode, hess_info
+
+
+def _emit_status(callback, message, stage=None, **extra):
+    if callback is None:
+        return
+    payload = {"message": message}
+    if stage is not None:
+        payload["stage"] = stage
+    payload.update(extra)
+    callback(payload)
 
 
 # ---------------------------------------------------------------------------

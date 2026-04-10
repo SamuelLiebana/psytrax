@@ -25,6 +25,8 @@ import numpy as np
 
 N_PARAMS = 6
 PARAM_NAMES = ['wr', 'wl', 'br', 'bl', 'z', 'sig_i']
+N_DYNAMIC_PARAMS = 5
+DYNAMIC_PARAM_NAMES = ['wr', 'wl', 'br', 'bl', 'z']
 
 # Fixed observation noise (not fitted)
 _SIG_O = 1.0
@@ -116,6 +118,46 @@ def default_E0(N, n_params=N_PARAMS):
         np.full(N, 0.1),              # sig_i
     ])
     return E0
+
+
+def default_E0_fixed_sig_i(N, n_params=N_DYNAMIC_PARAMS):
+    """Heuristic initial parameter matrix when sig_i is fixed across trials."""
+    return default_E0(N)[:n_params]
+
+
+def default_hyper_fixed_sig_i(n_params=N_DYNAMIC_PARAMS, shared_sigma=False):
+    """Starting hyperparameters when sig_i is fixed across learning."""
+    if shared_sigma:
+        sigma = float(2 ** -3)
+    else:
+        sigma = np.array([2 ** -3] * n_params)
+    return {
+        'sigma': sigma,
+        'sigInit': np.full(n_params, 2 ** 4),
+        'sigDay': None,
+    }
+
+
+def make_fixed_sig_i_model(sig_i_fixed):
+    """Return a race-model view where sig_i is a single fixed scalar.
+
+    The returned model has 5 trial-varying parameters:
+    wr, wl, br, bl, z. The nuisance parameter sig_i is held constant across
+    learning but still contributes to the trial likelihood.
+    """
+    sig_i_fixed = float(sig_i_fixed)
+
+    def log_lik_trial_fixed(params, dat_trial):
+        full = jnp.concatenate([params, jnp.array([sig_i_fixed], dtype=params.dtype)])
+        return log_lik_trial(full, dat_trial)
+
+    return (
+        log_lik_trial_fixed,
+        N_DYNAMIC_PARAMS,
+        DYNAMIC_PARAM_NAMES.copy(),
+        default_hyper_fixed_sig_i,
+        default_E0_fixed_sig_i,
+    )
 
 
 # -----------------------------------------------------------------------
