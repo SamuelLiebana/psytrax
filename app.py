@@ -23,6 +23,13 @@ if hasattr(np, "trapezoid"):
 else:
     _trapezoid = np.trapz
 
+_RACE_DYNAMIC_PARAMS = {'wr', 'wl', 'br', 'bl', 'z'}
+_RACE_FULL_PARAMS = _RACE_DYNAMIC_PARAMS | {'sig_i'}
+_DDM_EXACT_PARAMS = {'w', 'b', 'a', 'z'}
+_DDM_APPROX_PARAMS = {'w', 'b', 'z'}
+_LOGISTIC_PARAMS = {'w', 'b'}
+_RT_CURVE_FAMILIES = {'race', 'ddm_exact', 'ddm_approx'}
+
 def _style_ax(ax, xlabel=None, ylabel=None, title=None):
     ax.set_facecolor('#0e1117')
     ax.tick_params(colors='white')
@@ -117,13 +124,112 @@ def _race_curves(params_window, param_names, c_grid, fixed_params=None, t_max=30
     return p_rights, mean_rts
 
 
-def _race_model_info(param_names, result=None):
+def _ddm_exact_hit_prob(drift, boundary, start):
+    """Upper-boundary hit probability for the exact DDM."""
+    drift = np.asarray(drift, dtype=float)
+    p_right = np.empty_like(drift, dtype=float)
+    near_zero = np.isclose(drift, 0.0, atol=1e-8)
+    pos = drift > 1e-8
+    neg = drift < -1e-8
+
+    p_right[near_zero] = start / boundary
+    if np.any(pos):
+        p_right[pos] = (
+            -np.expm1(-2.0 * drift[pos] * start)
+            / -np.expm1(-2.0 * drift[pos] * boundary)
+        )
+    if np.any(neg):
+        u = -2.0 * drift[neg]
+        p_right[neg] = (
+            np.exp(u * (start - boundary))
+            * (-np.expm1(-u * start))
+            / -np.expm1(-u * boundary)
+        )
+    return np.clip(p_right, 0.0, 1.0)
+
+
+def _ddm_exact_curves(params_window, param_names, c_grid):
+    """Compute psychometric and chronometric predictions for the exact DDM."""
+    mp = np.mean(params_window, axis=1)
+    idx = {name: i for i, name in enumerate(param_names)}
+    w = float(mp[idx['w']])
+    b = float(mp[idx['b']])
+    a = max(float(mp[idx['a']]), 1e-6)
+    z_rel = float(np.clip(mp[idx['z']], 1e-6, 1.0 - 1e-6))
+    z_abs = a * z_rel
+
+    drift = w * np.asarray(c_grid, dtype=float) + b
+    p_right = _ddm_exact_hit_prob(drift, a, z_abs)
+
+    mean_rts = np.empty_like(drift, dtype=float)
+    near_zero = np.isclose(drift, 0.0, atol=1e-8)
+    mean_rts[near_zero] = z_abs * (a - z_abs)
+    mean_rts[~near_zero] = (a * p_right[~near_zero] - z_abs) / drift[~near_zero]
+    mean_rts = np.where(np.isfinite(mean_rts), np.maximum(mean_rts, 0.0), np.nan)
+    return p_right, mean_rts
+
+
+def _ddm_approx_curves(params_window, param_names, c_grid, n_t=2000):
+    """Compute psychometric and chronometric predictions for the approx DDM."""
+    mp = np.mean(params_window, axis=1)
+    idx = {name: i for i, name in enumerate(param_names)}
+    w = float(mp[idx['w']])
+    b = float(mp[idx['b']])
+    z = max(float(mp[idx['z']]), 1e-6)
+
+    drift = w * np.asarray(c_grid, dtype=float) + b
+    finite_abs = np.abs(drift[np.isfinite(drift)])
+    slowest_drift = max(float(np.min(finite_abs)) if finite_abs.size else 0.05, 0.05)
+    t_max = max(10.0, 12.0 * z / slowest_drift, 12.0 * z * z)
+    # Log spacing keeps resolution near the sharp early-time peak without
+    # sacrificing coverage of long tails when drift is close to zero.
+    t_grid = np.geomspace(1e-4, t_max, n_t)
+
+    p_rights = np.zeros(len(c_grid))
+    mean_rts = np.zeros(len(c_grid))
+
+    for i, v in enumerate(drift):
+        F_right = _ig_cdf(z, v, 1.0, t_grid)
+        F_left = _ig_cdf(z, -v, 1.0, t_grid)
+        f_right = _ig_pdf(z, v, 1.0, t_grid)
+        p_rights[i] = np.clip(_trapezoid(f_right * (1.0 - F_left), t_grid), 0.0, 1.0)
+        mean_rts[i] = max(_trapezoid((1.0 - F_right) * (1.0 - F_left), t_grid), 0.0)
+
+    return p_rights, mean_rts
+
+
+def _model_family_info(param_names, result=None):
     fixed_params = (result or {}).get('fixed_params') or {}
-    dynamic = {'wr', 'wl', 'br', 'bl', 'z'}
-    full = dynamic | {'sig_i'}
     param_set = set(param_names)
-    is_race = param_set == full or (param_set == dynamic and 'sig_i' in fixed_params)
-    return is_race, fixed_params
+    if param_set == _RACE_FULL_PARAMS or (param_set == _RACE_DYNAMIC_PARAMS and 'sig_i' in fixed_params):
+        return 'race', fixed_params
+    if param_set == _DDM_EXACT_PARAMS:
+        return 'ddm_exact', fixed_params
+    if param_set == _DDM_APPROX_PARAMS:
+        return 'ddm_approx', fixed_params
+    if param_set == _LOGISTIC_PARAMS:
+        return 'logistic', fixed_params
+    if _is_mlp(param_names):
+        return 'mlp', fixed_params
+    return 'unknown', fixed_params
+
+
+def _curve_predictions(params_window, param_names, c_grid, model_family, fixed_params=None):
+    if model_family == 'race':
+        return _race_curves(params_window, param_names, c_grid, fixed_params=fixed_params)
+    if model_family == 'ddm_exact':
+        return _ddm_exact_curves(params_window, param_names, c_grid)
+    if model_family == 'ddm_approx':
+        return _ddm_approx_curves(params_window, param_names, c_grid)
+    if model_family == 'logistic':
+        mp = np.mean(params_window, axis=1)
+        iw = param_names.index('w')
+        ib = param_names.index('b')
+        psych = 1.0 / (1.0 + np.exp(-(mp[iw] * c_grid + mp[ib])))
+        return psych, None
+    if model_family == 'mlp':
+        return _mlp_psychometric(params_window, param_names, c_grid), None
+    return None, None
 
 
 def _shared_ylim(series_list, pad_frac=0.05, min_pad=0.05):
@@ -901,15 +1007,10 @@ elif page == 'Visualise Results':
     st.divider()
 
     # --- Model detection ---
-    RACE_PARAMS     = {'wr', 'wl', 'br', 'bl', 'z', 'sig_i'}
-    LOGISTIC_PARAMS = {'w', 'b'}
-    param_set  = set(param_names)
-    is_race, fixed_params = _race_model_info(param_names, result=result)
-    is_logistic= param_set == LOGISTIC_PARAMS
-    is_mlp     = _is_mlp(param_names)
+    model_family, fixed_params = _model_family_info(param_names, result=result)
     # Locate RT array (stored as 'T' or 'times')
     _rt_key = next((k for k in ('T', 'times') if k in dat and dat[k] is not None), None)
-    has_rt  = (_rt_key is not None) and is_race
+    has_rt  = (_rt_key is not None) and model_family in _RT_CURVE_FAMILIES
 
     COLORS = ['#4e9af1', '#f1a44e', '#4ef17a', '#f14e7a', '#c44ef1', '#f1f14e']
 
@@ -990,17 +1091,11 @@ elif page == 'Visualise Results':
                        color='white', zorder=3)
 
             params_win = params[:, t0:t1]
-            if is_race:
-                p_m, _ = _race_curves(params_win, param_names, c_grid, fixed_params=fixed_params)
+            p_m, _ = _curve_predictions(
+                params_win, param_names, c_grid, model_family, fixed_params=fixed_params
+            )
+            if p_m is not None:
                 ax.plot(c_grid, p_m, color='#4e9af1', lw=2)
-            elif is_logistic:
-                iw = param_names.index('w'); ib = param_names.index('b')
-                w_m = np.mean(params_win[iw]); b_m = np.mean(params_win[ib])
-                ax.plot(c_grid, 1 / (1 + np.exp(-(w_m * c_grid + b_m))),
-                        color='#4e9af1', lw=2)
-            elif is_mlp:
-                ax.plot(c_grid, _mlp_psychometric(params_win, param_names, c_grid),
-                        color='#4e9af1', lw=2)
 
             ax.axhline(0.5, color='white', lw=0.5, ls='--', alpha=0.4)
             ax.axvline(0,   color='white', lw=0.5, ls='--', alpha=0.4)
@@ -1011,7 +1106,7 @@ elif page == 'Visualise Results':
         st.pyplot(fig_evo)
         plt.close(fig_evo)
 
-        # --- Chronometric evolution (race model + RT data only) ---
+        # --- Chronometric evolution (RT-capable models only) ---
         if has_rt:
             T_data = dat[_rt_key]
             st.subheader('Chronometric curve: evolution over learning')
@@ -1031,8 +1126,10 @@ elif page == 'Visualise Results':
                     c_uniq_win  = np.unique(c_win)
                     rt_win_mean = np.array([rt_win[c_win == cv].mean() for cv in c_uniq_win])
                     n_win       = np.array([np.sum(c_win == cv) for cv in c_uniq_win])
-                    _, rt_m = _race_curves(params[:, t0:t1], param_names, c_grid,
-                                           fixed_params=fixed_params)
+                    _, rt_m = _curve_predictions(
+                        params[:, t0:t1], param_names, c_grid, model_family,
+                        fixed_params=fixed_params
+                    )
                     panel_data.append((t0, t1, c_uniq_win, rt_win_mean, n_win, rt_m))
                     y_series.extend([rt_win_mean, rt_m])
 
@@ -1173,7 +1270,11 @@ elif page == 'Compare Models':
 
         # Detect if any model has RT data
         _rt_key_cm = next((k for k in ('T', 'times') if k in dat and dat[k] is not None), None)
-        any_race   = any(_race_model_info(r['param_names'], result=r)[0] for r in results.values())
+        model_families = {
+            name: _model_family_info(res['param_names'], result=res)[0]
+            for name, res in results.items()
+        }
+        any_rt_model = any(family in _RT_CURVE_FAMILIES for family in model_families.values())
 
         # --- Psychometric evolution ---
         st.subheader('Psychometric curve: evolution over learning')
@@ -1200,18 +1301,12 @@ elif page == 'Compare Models':
                     pn  = res['param_names']
                     par = res['params'][:, t0:t1]
                     col = colors[mi % len(colors)]
-                    race_flag, fixed_params = _race_model_info(pn, result=res)
-                    if race_flag:
-                        p_m, _ = _race_curves(par, pn, c_grid, fixed_params=fixed_params)
+                    family, fixed_params = _model_family_info(pn, result=res)
+                    p_m, _ = _curve_predictions(
+                        par, pn, c_grid, family, fixed_params=fixed_params
+                    )
+                    if p_m is not None:
                         ax.plot(c_grid, p_m, color=col, lw=2, label=mname)
-                    elif set(pn) == {'w', 'b'}:
-                        iw = pn.index('w'); ib = pn.index('b')
-                        w_m = np.mean(par[iw]); b_m = np.mean(par[ib])
-                        ax.plot(c_grid, 1 / (1 + np.exp(-(w_m * c_grid + b_m))),
-                                color=col, lw=2, label=mname)
-                    elif _is_mlp(pn):
-                        ax.plot(c_grid, _mlp_psychometric(par, pn, c_grid),
-                                color=col, lw=2, label=mname)
 
                 ax.axhline(0.5, color='white', lw=0.5, ls='--', alpha=0.4)
                 ax.axvline(0,   color='white', lw=0.5, ls='--', alpha=0.4)
@@ -1224,8 +1319,8 @@ elif page == 'Compare Models':
             st.pyplot(fig_p)
             plt.close(fig_p)
 
-        # --- Chronometric evolution (race models + RT data) ---
-        if _rt_key_cm is not None and any_race:
+        # --- Chronometric evolution (RT-capable models + RT data) ---
+        if _rt_key_cm is not None and any_rt_model:
             T_data = dat[_rt_key_cm]
             st.subheader('Chronometric curve: evolution over learning')
             with st.spinner('Computing chronometric curves…'):
@@ -1247,9 +1342,11 @@ elif page == 'Compare Models':
                     for mi, (mname, res) in enumerate(results.items()):
                         pn  = res['param_names']
                         par = res['params'][:, t0:t1]
-                        race_flag, fixed_params = _race_model_info(pn, result=res)
-                        if race_flag:
-                            _, rt_m = _race_curves(par, pn, c_grid, fixed_params=fixed_params)
+                        family, fixed_params = _model_family_info(pn, result=res)
+                        if family in _RT_CURVE_FAMILIES:
+                            _, rt_m = _curve_predictions(
+                                par, pn, c_grid, family, fixed_params=fixed_params
+                            )
                             model_curves.append((mname, colors[mi % len(colors)], rt_m))
                             y_series.append(rt_m)
                     panel_data.append((t0, t1, c_uniq_win, rt_win_mean, n_win, model_curves))
