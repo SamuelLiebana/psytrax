@@ -665,29 +665,77 @@ barrier). Faster than the exact DDM; accurate when error rates are low.
         _race_fixed_sig_i = False
 
     # ------------------------------------------------------------------
-    # Early learning-rule selection (drives DATA_SPEC augmentation)
+    # Learning rule selection & construction
     # ------------------------------------------------------------------
+    st.markdown('**Learning rule** *(optional)*')
+    st.caption(
+        'Shift the random-walk transition mean with a learning rule. '
+        'psytrax will optimise per-parameter learning rates (α) alongside σ.'
+    )
+
     _lr_choice = st.selectbox(
-        'Learning rule *(optional — adds reward column to data requirements)*',
+        'Learning rule',
         ['None', 'REINFORCE (built-in)', 'Upload custom (.py)'],
         key='fit_lr_choice',
     )
 
-    # If REINFORCE is selected, augment DATA_SPEC so that the reward column
-    # appears in the column-mapping UI alongside the model's own inputs.
+    _learning_rule = None
+    _lr_reward_col = None
+
     if _lr_choice == 'REINFORCE (built-in)':
         from psytrax.learning_rules import augment_data_spec, make_reinforce
-        _lr_reward_key = st.text_input(
+        _lr_reward_col = st.text_input(
             'Reward input key',
             value='reward',
             key='fit_lr_reward_key',
             help='Name for the reward signal in `data["inputs"]`. '
                  'Typically 1 = rewarded, 0 = unrewarded.',
         ).strip() or 'reward'
+        # Augment DATA_SPEC so the reward column appears in the column-mapping
+        # UI alongside the model's own inputs.
         _data_spec = augment_data_spec(_data_spec, make_reinforce(
-            _llt, reward_key=_lr_reward_key))
-    else:
-        _lr_reward_key = None
+            _llt, reward_key=_lr_reward_col))
+        # Build the learning rule callable (race model with fixed sig_i is
+        # deferred until _run_fit where the wrapped likelihood is available).
+        if model_choice == 'Race model (inverse-Gaussian)' and _race_fixed_sig_i:
+            _learning_rule = 'reinforce_deferred'
+        else:
+            _learning_rule = make_reinforce(_llt, reward_key=_lr_reward_col)
+
+    elif _lr_choice == 'Upload custom (.py)':
+        st.markdown("""
+Upload a `.py` file that defines a `learning_rule(params, dat_trial)` function.
+The function must be JAX-traceable and return a `(K,)` array — the unnormalised
+update direction for each parameter.
+
+```python
+import jax, jax.numpy as jnp
+
+def learning_rule(params, dat_trial):
+    # Example: simple gradient-weighted reward
+    score = jax.grad(my_log_lik)(params, dat_trial)
+    return score * dat_trial['inputs']['reward']
+```
+""")
+        _lr_file = st.file_uploader('Learning rule file (.py)', type=['py'], key='fit_lr_upload')
+        if _lr_file is not None:
+            import importlib.util, tempfile, sys
+            _lr_src = _lr_file.read().decode('utf-8')
+            st.code(_lr_src, language='python')
+            try:
+                with tempfile.NamedTemporaryFile(suffix='.py', delete=False, mode='w') as _tmp:
+                    _tmp.write(_lr_src)
+                    _tmp_path = _tmp.name
+                _spec = importlib.util.spec_from_file_location('_user_lr', _tmp_path)
+                _lr_mod = importlib.util.module_from_spec(_spec)
+                _spec.loader.exec_module(_lr_mod)
+                if not hasattr(_lr_mod, 'learning_rule'):
+                    st.error('The uploaded file must define a `learning_rule(params, dat_trial)` function.')
+                else:
+                    _learning_rule = _lr_mod.learning_rule
+                    st.success('Custom learning rule loaded successfully.')
+            except Exception as _lr_err:
+                st.error(f'Failed to load learning rule: {_lr_err}')
 
     # Show the model's data requirements
     _req_inputs = list(_data_spec.get('inputs', {}).keys())
@@ -883,75 +931,8 @@ barrier). Faster than the exact DDM; accurate when error rates are low.
 
     st.divider()
 
-    # --- Learning rule (construct the actual callable) ---
-    st.subheader('4. Learning rule')
-    st.markdown(
-        'Shift the random-walk transition mean with a learning rule. '
-        'psytrax will optimise per-parameter learning rates (α) alongside σ.'
-    )
-
-    _learning_rule = None
-    _lr_reward_col = _lr_reward_key  # set in section 2 if REINFORCE selected
-
-    if _lr_choice == 'REINFORCE (built-in)':
-        # Reward column was already mapped via DATA_SPEC in section 3.
-        # Verify it ended up in the data dict.
-        _input_keys = list(raw.get('inputs', {}).keys())
-        if _lr_reward_col and _lr_reward_col in _input_keys:
-            from psytrax.learning_rules import make_reinforce
-            # For the race model with fixed sig_i we need to handle this later in _run_fit.
-            if model_choice == 'Race model (inverse-Gaussian)' and _race_fixed_sig_i:
-                _learning_rule = 'reinforce_deferred'
-            else:
-                _learning_rule = make_reinforce(_llt, reward_key=_lr_reward_col)
-            st.success(f'REINFORCE learning rule using reward from `inputs["{_lr_reward_col}"]`.')
-        else:
-            st.warning(
-                f'Reward key `{_lr_reward_col}` not found in data inputs '
-                f'({_input_keys}). Map it in section 3 above.'
-            )
-
-    elif _lr_choice == 'Upload custom (.py)':
-        st.markdown("""
-Upload a `.py` file that defines a `learning_rule(params, dat_trial)` function.
-The function must be JAX-traceable and return a `(K,)` array — the unnormalised
-update direction for each parameter.
-
-```python
-import jax, jax.numpy as jnp
-
-def learning_rule(params, dat_trial):
-    # Example: simple gradient-weighted reward
-    score = jax.grad(my_log_lik)(params, dat_trial)
-    return score * dat_trial['inputs']['reward']
-```
-""")
-        _lr_file = st.file_uploader('Learning rule file (.py)', type=['py'], key='fit_lr_upload')
-        if _lr_file is not None:
-            import importlib.util, tempfile, sys
-            _lr_src = _lr_file.read().decode('utf-8')
-            st.code(_lr_src, language='python')
-            try:
-                with tempfile.NamedTemporaryFile(suffix='.py', delete=False, mode='w') as _tmp:
-                    _tmp.write(_lr_src)
-                    _tmp_path = _tmp.name
-                _spec = importlib.util.spec_from_file_location('_user_lr', _tmp_path)
-                _lr_mod = importlib.util.module_from_spec(_spec)
-                _spec.loader.exec_module(_lr_mod)
-                if not hasattr(_lr_mod, 'learning_rule'):
-                    st.error('The uploaded file must define a `learning_rule(params, dat_trial)` function.')
-                else:
-                    _learning_rule = _lr_mod.learning_rule
-                    st.success('Custom learning rule loaded successfully.')
-            except Exception as _lr_err:
-                st.error(f'Failed to load learning rule: {_lr_err}')
-    else:
-        st.info('No learning rule selected.')
-
-    st.divider()
-
     # --- Fitting options ---
-    st.subheader('5. Configure fitting')
+    st.subheader('4. Configure fitting')
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -1027,7 +1008,7 @@ def learning_rule(params, dat_trial):
     st.divider()
 
     # --- Run ---
-    st.subheader('6. Fit')
+    st.subheader('5. Fit')
 
     if 'fit_running' not in st.session_state:
         st.session_state['fit_running'] = False
