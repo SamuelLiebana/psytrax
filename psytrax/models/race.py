@@ -29,6 +29,22 @@ N_DYNAMIC_PARAMS = 5
 DYNAMIC_PARAM_NAMES = ['wr', 'wl', 'br', 'bl', 'z']
 DEFAULT_FIXED_SIG_I = 0.1
 
+DATA_SPEC = {
+    'inputs': {
+        'c': {'description': 'Signed stimulus strength (e.g. contrast)', 'required': True},
+    },
+    'response': {
+        'key': 'r',
+        'description': 'Choice — discrete (1=right, 0=left) or continuous in [0, 1]',
+        'required': True,
+    },
+    'rt': {
+        'key': 'T',
+        'description': 'Reaction time in seconds',
+        'required': True,
+    },
+}
+
 # Fixed observation noise (not fitted)
 _SIG_O = 1.0
 _INVALID_LOG_LIK = -1e12

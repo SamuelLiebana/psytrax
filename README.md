@@ -110,6 +110,26 @@ result = psytrax.fit(data=data, log_lik_trial=my_log_lik_trial, n_params=2)
 
 The function must be written with **`jax.numpy`** (not `numpy`) so that psytrax can differentiate through it to obtain the gradient and Hessian needed for MAP estimation and the Laplace approximation.
 
+You can also add a `DATA_SPEC` dict to your model to declare its data requirements. The web app uses this to drive interactive column mapping when users upload CSV data:
+
+```python
+DATA_SPEC = {
+    'inputs': {
+        'x': {'description': 'Stimulus feature', 'required': True},
+    },
+    'response': {
+        'key': 'r',
+        'description': 'Choice — discrete or continuous',
+        'required': True,
+    },
+    'rt': {                                    # omit if the model does not use RT
+        'key': 'T',
+        'description': 'Reaction time (seconds)',
+        'required': True,
+    },
+}
+```
+
 ---
 
 ## Built-in models
@@ -202,7 +222,7 @@ lr = make_reinforce_baseline(my_log_lik_trial, reward_key='reward', baseline_key
 | Key | Alias | Type | Description |
 |-----|-------|------|-------------|
 | `inputs` | — | `dict` | Dict of input arrays, each `(N, ...)` |
-| `responses` | `r` | `array (N,)` | Integer responses (e.g. 0/1) |
+| `responses` | `r` | `array (N,)` | Response variable — discrete (e.g. 0/1) or continuous |
 | `times` | `T` | `array (N,)` | Reaction times *(optional)* |
 | `session_lengths` | `dayLength` | `array` | Trials per session *(optional)* |
 

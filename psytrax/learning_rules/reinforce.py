@@ -57,6 +57,9 @@ def make_reinforce(log_lik_trial, reward_key='reward'):
     learning_rule : callable
         Function with signature ``(params, dat_trial) -> (K,)`` suitable
         for passing to ``psytrax.fit(..., learning_rule=...)``.
+        The returned function has a ``required_data_keys`` attribute — a dict
+        mapping each required ``data['inputs']`` key to a human-readable
+        description, suitable for merging into a model's ``DATA_SPEC``.
     """
     grad_fn = jax.grad(log_lik_trial, argnums=0)
 
@@ -64,6 +67,13 @@ def make_reinforce(log_lik_trial, reward_key='reward'):
         score = grad_fn(params, dat_trial)
         reward = dat_trial['inputs'][reward_key]
         return score * reward
+
+    learning_rule.required_data_keys = {
+        reward_key: {
+            'description': 'Reward signal (1 = rewarded, 0 = unrewarded)',
+            'required': True,
+        },
+    }
 
     return learning_rule
 
@@ -103,5 +113,16 @@ def make_reinforce_baseline(log_lik_trial, reward_key='reward',
         score = grad_fn(params, dat_trial)
         advantage = dat_trial['inputs'][reward_key] - dat_trial['inputs'][baseline_key]
         return score * advantage
+
+    learning_rule.required_data_keys = {
+        reward_key: {
+            'description': 'Reward signal (1 = rewarded, 0 = unrewarded)',
+            'required': True,
+        },
+        baseline_key: {
+            'description': 'Baseline signal subtracted from reward to reduce variance',
+            'required': True,
+        },
+    }
 
     return learning_rule

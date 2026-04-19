@@ -17,6 +17,17 @@ import numpy as np
 N_PARAMS = 2
 PARAM_NAMES = ['w', 'b']
 
+DATA_SPEC = {
+    'inputs': {
+        'c': {'description': 'Signed stimulus strength (e.g. contrast)', 'required': True},
+    },
+    'response': {
+        'key': 'r',
+        'description': 'Choice — discrete (0/1) or continuous in [0, 1]',
+        'required': True,
+    },
+}
+
 
 def log_lik_trial(params, dat_trial):
     """Per-trial log-likelihood for logistic regression.

@@ -82,12 +82,24 @@ def make_model(input_keys=None, hidden=_H):
         from psytrax.learning_rules import make_reinforce
         return make_reinforce(log_lik_trial, reward_key=reward_key)
 
-    return log_lik_trial, K, param_names, default_hyper, default_E0, default_learning_rule
+    data_spec = {
+        'inputs': {
+            k: {'description': f'Input feature "{k}"', 'required': True}
+            for k in input_keys
+        },
+        'response': {
+            'key': 'r',
+            'description': 'Choice — discrete (0/1) or continuous in [0, 1]',
+            'required': True,
+        },
+    }
+
+    return log_lik_trial, K, param_names, default_hyper, default_E0, default_learning_rule, data_spec
 
 
 # ---------------------------------------------------------------------------
 # Default single-input (contrast only) model, ready to import directly
 # ---------------------------------------------------------------------------
-log_lik_trial, N_PARAMS, PARAM_NAMES, default_hyper, default_E0, default_learning_rule = make_model(
+log_lik_trial, N_PARAMS, PARAM_NAMES, default_hyper, default_E0, default_learning_rule, DATA_SPEC = make_model(
     input_keys=['c'], hidden=_H
 )

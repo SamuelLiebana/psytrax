@@ -32,6 +32,23 @@ from jax.scipy.stats.norm import cdf   as jax_cdf
 # Within-trial noise is fixed at 1 (unidentifiable against z).
 N_PARAMS    = 3
 PARAM_NAMES = ['w', 'b', 'z']
+
+DATA_SPEC = {
+    'inputs': {
+        'c': {'description': 'Signed stimulus strength (e.g. contrast)', 'required': True},
+    },
+    'response': {
+        'key': 'r',
+        'description': 'Choice — discrete (1=right, 0=left) or continuous in [0, 1]',
+        'required': True,
+    },
+    'rt': {
+        'key': 'T',
+        'description': 'Reaction time in seconds (non-decision time already removed)',
+        'required': True,
+    },
+}
+
 _SIG        = 1.0
 _INVALID_LOG_LIK = -1e12
 

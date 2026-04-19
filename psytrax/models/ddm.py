@@ -47,6 +47,22 @@ from jax import jit, lax
 N_PARAMS    = 4
 PARAM_NAMES = ['w', 'b', 'a', 'z']
 
+DATA_SPEC = {
+    'inputs': {
+        'c': {'description': 'Signed stimulus strength (e.g. contrast)', 'required': True},
+    },
+    'response': {
+        'key': 'r',
+        'description': 'Choice — discrete (1=upper/right, 0=lower/left) or continuous in [0, 1]',
+        'required': True,
+    },
+    'rt': {
+        'key': 'T',
+        'description': 'Reaction time in seconds (non-decision time already removed)',
+        'required': True,
+    },
+}
+
 _INVALID_LOG_LIK = -1e12
 _TAU_CRIT        = 0.18   # switch threshold between large-t and small-t series
 _N_LARGE         = 20     # terms in Ratcliff (large-τ) series

@@ -43,7 +43,7 @@ def fit(data, log_lik_trial, n_params,
         Either a data dict or a path to a .npy file containing one.
         Required keys:
           - 'inputs'   : dict of input arrays, each of shape (N, ...)
-          - 'responses': integer array of shape (N,)  [also accepts 'r']
+          - 'responses': array of shape (N,) — discrete (0/1) or continuous  [also accepts 'r']
         Optional keys:
           - 'times'           : RT array shape (N,)   [also accepts 'T']
           - 'session_lengths' : array of per-session trial counts [also 'dayLength']
@@ -175,6 +175,17 @@ def fit(data, log_lik_trial, n_params,
         if hyper.get('alpha') is None:
             hyper['alpha'] = float(2 ** -3) if shared_sigma else np.full(K, 2 ** -3)
         opt_list.append('alpha')
+
+        # Validate that the data contains the keys the learning rule needs
+        from psytrax.learning_rules import get_required_data_keys
+        _lr_keys = get_required_data_keys(learning_rule)
+        _missing_lr = [k for k in _lr_keys if k not in dat['inputs']]
+        if _missing_lr:
+            raise ValueError(
+                f"learning_rule requires data['inputs'] key(s) {_missing_lr} "
+                f"but only found {list(dat['inputs'].keys())}. "
+                f"Add the missing column(s) to your data dict."
+            )
 
     _validate_hyper(hyper, K)
 

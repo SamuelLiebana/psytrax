@@ -481,7 +481,7 @@ streamlit run app.py
 | Key | Alias | Type | Description |
 |-----|-------|------|-------------|
 | `inputs` | — | `dict` | Dict of input arrays, each `(N, ...)` |
-| `responses` | `r` | `array (N,)` | Integer responses (e.g. 0/1) |
+| `responses` | `r` | `array (N,)` | Response variable — discrete (e.g. 0/1) or continuous |
 | `times` | `T` | `array (N,)` | Reaction times *(optional)* |
 | `session_lengths` | `dayLength` | `array` | Trials per session *(optional)* |
 """)
@@ -547,7 +547,7 @@ columns to the required fields.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `inputs` | **Yes** | One or more columns used as model inputs |
-| `responses` | **Yes** | Binary response column (0 / 1 or Left / Right) |
+| `responses` | **Yes** | Response column — numeric (discrete or continuous) or text labels (auto-mapped to 0/1) |
 | `times` | No | Reaction-time column (seconds) |
 | `session_id` | No | Column whose value identifies the session — used to compute session lengths |
 """)
@@ -557,96 +557,32 @@ columns to the required fields.
             st.info('Upload a `.npy` or `.csv` file to continue.')
             st.stop()
 
+    # Determine data format: CSV DataFrame (column mapping deferred until model
+    # selection) vs ready-to-use .npy dict.
+    _csv_df = None
+
     if data_source == 'Upload my own file' and data_file.name.endswith('.csv'):
-        df = pd.read_csv(data_file)
-        st.dataframe(df.head(5), use_container_width=True)
-        cols = ['— none —'] + list(df.columns)
-        num_cols = ['— none —'] + [c for c in df.columns
-                                    if pd.api.types.is_numeric_dtype(df[c])]
-
-        st.markdown('**Map columns to psytrax fields:**')
-        mc1, mc2 = st.columns(2)
-        with mc1:
-            input_cols = st.multiselect(
-                'Input columns (model inputs)', df.columns.tolist(),
-                default=[c for c in df.columns
-                         if c.lower() in ('c', 'contrast', 'signed_contrast')],
-                key='csv_inputs',
-            )
-            resp_col = st.selectbox('Response column', cols, key='csv_resp',
-                                    index=next((i for i, c in enumerate(cols)
-                                                if c.lower() in ('r', 'response', 'responses',
-                                                                  'choice')), 0))
-        with mc2:
-            rt_col = st.selectbox('Reaction-time column (optional)', num_cols,
-                                  key='csv_rt',
-                                  index=next((i for i, c in enumerate(num_cols)
-                                              if 'time' in c.lower() or c.lower() == 't'), 0))
-            sess_col = st.selectbox('Session-ID column (optional)', cols,
-                                    key='csv_sess',
-                                    index=next((i for i, c in enumerate(cols)
-                                                if 'sess' in c.lower() or 'day' in c.lower()), 0))
-
-        if not input_cols:
-            st.warning('Select at least one input column.')
-            st.stop()
-        if resp_col == '— none —':
-            st.warning('Select a response column.')
-            st.stop()
-
-        # Build responses (handle text labels)
-        resp_raw = df[resp_col]
-        if pd.api.types.is_numeric_dtype(resp_raw):
-            resp_arr = resp_raw.to_numpy(dtype=float)
-        else:
-            unique_vals = resp_raw.dropna().unique()
-            if len(unique_vals) != 2:
-                st.error(f'Response column has {len(unique_vals)} unique values; expected 2.')
-                st.stop()
-            # Map alphabetically: lower value → 0, higher → 1
-            unique_sorted = sorted(unique_vals)
-            st.info(f'Mapping responses: `{unique_sorted[0]}` → 0, `{unique_sorted[1]}` → 1')
-            resp_arr = resp_raw.map({unique_sorted[0]: 0.0, unique_sorted[1]: 1.0}).to_numpy(dtype=float)
-
-        # Drop rows with NaN in required columns
-        keep_mask = np.isfinite(resp_arr)
-        for ic in input_cols:
-            if pd.api.types.is_numeric_dtype(df[ic]):
-                keep_mask &= np.isfinite(df[ic].to_numpy(dtype=float))
-        if rt_col != '— none —':
-            keep_mask &= np.isfinite(df[rt_col].to_numpy(dtype=float))
-        if keep_mask.sum() < len(df):
-            st.warning(f'Dropped {len(df) - keep_mask.sum()} rows with NaN/non-finite values.')
-        df_clean = df[keep_mask].reset_index(drop=True)
-        resp_arr = resp_arr[keep_mask]
-
-        raw = {
-            'inputs': {ic: df_clean[ic].to_numpy(dtype=float) for ic in input_cols},
-            'responses': resp_arr,
-        }
-        if rt_col != '— none —':
-            raw['times'] = df_clean[rt_col].to_numpy(dtype=float)
-        if sess_col != '— none —':
-            from itertools import groupby as _groupby
-            sess_vals = df_clean[sess_col].to_numpy()
-            raw['session_lengths'] = np.array(
-                [sum(1 for _ in g) for _, g in _groupby(sess_vals)]
-            )
-
+        _csv_df = pd.read_csv(data_file)
+        raw = None  # will be built after model selection + column mapping
+        st.dataframe(_csv_df.head(5), use_container_width=True)
+        st.caption(f'{len(_csv_df)} rows × {len(_csv_df.columns)} columns.  '
+                   'Column mapping will appear after you choose a model below.')
     elif data_source == 'Upload my own file':
         raw = np.load(data_file, allow_pickle=True).item()  # .npy upload
+    # else: example data — raw already loaded at line ~540
 
-    # Summary preview
-    _r_key  = 'responses' if 'responses' in raw else ('r' if 'r' in raw else None)
-    _N_data = len(raw[_r_key]) if _r_key else '?'
-    _has_rt  = any(k in raw for k in ('times', 'T'))
-    _has_ses = any(k in raw for k in ('session_lengths', 'dayLength'))
-    st.success(
-        f'Ready: **{_N_data}** trials — '
-        f'inputs: `{list(raw.get("inputs", {}).keys())}` — '
-        f'RT: {"yes" if _has_rt else "no"} — '
-        f'sessions: {"yes" if _has_ses else "no"}'
-    )
+    # Show a quick summary for .npy / example data
+    if raw is not None:
+        _r_key  = 'responses' if 'responses' in raw else ('r' if 'r' in raw else None)
+        _N_data = len(raw[_r_key]) if _r_key else '?'
+        _has_rt  = any(k in raw for k in ('times', 'T'))
+        _has_ses = any(k in raw for k in ('session_lengths', 'dayLength'))
+        st.success(
+            f'Ready: **{_N_data}** trials — '
+            f'inputs: `{list(raw.get("inputs", {}).keys())}` — '
+            f'RT: {"yes" if _has_rt else "no"} — '
+            f'sessions: {"yes" if _has_ses else "no"}'
+        )
 
     st.divider()
 
@@ -665,19 +601,18 @@ columns to the required fields.
             make_fixed_sig_i_model as _make_fixed_sig_i_model,
             default_hyper_fixed_sig_i as _race_fixed_dhyper,
             DEFAULT_FIXED_SIG_I as _RACE_FIXED_SIG_I,
+            DATA_SPEC as _data_spec,
         )
         _race_fixed_sig_i = True
         _llt = _race_full_llt
         _K = 5
         _pnames = ['wr', 'wl', 'br', 'bl', 'z']
-
         _dhyper = _race_fixed_dhyper
 
         st.markdown("""
 **Race model** — two independent inverse-Gaussian accumulators racing to threshold.
 `sig_i` is held fixed over learning at a built-in nuisance value.
 The learning fit therefore uses 5 trial-varying parameters: `wr, wl, br, bl, z`.
-Expects `inputs['c']` and `times`. Subtract non-decision time from RTs before uploading.
 """)
     elif model_choice == 'DDM — exact (Navarro & Fuss 2009)':
         from psytrax.models.ddm import (
@@ -685,13 +620,13 @@ Expects `inputs['c']` and `times`. Subtract non-decision time from RTs before up
             N_PARAMS as _K,
             PARAM_NAMES as _pnames,
             default_hyper as _dhyper,
+            DATA_SPEC as _data_spec,
         )
         st.markdown("""
 **DDM (exact)** — Wiener process between two absorbing barriers, using the
 Navarro & Fuss (2009) / Bogacz et al. (2006) hybrid series solution.
 4 parameters: `w` (contrast weight), `b` (bias), `a` (boundary separation),
 `z` (relative starting point, 0–1).
-Expects `inputs['c']` and `times`. Subtract non-decision time from RTs before uploading.
 """)
         _race_fixed_sig_i = False
     elif model_choice == 'DDM — approx (inverse-Gaussian)':
@@ -700,12 +635,12 @@ Expects `inputs['c']` and `times`. Subtract non-decision time from RTs before up
             N_PARAMS as _K,
             PARAM_NAMES as _pnames,
             default_hyper as _dhyper,
+            DATA_SPEC as _data_spec,
         )
         st.markdown("""
 **DDM (approx)** — single-accumulator inverse-Gaussian approximation (one absorbing
 barrier). Faster than the exact DDM; accurate when error rates are low.
 3 parameters: `w` (contrast weight), `b` (bias), `z` (threshold).
-Expects `inputs['c']` and `times`. Subtract non-decision time from RTs before uploading.
 """)
         _race_fixed_sig_i = False
     else:
@@ -723,60 +658,258 @@ Expects `inputs['c']` and `times`. Subtract non-decision time from RTs before up
         def _dhyper():
             return {'sigma': np.full(2, 2**-3), 'sigInit': np.full(2, 2**4), 'sigDay': None}
 
+        from psytrax.models.logistic import DATA_SPEC as _data_spec
         st.markdown("""
 **Logistic regression** — 2 parameters per trial: `w` (weight) and `b` (bias).
-
-Expects `inputs['c']` (signed contrast) in your data.
 """)
         _race_fixed_sig_i = False
 
+    # ------------------------------------------------------------------
+    # Early learning-rule selection (drives DATA_SPEC augmentation)
+    # ------------------------------------------------------------------
+    _lr_choice = st.selectbox(
+        'Learning rule *(optional — adds reward column to data requirements)*',
+        ['None', 'REINFORCE (built-in)', 'Upload custom (.py)'],
+        key='fit_lr_choice',
+    )
+
+    # If REINFORCE is selected, augment DATA_SPEC so that the reward column
+    # appears in the column-mapping UI alongside the model's own inputs.
+    if _lr_choice == 'REINFORCE (built-in)':
+        from psytrax.learning_rules import augment_data_spec, make_reinforce
+        _lr_reward_key = st.text_input(
+            'Reward input key',
+            value='reward',
+            key='fit_lr_reward_key',
+            help='Name for the reward signal in `data["inputs"]`. '
+                 'Typically 1 = rewarded, 0 = unrewarded.',
+        ).strip() or 'reward'
+        _data_spec = augment_data_spec(_data_spec, make_reinforce(
+            _llt, reward_key=_lr_reward_key))
+    else:
+        _lr_reward_key = None
+
+    # Show the model's data requirements
+    _req_inputs = list(_data_spec.get('inputs', {}).keys())
+    _needs_rt = 'rt' in _data_spec
+    st.caption(
+        f'**Requires:** inputs `{_req_inputs}`'
+        + (f', reaction times' if _needs_rt else '')
+        + ', responses'
+    )
+
     st.divider()
 
-    # --- Learning rule ---
-    st.subheader('3. Learning rule (optional)')
+    # ------------------------------------------------------------------
+    # Map data columns (model-driven)
+    # ------------------------------------------------------------------
+    st.subheader('3. Map data to model')
+
+    if _csv_df is not None:
+        # --- CSV: interactive column mapping driven by DATA_SPEC ---
+        df = _csv_df
+        cols = ['— none —'] + list(df.columns)
+        num_cols = ['— none —'] + [c for c in df.columns
+                                    if pd.api.types.is_numeric_dtype(df[c])]
+
+        st.markdown('Map your CSV columns to the fields this model needs:')
+
+        # --- Required inputs from DATA_SPEC ---
+        _mapped_inputs = {}
+        spec_inputs = _data_spec.get('inputs', {})
+        n_spec_inputs = len(spec_inputs)
+        if n_spec_inputs > 0:
+            inp_cols_ui = st.columns(min(n_spec_inputs, 3))
+            for idx, (inp_key, inp_info) in enumerate(spec_inputs.items()):
+                with inp_cols_ui[idx % len(inp_cols_ui)]:
+                    # Try to auto-detect a matching column
+                    _auto_idx = next(
+                        (i for i, c in enumerate(num_cols)
+                         if c.lower() == inp_key.lower()
+                         or c.lower() in (inp_key.lower(), f'signed_{inp_key.lower()}')),
+                        0
+                    )
+                    chosen = st.selectbox(
+                        f'**`{inp_key}`** — {inp_info["description"]}',
+                        num_cols,
+                        index=_auto_idx,
+                        key=f'csv_input_{inp_key}',
+                    )
+                    if chosen != '— none —':
+                        _mapped_inputs[inp_key] = chosen
+
+        # --- Response and RT ---
+        map_c1, map_c2 = st.columns(2)
+        with map_c1:
+            resp_col = st.selectbox(
+                '**Response** — ' + _data_spec.get('response', {}).get('description', 'Response variable'),
+                cols,
+                index=next((i for i, c in enumerate(cols)
+                            if c.lower() in ('r', 'response', 'responses', 'choice')), 0),
+                key='csv_resp',
+            )
+        with map_c2:
+            if _needs_rt:
+                rt_col = st.selectbox(
+                    '**RT** — ' + _data_spec['rt']['description'],
+                    num_cols,
+                    index=next((i for i, c in enumerate(num_cols)
+                                if 'time' in c.lower() or c.lower() == 't'), 0),
+                    key='csv_rt',
+                )
+            else:
+                rt_col = '— none —'
+
+        # --- Session ID (always optional, not model-specific) ---
+        sess_col = st.selectbox(
+            'Session-ID column *(optional — used to detect session boundaries)*',
+            cols,
+            index=next((i for i, c in enumerate(cols)
+                        if 'sess' in c.lower() or 'day' in c.lower()), 0),
+            key='csv_sess',
+        )
+
+        # --- Validate required mappings ---
+        _missing = [k for k in spec_inputs if spec_inputs[k].get('required') and k not in _mapped_inputs]
+        if _missing:
+            st.warning(f'Please map the required input(s): {", ".join(_missing)}')
+            st.stop()
+        if resp_col == '— none —':
+            st.warning('Please select a response column.')
+            st.stop()
+        if _needs_rt and rt_col == '— none —':
+            st.warning('This model requires a reaction-time column.')
+            st.stop()
+
+        # --- Build raw dict from column mapping ---
+        # Handle text-label responses (auto-map to 0/1)
+        resp_raw = df[resp_col]
+        if pd.api.types.is_numeric_dtype(resp_raw):
+            resp_arr = resp_raw.to_numpy(dtype=float)
+        else:
+            unique_vals = resp_raw.dropna().unique()
+            if len(unique_vals) != 2:
+                st.error(f'Response column has {len(unique_vals)} unique values; expected 2 for text labels.')
+                st.stop()
+            unique_sorted = sorted(unique_vals)
+            st.info(f'Mapping responses: `{unique_sorted[0]}` → 0, `{unique_sorted[1]}` → 1')
+            resp_arr = resp_raw.map({unique_sorted[0]: 0.0, unique_sorted[1]: 1.0}).to_numpy(dtype=float)
+
+        # Drop rows with NaN in required columns
+        keep_mask = np.isfinite(resp_arr)
+        for ic in _mapped_inputs.values():
+            if pd.api.types.is_numeric_dtype(df[ic]):
+                keep_mask &= np.isfinite(df[ic].to_numpy(dtype=float))
+        if rt_col != '— none —':
+            keep_mask &= np.isfinite(df[rt_col].to_numpy(dtype=float))
+        if keep_mask.sum() < len(df):
+            st.warning(f'Dropped {len(df) - keep_mask.sum()} rows with NaN/non-finite values.')
+        df_clean = df[keep_mask].reset_index(drop=True)
+        resp_arr = resp_arr[keep_mask]
+
+        raw = {
+            'inputs': {inp_key: df_clean[csv_col].to_numpy(dtype=float)
+                       for inp_key, csv_col in _mapped_inputs.items()},
+            'responses': resp_arr,
+        }
+        if rt_col != '— none —':
+            raw['times'] = df_clean[rt_col].to_numpy(dtype=float)
+        if sess_col != '— none —':
+            from itertools import groupby as _groupby
+            sess_vals = df_clean[sess_col].to_numpy()
+            raw['session_lengths'] = np.array(
+                [sum(1 for _ in g) for _, g in _groupby(sess_vals)]
+            )
+
+    elif raw is not None:
+        # --- .npy / example data: validate against DATA_SPEC ---
+        _input_keys = list(raw.get('inputs', {}).keys())
+        _missing_inputs = [
+            k for k, info in _data_spec.get('inputs', {}).items()
+            if info.get('required') and k not in _input_keys
+        ]
+        _r_key = 'responses' if 'responses' in raw else ('r' if 'r' in raw else None)
+        _has_rt = any(k in raw for k in ('times', 'T'))
+
+        if _missing_inputs:
+            st.warning(
+                f'Your data is missing the input(s) this model expects: **{", ".join(_missing_inputs)}**. '
+                f'Available inputs: `{_input_keys}`.  '
+                'You can remap below.'
+            )
+            # Offer remapping for missing inputs
+            for miss_key in _missing_inputs:
+                info = _data_spec['inputs'][miss_key]
+                remap = st.selectbox(
+                    f'Map **`{miss_key}`** ({info["description"]}) to:',
+                    ['— none —'] + _input_keys,
+                    key=f'remap_{miss_key}',
+                )
+                if remap != '— none —':
+                    # Create an alias: copy the existing input under the required key
+                    raw['inputs'][miss_key] = raw['inputs'][remap]
+            # Re-check
+            _still_missing = [
+                k for k in _missing_inputs if k not in raw.get('inputs', {})
+            ]
+            if _still_missing:
+                st.error(f'Still missing required input(s): {", ".join(_still_missing)}')
+                st.stop()
+
+        if _needs_rt and not _has_rt:
+            st.error('This model requires reaction times, but none were found in the data (`times` or `T`).')
+            st.stop()
+        if _r_key is None:
+            st.error('No response variable found in the data (`responses` or `r`).')
+            st.stop()
+
+        st.success('Data matches model requirements.')
+    else:
+        st.error('No data loaded.')
+        st.stop()
+
+    # Final summary
+    _r_key  = 'responses' if 'responses' in raw else ('r' if 'r' in raw else None)
+    _N_data = len(raw[_r_key]) if _r_key else '?'
+    _has_rt  = any(k in raw for k in ('times', 'T'))
+    _has_ses = any(k in raw for k in ('session_lengths', 'dayLength'))
+    if _csv_df is not None:
+        st.success(
+            f'Ready: **{_N_data}** trials — '
+            f'inputs: `{list(raw.get("inputs", {}).keys())}` — '
+            f'RT: {"yes" if _has_rt else "no"} — '
+            f'sessions: {"yes" if _has_ses else "no"}'
+        )
+
+    st.divider()
+
+    # --- Learning rule (construct the actual callable) ---
+    st.subheader('4. Learning rule')
     st.markdown(
         'Shift the random-walk transition mean with a learning rule. '
         'psytrax will optimise per-parameter learning rates (α) alongside σ.'
     )
 
-    _lr_choice = st.selectbox(
-        'Learning rule',
-        ['None', 'REINFORCE (built-in)', 'Upload custom (.py)'],
-        key='fit_lr_choice',
-    )
-
     _learning_rule = None
-    _lr_reward_col = None
+    _lr_reward_col = _lr_reward_key  # set in section 2 if REINFORCE selected
 
     if _lr_choice == 'REINFORCE (built-in)':
-        # Let user pick the reward column from their data
+        # Reward column was already mapped via DATA_SPEC in section 3.
+        # Verify it ended up in the data dict.
         _input_keys = list(raw.get('inputs', {}).keys())
-        _reward_candidates = [k for k in _input_keys if 'reward' in k.lower()]
-        _reward_default_idx = 0
-        if _reward_candidates:
-            _reward_default_idx = _input_keys.index(_reward_candidates[0])
-
-        _lr_reward_col = st.selectbox(
-            'Reward column (from `inputs`)',
-            _input_keys if _input_keys else ['— no input columns —'],
-            index=min(_reward_default_idx, max(len(_input_keys) - 1, 0)),
-            key='fit_lr_reward_col',
-            help='The learning rule reads `data["inputs"][reward_col]` for the reward signal '
-                 '(typically 1 = rewarded, 0 = unrewarded).',
-        )
-
-        if _lr_reward_col and _lr_reward_col != '— no input columns —':
+        if _lr_reward_col and _lr_reward_col in _input_keys:
             from psytrax.learning_rules import make_reinforce
-            # Use the model's own log_lik_trial for the score function.
             # For the race model with fixed sig_i we need to handle this later in _run_fit.
             if model_choice == 'Race model (inverse-Gaussian)' and _race_fixed_sig_i:
-                # Defer: we'll build the learning rule inside _run_fit with the fixed-sig_i wrapper
                 _learning_rule = 'reinforce_deferred'
             else:
                 _learning_rule = make_reinforce(_llt, reward_key=_lr_reward_col)
             st.success(f'REINFORCE learning rule using reward from `inputs["{_lr_reward_col}"]`.')
         else:
-            st.warning('Select a reward column to enable the learning rule.')
+            st.warning(
+                f'Reward key `{_lr_reward_col}` not found in data inputs '
+                f'({_input_keys}). Map it in section 3 above.'
+            )
 
     elif _lr_choice == 'Upload custom (.py)':
         st.markdown("""
@@ -812,11 +945,13 @@ def learning_rule(params, dat_trial):
                     st.success('Custom learning rule loaded successfully.')
             except Exception as _lr_err:
                 st.error(f'Failed to load learning rule: {_lr_err}')
+    else:
+        st.info('No learning rule selected.')
 
     st.divider()
 
     # --- Fitting options ---
-    st.subheader('4. Configure fitting')
+    st.subheader('5. Configure fitting')
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -875,12 +1010,24 @@ def learning_rule(params, dat_trial):
 
     # Build hyper dict
     hyper = _dhyper()
-    hyper['sigma'] = custom_sigma
+    # Respect the shared_sigma checkbox: collapse to a scalar if checked,
+    # or ensure per-parameter array if unchecked.  Without this, the checkbox
+    # had no effect because fit() only reads shared_sigma when hyper is None.
+    if shared_sigma:
+        if np.isscalar(custom_sigma):
+            hyper['sigma'] = float(custom_sigma)
+        else:
+            hyper['sigma'] = float(np.mean(custom_sigma))
+    else:
+        if np.isscalar(custom_sigma):
+            hyper['sigma'] = np.full(_K, float(custom_sigma))
+        else:
+            hyper['sigma'] = np.asarray(custom_sigma)
 
     st.divider()
 
     # --- Run ---
-    st.subheader('5. Fit')
+    st.subheader('6. Fit')
 
     if 'fit_running' not in st.session_state:
         st.session_state['fit_running'] = False
