@@ -30,17 +30,86 @@ _DDM_APPROX_PARAMS = {'w', 'b', 'z'}
 _LOGISTIC_PARAMS = {'w', 'b'}
 _RT_CURVE_FAMILIES = {'race', 'ddm_exact', 'ddm_approx'}
 
+
+# ---------------------------------------------------------------------------
+# Theme-aware colours
+# ---------------------------------------------------------------------------
+
+def _is_dark_theme():
+    """Detect whether Streamlit is using a dark theme."""
+    # 1. Explicit theme.base set in config.toml or via st.set_page_config
+    try:
+        base = st.get_option('theme.base')
+        if base is not None:
+            return base == 'dark'
+    except Exception:
+        pass
+    # 2. Runtime theme info injected by the Streamlit frontend
+    if hasattr(st, 'session_state') and '_stcore_theme' in st.session_state:
+        theme_info = st.session_state['_stcore_theme']
+        if 'base' in theme_info:
+            return theme_info['base'] == 'dark'
+        # Check backgroundColor luminance as a heuristic
+        bg = theme_info.get('backgroundColor', '')
+        if bg.startswith('#') and len(bg) == 7:
+            r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+            return (0.299 * r + 0.587 * g + 0.114 * b) < 128
+    # Default to dark (Streamlit's default)
+    return True
+
+
+def _theme_colours():
+    """Return a dict of colours that adapt to the current Streamlit theme."""
+    if _is_dark_theme():
+        return {
+            'bg':         '#0e1117',
+            'text':       'white',
+            'spine':      '#333333',
+            'legend_bg':  '#1a1a2e',
+            'legend_edge':'#333333',
+            'grid':       'white',
+        }
+    else:
+        return {
+            'bg':         'white',
+            'text':       'black',
+            'spine':      '#cccccc',
+            'legend_bg':  '#f0f0f0',
+            'legend_edge':'#cccccc',
+            'grid':       'black',
+        }
+
+
+def _style_fig(fig):
+    """Set the figure background to match the Streamlit theme."""
+    tc = _theme_colours()
+    fig.patch.set_facecolor(tc['bg'])
+    return tc
+
+
+def _style_legend(ax, **kwargs):
+    """Apply theme-aware styling to an axis legend."""
+    tc = _theme_colours()
+    ax.legend(
+        facecolor=tc['legend_bg'],
+        edgecolor=tc['legend_edge'],
+        labelcolor=tc['text'],
+        **kwargs,
+    )
+
+
 def _style_ax(ax, xlabel=None, ylabel=None, title=None):
-    ax.set_facecolor('#0e1117')
-    ax.tick_params(colors='white')
+    tc = _theme_colours()
+    ax.set_facecolor(tc['bg'])
+    ax.tick_params(colors=tc['text'])
     for spine in ax.spines.values():
-        spine.set_edgecolor('#333333')
+        spine.set_edgecolor(tc['spine'])
     if xlabel:
-        ax.set_xlabel(xlabel, color='white')
+        ax.set_xlabel(xlabel, color=tc['text'])
     if ylabel:
-        ax.set_ylabel(ylabel, color='white')
+        ax.set_ylabel(ylabel, color=tc['text'])
     if title:
-        ax.set_title(title, color='white')
+        ax.set_title(title, color=tc['text'])
 
 
 def _ig_cdf(thr, drift, v, t):
@@ -1292,7 +1361,7 @@ elif page == 'Visualise Results':
         n_cols = min(K, 3)
         n_rows = int(np.ceil(K / n_cols))
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 3 * n_rows), squeeze=False)
-        fig.patch.set_facecolor('#0e1117')
+        _tc = _style_fig(fig)
         for k, (ax, name) in enumerate(zip(axes.flat, param_names)):
             col = COLORS[k % len(COLORS)]
             _style_ax(ax, xlabel='Trial', title=name)
@@ -1301,7 +1370,7 @@ elif page == 'Visualise Results':
                 ax.fill_between(trials, params[k] - W_std[k], params[k] + W_std[k],
                                 color=col, alpha=0.2)
             for b in boundaries[:-1]:
-                ax.axvline(b, color='white', lw=0.5, alpha=0.3, ls='--')
+                ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
         for ax in axes.flat[K:]:
             ax.set_visible(False)
         fig.tight_layout()
@@ -1309,7 +1378,7 @@ elif page == 'Visualise Results':
         plt.close(fig)
     else:  # Combined
         fig, ax = plt.subplots(figsize=(12, 4))
-        fig.patch.set_facecolor('#0e1117')
+        _tc = _style_fig(fig)
         _style_ax(ax, xlabel='Trial', ylabel='Parameter value')
         for k, name in enumerate(param_names):
             col = COLORS[k % len(COLORS)]
@@ -1318,8 +1387,8 @@ elif page == 'Visualise Results':
                 ax.fill_between(trials, params[k] - W_std[k], params[k] + W_std[k],
                                 color=col, alpha=0.15)
         for b in boundaries[:-1]:
-            ax.axvline(b, color='white', lw=0.5, alpha=0.3, ls='--')
-        ax.legend(facecolor='#1a1a2e', edgecolor='#333333', labelcolor='white')
+            ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
+        _style_legend(ax)
         fig.tight_layout()
         st.pyplot(fig)
         plt.close(fig)
@@ -1337,7 +1406,7 @@ elif page == 'Visualise Results':
         edges = np.linspace(0, N, N_WIN + 1, dtype=int)
 
         fig_evo, axes_evo = plt.subplots(2, 2, figsize=(11, 8))
-        fig_evo.patch.set_facecolor('#0e1117')
+        _tc = _style_fig(fig_evo)
 
         for wi, ax in enumerate(axes_evo.flat):
             t0, t1 = int(edges[wi]), int(edges[wi + 1])
@@ -1353,7 +1422,7 @@ elif page == 'Visualise Results':
             _style_ax(ax, xlabel='Signed contrast', ylabel='P(right)',
                       title=f'Trials {t0 + 1}–{t1}')
             ax.scatter(c_uniq_win, p_win, s=[max(10, n / 5) for n in n_win],
-                       color='white', zorder=3)
+                       color=_tc['text'], zorder=3)
 
             params_win = params[:, t0:t1]
             p_m, _ = _curve_predictions(
@@ -1362,11 +1431,11 @@ elif page == 'Visualise Results':
             if p_m is not None:
                 ax.plot(c_grid, p_m, color='#4e9af1', lw=2)
 
-            ax.axhline(0.5, color='white', lw=0.5, ls='--', alpha=0.4)
-            ax.axvline(0,   color='white', lw=0.5, ls='--', alpha=0.4)
+            ax.axhline(0.5, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+            ax.axvline(0,   color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
             ax.set_ylim(0, 1)
 
-        fig_evo.suptitle('Psychometric curve evolution', color='white', fontsize=13)
+        fig_evo.suptitle('Psychometric curve evolution', color=_tc['text'], fontsize=13)
         fig_evo.tight_layout()
         st.pyplot(fig_evo)
         plt.close(fig_evo)
@@ -1377,7 +1446,7 @@ elif page == 'Visualise Results':
             st.subheader('Chronometric curve: evolution over learning')
             with st.spinner('Computing chronometric curves…'):
                 fig_cevo, axes_cevo = plt.subplots(2, 2, figsize=(11, 8))
-                fig_cevo.patch.set_facecolor('#0e1117')
+                _tc = _style_fig(fig_cevo)
                 panel_data = []
                 y_series = []
 
@@ -1404,13 +1473,13 @@ elif page == 'Visualise Results':
                     _style_ax(ax, xlabel='Signed contrast', ylabel='Mean RT (s)',
                               title=f'Trials {t0 + 1}–{t1}')
                     ax.scatter(c_uniq_win, rt_win_mean, s=[max(10, n / 5) for n in n_win],
-                               color='white', zorder=3)
+                               color=_tc['text'], zorder=3)
                     ax.plot(c_grid, rt_m, color='#4e9af1', lw=2)
-                    ax.axvline(0, color='white', lw=0.5, ls='--', alpha=0.4)
+                    ax.axvline(0, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
                     if shared_ylim is not None:
                         ax.set_ylim(*shared_ylim)
 
-                fig_cevo.suptitle('Chronometric curve evolution', color='white', fontsize=13)
+                fig_cevo.suptitle('Chronometric curve evolution', color=_tc['text'], fontsize=13)
                 fig_cevo.tight_layout()
                 st.pyplot(fig_cevo)
                 plt.close(fig_cevo)
@@ -1494,16 +1563,12 @@ elif page == 'Compare Models':
     evds   = [results[n]['log_evidence'] for n in names]
 
     fig, ax = plt.subplots(figsize=(max(4, len(names) * 1.2), 4))
-    fig.patch.set_facecolor('#0e1117')
-    ax.set_facecolor('#0e1117')
+    _tc = _style_fig(fig)
+    _style_ax(ax, ylabel='Log evidence')
     colors = ['#4e9af1', '#f1a44e', '#4ef17a', '#f14e7a', '#c44ef1']
     bars = ax.bar(names, evds, color=[colors[i % len(colors)] for i in range(len(names))])
-    ax.bar_label(bars, fmt='%.1f', color='white', padding=4)
-    ax.set_ylabel('Log evidence', color='white')
-    ax.tick_params(colors='white', axis='both')
+    ax.bar_label(bars, fmt='%.1f', color=_tc['text'], padding=4)
     ax.set_xticklabels(names, rotation=20, ha='right')
-    for spine in ax.spines.values():
-        spine.set_edgecolor('#333333')
     fig.tight_layout()
     st.pyplot(fig)
     plt.close(fig)
@@ -1545,7 +1610,7 @@ elif page == 'Compare Models':
         st.subheader('Psychometric curve: evolution over learning')
         with st.spinner('Computing psychometric curves…'):
             fig_p, axes_p = plt.subplots(2, 2, figsize=(11, 8))
-            fig_p.patch.set_facecolor('#0e1117')
+            _tc = _style_fig(fig_p)
 
             for wi, ax in enumerate(axes_p.flat):
                 t0, t1 = int(edges[wi]), int(edges[wi + 1])
@@ -1560,7 +1625,7 @@ elif page == 'Compare Models':
                 _style_ax(ax, xlabel='Signed contrast', ylabel='P(right)',
                           title=f'Trials {t0 + 1}–{t1}')
                 ax.scatter(c_uniq_win, p_win, s=[max(10, n / 5) for n in n_win],
-                           color='white', zorder=3, label='data')
+                           color=_tc['text'], zorder=3, label='data')
 
                 for mi, (mname, res) in enumerate(results.items()):
                     pn  = res['param_names']
@@ -1573,13 +1638,12 @@ elif page == 'Compare Models':
                     if p_m is not None:
                         ax.plot(c_grid, p_m, color=col, lw=2, label=mname)
 
-                ax.axhline(0.5, color='white', lw=0.5, ls='--', alpha=0.4)
-                ax.axvline(0,   color='white', lw=0.5, ls='--', alpha=0.4)
+                ax.axhline(0.5, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+                ax.axvline(0,   color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
                 ax.set_ylim(0, 1)
-                ax.legend(facecolor='#1a1a2e', edgecolor='#333333', labelcolor='white',
-                          fontsize=7)
+                _style_legend(ax, fontsize=7)
 
-            fig_p.suptitle('Psychometric curve evolution', color='white', fontsize=13)
+            fig_p.suptitle('Psychometric curve evolution', color=_tc['text'], fontsize=13)
             fig_p.tight_layout()
             st.pyplot(fig_p)
             plt.close(fig_p)
@@ -1590,7 +1654,7 @@ elif page == 'Compare Models':
             st.subheader('Chronometric curve: evolution over learning')
             with st.spinner('Computing chronometric curves…'):
                 fig_c, axes_c = plt.subplots(2, 2, figsize=(11, 8))
-                fig_c.patch.set_facecolor('#0e1117')
+                _tc = _style_fig(fig_c)
                 panel_data = []
                 y_series = []
 
@@ -1623,16 +1687,15 @@ elif page == 'Compare Models':
                     _style_ax(ax, xlabel='Signed contrast', ylabel='Mean RT (s)',
                               title=f'Trials {t0 + 1}–{t1}')
                     ax.scatter(c_uniq_win, rt_win_mean, s=[max(10, n / 5) for n in n_win],
-                               color='white', zorder=3, label='data')
+                               color=_tc['text'], zorder=3, label='data')
                     for mname, color, rt_m in model_curves:
                         ax.plot(c_grid, rt_m, color=color, lw=2, label=mname)
-                    ax.axvline(0, color='white', lw=0.5, ls='--', alpha=0.4)
+                    ax.axvline(0, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
                     if shared_ylim is not None:
                         ax.set_ylim(*shared_ylim)
-                    ax.legend(facecolor='#1a1a2e', edgecolor='#333333', labelcolor='white',
-                              fontsize=7)
+                    _style_legend(ax, fontsize=7)
 
-                fig_c.suptitle('Chronometric curve evolution', color='white', fontsize=13)
+                fig_c.suptitle('Chronometric curve evolution', color=_tc['text'], fontsize=13)
                 fig_c.tight_layout()
                 st.pyplot(fig_c)
                 plt.close(fig_c)
@@ -1661,7 +1724,7 @@ elif page == 'Compare Models':
                 fig3, axes = plt.subplots(n_rows, n_cols,
                                           figsize=(5 * n_cols, 3 * n_rows),
                                           squeeze=False)
-                fig3.patch.set_facecolor('#0e1117')
+                _tc = _style_fig(fig3)
                 for k, (ax, pname) in enumerate(zip(axes.flat, param_names)):
                     _style_ax(ax, xlabel='Trial', title=pname)
                     ax.plot(trials, params[k], color=color, lw=0.8, alpha=0.9)
@@ -1669,7 +1732,7 @@ elif page == 'Compare Models':
                         ax.fill_between(trials, params[k] - W_std[k], params[k] + W_std[k],
                                         color=color, alpha=0.2)
                     for b in boundaries[:-1]:
-                        ax.axvline(b, color='white', lw=0.5, alpha=0.3, ls='--')
+                        ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
                 for ax in axes.flat[K:]:
                     ax.set_visible(False)
                 fig3.tight_layout()
@@ -1677,7 +1740,7 @@ elif page == 'Compare Models':
                 plt.close(fig3)
             else:  # Combined
                 fig3, ax3 = plt.subplots(figsize=(12, 4))
-                fig3.patch.set_facecolor('#0e1117')
+                _tc = _style_fig(fig3)
                 _style_ax(ax3, xlabel='Trial', ylabel='Parameter value')
                 for k, pname in enumerate(param_names):
                     col_k = colors[k % len(colors)]
@@ -1686,9 +1749,8 @@ elif page == 'Compare Models':
                         ax3.fill_between(trials, params[k] - W_std[k], params[k] + W_std[k],
                                          color=col_k, alpha=0.15)
                 for b in boundaries[:-1]:
-                    ax3.axvline(b, color='white', lw=0.5, alpha=0.3, ls='--')
-                ax3.legend(facecolor='#1a1a2e', edgecolor='#333333', labelcolor='white',
-                           fontsize=7)
+                    ax3.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
+                _style_legend(ax3, fontsize=7)
                 fig3.tight_layout()
                 st.pyplot(fig3)
                 plt.close(fig3)
