@@ -150,3 +150,22 @@ def default_hyper(n_params=N_PARAMS, shared_sigma=False):
 def default_E0(N, n_params=N_PARAMS):
     """Heuristic initial parameter matrix (K, N) for the DDM."""
     return np.tile(np.array([1.0, 0.0, 1.0, 0.5])[:, None], N)
+
+
+def default_learning_rule(reward_key='reward'):
+    """Return a REINFORCE learning rule for the DDM.
+
+    The update direction at trial t is the score function
+    ∇_θ log p(y_t, RT_t | x_t, θ) scaled by the reward signal.  Because
+    the DDM likelihood is fully differentiable in JAX, the gradient is
+    computed automatically via ``jax.grad``.
+
+    The data dict must contain ``data['inputs']['reward']``, typically
+    1 for correct and 0 otherwise.
+
+    Returns
+    -------
+    learning_rule : callable
+    """
+    from psytrax.learning_rules import make_reinforce
+    return make_reinforce(log_lik_trial, reward_key=reward_key)

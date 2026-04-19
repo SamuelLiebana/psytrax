@@ -24,6 +24,7 @@ def fit(data, log_lik_trial, n_params,
         hyper=None,
         shared_sigma=False,
         session_boundaries=False,
+        learning_rule=None,
         E0=None,
         n_trials=None,
         hess_calc='weights',
@@ -60,6 +61,8 @@ def fit(data, log_lik_trial, n_params,
         Initial hyperparameters.  Must contain 'sigma' (positive scalar or
         array of length K).
         May also contain 'sigInit' and 'sigDay'.
+        When a ``learning_rule`` is provided, may also contain 'alpha'
+        (positive scalar or array of length K) for the learning rates.
         Defaults to sigma=2^{-3} for all params.
     shared_sigma : bool
         If True and `hyper` is not provided, use a single scalar process-noise
@@ -67,6 +70,14 @@ def fit(data, log_lik_trial, n_params,
     session_boundaries : bool
         If True, fit a larger process noise ('sigDay') at session boundaries.
         Requires 'session_lengths' in data.
+    learning_rule : callable, optional
+        A JAX-traceable function with signature
+            learning_rule(params, dat_trial) -> (K,) array
+        that returns the unnormalized update direction v̂_t at each trial.
+        The actual update mean is v_t = diag(α) · v̂_t, where the learning
+        rates α are optimised as hyperparameters.  The Gaussian walk becomes:
+            w_{t+1} − w_t  ∼  N(v_t, diag(σ²))
+        See ``psytrax.learning_rules`` for ready-made rules (e.g. REINFORCE).
     E0 : np.ndarray, optional
         Initial parameter matrix of shape (K, N).  Defaults to 0.01 everywhere.
         For the built-in race model, use psytrax.models.race.default_E0(N).
@@ -159,6 +170,12 @@ def fit(data, log_lik_trial, n_params,
             hyper['sigDay'] = float(2 ** -2) if shared_sigma else np.full(K, 2 ** -2)
         opt_list = ['sigma', 'sigDay']
 
+    # Learning rule: initialise alpha and add to optimisation list
+    if learning_rule is not None:
+        if hyper.get('alpha') is None:
+            hyper['alpha'] = float(2 ** -3) if shared_sigma else np.full(K, 2 ** -3)
+        opt_list.append('alpha')
+
     _validate_hyper(hyper, K)
 
     # ------------------------------------------------------------------
@@ -223,6 +240,7 @@ def fit(data, log_lik_trial, n_params,
                     map_tol=map_tol,
                     execution_plan=attempt_plan,
                     status_callback=status_callback,
+                    learning_rule=learning_rule,
                 )
                 plan = attempt_plan
                 break
@@ -376,7 +394,7 @@ def _validate_hyper(hyper, n_params):
     if not isinstance(hyper, dict):
         raise TypeError(f"hyper must be a dict, not {type(hyper)}")
 
-    for key in ('sigma', 'sigInit', 'sigDay'):
+    for key in ('sigma', 'sigInit', 'sigDay', 'alpha'):
         if key not in hyper or hyper[key] is None:
             if key == 'sigma':
                 raise KeyError("hyper must contain 'sigma'")

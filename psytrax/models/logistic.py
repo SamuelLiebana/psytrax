@@ -44,3 +44,24 @@ def default_hyper(n_params=N_PARAMS, shared_sigma=False):
 
 def default_E0(N, n_params=N_PARAMS):
     return np.tile(np.array([0.5, 0.0])[:, None], N)
+
+
+def default_learning_rule(reward_key='reward'):
+    """Return a REINFORCE learning rule for the logistic model.
+
+    The update direction at trial t is the score function
+    ∇_θ log p(y_t | x_t, θ) scaled by the reward signal.
+
+    For this model, this reduces to the classic REINFORCE update:
+        v̂_t = (y_t − p_right) · [c_t, 1] · reward_t
+
+    The data dict must contain ``data['inputs']['reward']`` (or whichever
+    key you pass as ``reward_key``), typically 1 for correct and 0 otherwise.
+
+    Returns
+    -------
+    learning_rule : callable
+        Suitable for ``psytrax.fit(..., learning_rule=...)``.
+    """
+    from psytrax.learning_rules import make_reinforce
+    return make_reinforce(log_lik_trial, reward_key=reward_key)

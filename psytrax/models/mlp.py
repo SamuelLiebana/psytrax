@@ -77,12 +77,17 @@ def make_model(input_keys=None, hidden=_H):
     def default_E0(N, n_params=K):
         return np.zeros((n_params, N))
 
-    return log_lik_trial, K, param_names, default_hyper, default_E0
+    def default_learning_rule(reward_key='reward'):
+        """Return a REINFORCE learning rule for this MLP model."""
+        from psytrax.learning_rules import make_reinforce
+        return make_reinforce(log_lik_trial, reward_key=reward_key)
+
+    return log_lik_trial, K, param_names, default_hyper, default_E0, default_learning_rule
 
 
 # ---------------------------------------------------------------------------
 # Default single-input (contrast only) model, ready to import directly
 # ---------------------------------------------------------------------------
-log_lik_trial, N_PARAMS, PARAM_NAMES, default_hyper, default_E0 = make_model(
+log_lik_trial, N_PARAMS, PARAM_NAMES, default_hyper, default_E0, default_learning_rule = make_model(
     input_keys=['c'], hidden=_H
 )

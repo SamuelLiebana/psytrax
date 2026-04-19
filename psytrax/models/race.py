@@ -139,6 +139,25 @@ def default_hyper_fixed_sig_i(n_params=N_DYNAMIC_PARAMS, shared_sigma=False):
     }
 
 
+def default_learning_rule(reward_key='reward'):
+    """Return a REINFORCE learning rule for the race model.
+
+    The update direction at trial t is the score function
+    ∇_θ log p(y_t, RT_t | x_t, θ) scaled by the reward signal.  Because
+    the race model likelihood is fully differentiable in JAX, the gradient
+    is computed automatically via ``jax.grad``.
+
+    The data dict must contain ``data['inputs']['reward']``, typically
+    1 for correct and 0 otherwise.
+
+    Returns
+    -------
+    learning_rule : callable
+    """
+    from psytrax.learning_rules import make_reinforce
+    return make_reinforce(log_lik_trial, reward_key=reward_key)
+
+
 def make_fixed_sig_i_model(sig_i_fixed):
     """Return a race-model view where sig_i is a single fixed scalar.
 

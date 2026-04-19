@@ -334,6 +334,7 @@ psytrax has three hyperparameters, all of which live in the `hyper` dict:
 | `sigma` | scalar or `(K,)` | Per-trial (within-session) process noise | **Always** |
 | `sigInit` | `(K,)` | Initial uncertainty at trial 0 | **Never** — fixed prior |
 | `sigDay` | scalar or `(K,)` | Extra process noise applied at session boundaries | Only when `session_boundaries=True` |
+| `alpha` | scalar or `(K,)` | Learning rate scaling the learning rule output | Only when `learning_rule` is set |
 
 By default only `sigma` is optimised.  To also optimise a larger jump at each session
 boundary, pass `session_boundaries=True`:
@@ -359,6 +360,47 @@ result = psytrax.fit(..., shared_sigma=True)
 # or
 hyper = default_hyper(shared_sigma=True)
 ```
+
+When a **learning rule** is supplied, psytrax also optimises per-parameter learning
+rates `alpha` (scalar or `(K,)`) that scale the learning rule output.
+""")
+
+    st.subheader('Learning rules')
+    st.markdown(r"""
+By default the parameter transition is a zero-mean random walk:
+$w_{t+1} - w_t \sim \mathcal{N}(0,\, \text{diag}(\sigma^2))$.
+You can supply a **learning rule** so the transition has a non-zero mean:
+
+$$w_{t+1} - w_t \sim \mathcal{N}\!\big(\text{diag}(\alpha)\,\hat{v}_t,\;\text{diag}(\sigma^2)\big)$$
+
+where $\hat{v}_t = \text{learning\_rule}(w_t, \text{data}_t)$ is the raw update direction
+and $\alpha$ is a vector of per-parameter learning rates optimised alongside $\sigma$
+in the Empirical Bayes outer loop
+([Ashwood, Roy et al., NeurIPS 2020](https://proceedings.neurips.cc/paper/2020/hash/3a2f55e26e324b2c406d8b7df4607036-Abstract.html)).
+
+**Built-in REINFORCE rule** — each built-in model provides `default_learning_rule()`
+which implements the REINFORCE policy-gradient update:
+$\hat{v}_t = \nabla_\theta \log p(y_t \mid x_t, \theta)\cdot r_t$.
+Your data must include `data['inputs']['reward']` (1 = rewarded, 0 = unrewarded).
+
+```python
+from psytrax.models.logistic import (
+    log_lik_trial, N_PARAMS, PARAM_NAMES, default_learning_rule,
+)
+
+result = psytrax.fit(
+    data           = data,      # must include inputs['reward']
+    log_lik_trial  = log_lik_trial,
+    n_params       = N_PARAMS,
+    learning_rule  = default_learning_rule(),
+)
+print(result['hyper']['alpha'])   # optimised learning rates
+```
+
+**Custom learning rules** — any JAX-traceable function with signature
+`learning_rule(params, dat_trial) -> (K,)` can be passed to `psytrax.fit()`.
+See the factories in `psytrax.learning_rules` (`make_reinforce`, `make_reinforce_baseline`)
+for convenience wrappers.
 """)
 
     st.subheader('Writing your own model')
@@ -453,6 +495,7 @@ streamlit run app.py
 | `hyper` | `dict` | Optimised hyperparameters |
 | `log_evidence` | `float` | Log marginal likelihood |
 | `hess_info` | `dict` | `W_std`: credible intervals `(K, N)` |
+| `lr_hat` | `(K, N-1)` | Raw learning-rule outputs per trial *(only when `learning_rule` is set)* |
 | `duration` | `timedelta` | Wall-clock fitting time |
 """)
 
@@ -689,8 +732,91 @@ Expects `inputs['c']` (signed contrast) in your data.
 
     st.divider()
 
+    # --- Learning rule ---
+    st.subheader('3. Learning rule (optional)')
+    st.markdown(
+        'Shift the random-walk transition mean with a learning rule. '
+        'psytrax will optimise per-parameter learning rates (α) alongside σ.'
+    )
+
+    _lr_choice = st.selectbox(
+        'Learning rule',
+        ['None', 'REINFORCE (built-in)', 'Upload custom (.py)'],
+        key='fit_lr_choice',
+    )
+
+    _learning_rule = None
+    _lr_reward_col = None
+
+    if _lr_choice == 'REINFORCE (built-in)':
+        # Let user pick the reward column from their data
+        _input_keys = list(raw.get('inputs', {}).keys())
+        _reward_candidates = [k for k in _input_keys if 'reward' in k.lower()]
+        _reward_default_idx = 0
+        if _reward_candidates:
+            _reward_default_idx = _input_keys.index(_reward_candidates[0])
+
+        _lr_reward_col = st.selectbox(
+            'Reward column (from `inputs`)',
+            _input_keys if _input_keys else ['— no input columns —'],
+            index=min(_reward_default_idx, max(len(_input_keys) - 1, 0)),
+            key='fit_lr_reward_col',
+            help='The learning rule reads `data["inputs"][reward_col]` for the reward signal '
+                 '(typically 1 = rewarded, 0 = unrewarded).',
+        )
+
+        if _lr_reward_col and _lr_reward_col != '— no input columns —':
+            from psytrax.learning_rules import make_reinforce
+            # Use the model's own log_lik_trial for the score function.
+            # For the race model with fixed sig_i we need to handle this later in _run_fit.
+            if model_choice == 'Race model (inverse-Gaussian)' and _race_fixed_sig_i:
+                # Defer: we'll build the learning rule inside _run_fit with the fixed-sig_i wrapper
+                _learning_rule = 'reinforce_deferred'
+            else:
+                _learning_rule = make_reinforce(_llt, reward_key=_lr_reward_col)
+            st.success(f'REINFORCE learning rule using reward from `inputs["{_lr_reward_col}"]`.')
+        else:
+            st.warning('Select a reward column to enable the learning rule.')
+
+    elif _lr_choice == 'Upload custom (.py)':
+        st.markdown("""
+Upload a `.py` file that defines a `learning_rule(params, dat_trial)` function.
+The function must be JAX-traceable and return a `(K,)` array — the unnormalised
+update direction for each parameter.
+
+```python
+import jax, jax.numpy as jnp
+
+def learning_rule(params, dat_trial):
+    # Example: simple gradient-weighted reward
+    score = jax.grad(my_log_lik)(params, dat_trial)
+    return score * dat_trial['inputs']['reward']
+```
+""")
+        _lr_file = st.file_uploader('Learning rule file (.py)', type=['py'], key='fit_lr_upload')
+        if _lr_file is not None:
+            import importlib.util, tempfile, sys
+            _lr_src = _lr_file.read().decode('utf-8')
+            st.code(_lr_src, language='python')
+            try:
+                with tempfile.NamedTemporaryFile(suffix='.py', delete=False, mode='w') as _tmp:
+                    _tmp.write(_lr_src)
+                    _tmp_path = _tmp.name
+                _spec = importlib.util.spec_from_file_location('_user_lr', _tmp_path)
+                _lr_mod = importlib.util.module_from_spec(_spec)
+                _spec.loader.exec_module(_lr_mod)
+                if not hasattr(_lr_mod, 'learning_rule'):
+                    st.error('The uploaded file must define a `learning_rule(params, dat_trial)` function.')
+                else:
+                    _learning_rule = _lr_mod.learning_rule
+                    st.success('Custom learning rule loaded successfully.')
+            except Exception as _lr_err:
+                st.error(f'Failed to load learning rule: {_lr_err}')
+
+    st.divider()
+
     # --- Fitting options ---
-    st.subheader('3. Configure fitting')
+    st.subheader('4. Configure fitting')
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -754,7 +880,7 @@ Expects `inputs['c']` (signed contrast) in your data.
     st.divider()
 
     # --- Run ---
-    st.subheader('4. Fit')
+    st.subheader('5. Fit')
 
     if 'fit_running' not in st.session_state:
         st.session_state['fit_running'] = False
@@ -825,6 +951,8 @@ Expects `inputs['c']` (signed contrast) in your data.
                 )
 
                 fixed_params = {}
+                _lr_actual = _learning_rule  # may be callable, 'reinforce_deferred', or None
+
                 if model_choice == 'Race model (inverse-Gaussian)' and _race_fixed_sig_i:
                     fixed_params['sig_i'] = float(fixed_sig_i)
                     _status_cb({'stage': 'setup', 'message': f'Using fixed sig_i = {fixed_sig_i:.4f}.'})
@@ -834,12 +962,21 @@ Expects `inputs['c']` (signed contrast) in your data.
                         n_params=_K_fit,
                         param_names=_pnames_fit,
                     )
+                    # Build REINFORCE rule for the fixed-sig_i wrapper
+                    if _lr_actual == 'reinforce_deferred':
+                        from psytrax.learning_rules import make_reinforce
+                        _lr_actual = make_reinforce(_llt_fit, reward_key=_lr_reward_col)
                 else:
                     fit_kwargs.update(
                         log_lik_trial=_llt,
                         n_params=_K,
                         param_names=_pnames,
                     )
+
+                # Pass learning rule if one was selected
+                if _lr_actual and _lr_actual != 'reinforce_deferred':
+                    fit_kwargs['learning_rule'] = _lr_actual
+                    _status_cb({'stage': 'setup', 'message': 'Learning rule enabled — alpha will be optimised.'})
 
                 result = psytrax.fit(
                     hyper=hyper,

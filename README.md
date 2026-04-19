@@ -122,10 +122,78 @@ The function must be written with **`jax.numpy`** (not `numpy`) so that psytrax 
 | Race | `models/race.py` | 6 | Yes | Race model with separate accumulators |
 | MLP | `models/mlp.py` | 13 | No | 1→4→1 MLP with tanh hidden layer |
 
-Each model exposes: `log_lik_trial`, `N_PARAMS`, `PARAM_NAMES`, `default_hyper()`, `default_E0(N)`.
+Each model exposes: `log_lik_trial`, `N_PARAMS`, `PARAM_NAMES`, `default_hyper()`, `default_E0(N)`, `default_learning_rule()`.
 For a shared random-walk variance across parameters, call `default_hyper(shared_sigma=True)`.
 
 See `examples/compare_models_DAP009.py` for a full comparison on real mouse data.
+
+---
+
+## Learning rules
+
+By default, psytrax assumes a zero-mean Gaussian random walk for the parameter transitions: `w_{t+1} − w_t ~ N(0, diag(σ²))`. You can supply a **learning rule** to shift the transition mean, so the prior becomes:
+
+```
+w_{t+1} − w_t  ~  N( diag(α) · v̂_t,  diag(σ²) )
+```
+
+where `v̂_t = learning_rule(w_t, data_t)` is the raw update direction and `α` is a vector of per-parameter learning rates optimised alongside `σ` in the Empirical Bayes outer loop (following [Ashwood, Roy et al., NeurIPS 2020](https://proceedings.neurips.cc/paper/2020/hash/3a2f55e26e324b2c406d8b7df4607036-Abstract.html)).
+
+### Using a built-in REINFORCE learning rule
+
+Each built-in model provides a `default_learning_rule()` that implements the REINFORCE policy-gradient update: the score function `∇_θ log p(y_t | x_t, θ)` scaled by the reward signal. Your data must include a trial-aligned `reward` array under `data['inputs']['reward']`.
+
+```python
+from psytrax.models.logistic import (
+    log_lik_trial, N_PARAMS, PARAM_NAMES, default_hyper, default_E0,
+    default_learning_rule,
+)
+
+data = {
+    'inputs': {
+        'c': contrast_array,          # signed contrast, shape (N,)
+        'reward': reward_array,        # 1 = rewarded, 0 = unrewarded, shape (N,)
+    },
+    'responses': response_array,
+}
+
+result = psytrax.fit(
+    data           = data,
+    log_lik_trial  = log_lik_trial,
+    n_params       = N_PARAMS,
+    param_names    = PARAM_NAMES,
+    learning_rule  = default_learning_rule(),
+)
+
+print(result['hyper']['alpha'])   # optimised learning rates (K,)
+```
+
+### Writing your own learning rule
+
+A learning rule is any JAX-traceable function with the signature:
+
+```python
+def my_learning_rule(params, dat_trial):
+    """
+    params    : jnp array (K,)  — parameters at trial t
+    dat_trial : dict             — scalar-valued per-trial data (same format as log_lik_trial)
+    Returns   : jnp array (K,)  — unnormalised update direction v̂_t
+    """
+    ...
+    return update_direction
+```
+
+You can also use the factory functions in `psytrax.learning_rules`:
+
+```python
+from psytrax.learning_rules import make_reinforce, make_reinforce_baseline
+
+# REINFORCE: v̂_t = ∇_θ log p(y|x,θ) · reward
+lr = make_reinforce(my_log_lik_trial, reward_key='reward')
+
+# REINFORCE with baseline: v̂_t = ∇_θ log p(y|x,θ) · (reward − baseline)
+lr = make_reinforce_baseline(my_log_lik_trial, reward_key='reward', baseline_key='baseline')
+```
 
 ---
 
@@ -149,6 +217,7 @@ See `examples/compare_models_DAP009.py` for a full comparison on real mouse data
 | `hyper` | `dict` | Optimised hyperparameters |
 | `log_evidence` | `float` | Log marginal likelihood |
 | `hess_info` | `dict` | `W_std`: posterior std `(K, N)` |
+| `lr_hat` | `(K, N-1)` | Raw learning-rule outputs per trial *(only when `learning_rule` is set)* |
 | `duration` | `timedelta` | Wall-clock fitting time |
 
 ---

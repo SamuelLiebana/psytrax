@@ -38,7 +38,8 @@ _INVALID_LL_THRESHOLD_PER_TRIAL = -100.0
 # JAX-traceable Gaussian random-walk log-prior
 # ---------------------------------------------------------------------------
 
-def _log_prior_jax(E_flat, K, N, sigma_k, sigInit_k, is_boundary, sigDay_k):
+def _log_prior_jax(E_flat, K, N, sigma_k, sigInit_k, is_boundary, sigDay_k,
+                   v_mean=None):
     """Gaussian random-walk log-prior, fully JAX-traceable.
 
     Args:
@@ -49,6 +50,9 @@ def _log_prior_jax(E_flat, K, N, sigma_k, sigInit_k, is_boundary, sigDay_k):
         is_boundary : (N-1,) bool mask — True where session boundary occurs,
                       or None if no session boundaries
         sigDay_k    : (K,) session-boundary noise std (ignored if is_boundary is None)
+        v_mean      : (K, N-1) learning-rule mean shift for each transition,
+                      or None for a zero-mean random walk.  When provided the
+                      transition model becomes  w_{t+1} − w_t ∼ N(v_mean[:,t], σ²).
     """
     E = jnp.reshape(E_flat, (K, N))
 
@@ -59,6 +63,10 @@ def _log_prior_jax(E_flat, K, N, sigma_k, sigInit_k, is_boundary, sigDay_k):
         return lp
 
     dE = E[:, 1:] - E[:, :-1]                          # (K, N-1)
+
+    # Subtract the deterministic learning-rule contribution
+    if v_mean is not None:
+        dE = dE - v_mean
 
     if is_boundary is None:
         # Uniform process noise: sigma_k broadcast over all transitions
@@ -180,9 +188,79 @@ def _unwhiten(z_flat, K, N, L_diag, L_sub):
 # Main entry point
 # ---------------------------------------------------------------------------
 
+def _make_vmap_axes(x, N):
+    """Recursively build JAX vmap in_axes for a pytree (local copy)."""
+    if x is None:
+        return None
+    if isinstance(x, dict):
+        return {k: _make_vmap_axes(v, N) for k, v in x.items()}
+    arr = jnp.asarray(x) if not hasattr(x, 'shape') else x
+    if arr.ndim > 0 and arr.shape[0] == N:
+        return 0
+    return None
+
+
+def _compute_lr_hat_numpy(eMode, dat, learning_rule, K, N, dtype=None):
+    """Compute raw learning-rule outputs at a numpy MAP estimate.
+
+    Returns lr_hat as a numpy (K, N-1) array.  Used for the evidence
+    computation and the decoupled Laplace step (both in numpy land).
+    """
+    if dtype is None:
+        dtype = jnp.float64
+    if N <= 1:
+        return np.zeros((K, 0))
+
+    E_jax = jnp.asarray(eMode.reshape(K, N), dtype=dtype)
+
+    def _cast(x):
+        if isinstance(x, np.ndarray) and np.issubdtype(x.dtype, np.floating):
+            return jnp.asarray(x, dtype=dtype)
+        elif isinstance(x, np.ndarray):
+            return jnp.asarray(x)
+        return x
+
+    dat_jax = jax.tree_util.tree_map(_cast, dat)
+
+    def _slice(x):
+        if isinstance(x, jnp.ndarray) and x.ndim > 0 and x.shape[0] == N:
+            return x[:-1]
+        return x
+
+    dat_lr = jax.tree_util.tree_map(_slice, dat_jax)
+    N_lr = N - 1
+    in_axes_lr = (1, _make_vmap_axes(dat_lr, N_lr))
+    lr_out = jax.vmap(learning_rule, in_axes=in_axes_lr)(E_jax[:, :-1], dat_lr)  # (N-1, K)
+    return np.asarray(lr_out.T, dtype=np.float64)  # (K, N-1)
+
+
+def _compute_v_mean_jax(E, learning_rule, dat_jax, alpha_k, K, N):
+    """Compute the learning-rule prior-mean shift v_mean (K, N-1).
+
+    v_mean[:, t] = alpha_k * learning_rule(E[:, t], dat_trial_t)
+    for t = 0, …, N-2.  This is the mean for transition t → t+1, i.e. it is
+    subtracted from dE[:, t] = E[:, t+1] − E[:, t] in the log-prior.
+    """
+    if N <= 1:
+        return jnp.zeros((K, 0), dtype=E.dtype)
+
+    # Slice dat to first N-1 trials (trials that generate an update)
+    def _slice(x):
+        if isinstance(x, jnp.ndarray) and x.ndim > 0 and x.shape[0] == N:
+            return x[:-1]
+        return x
+
+    dat_lr = jax.tree_util.tree_map(_slice, dat_jax)
+    N_lr = N - 1
+    in_axes_lr = (1, _make_vmap_axes(dat_lr, N_lr))
+    lr_out = jax.vmap(learning_rule, in_axes=in_axes_lr)(E[:, :-1], dat_lr)  # (N-1, K)
+    return (alpha_k[None, :] * lr_out).T   # (K, N-1)
+
+
 def getMAP_jax(dat, hyper, n_params, log_lik_fns,
                E0=None, method=None, showOpt=0, pbar=None, map_tol=1e-6,
-               execution_plan=None, status_callback=None):
+               execution_plan=None, status_callback=None,
+               learning_rule=None):
     """MAP estimation using JAX L-BFGS in prior-whitened space.
 
     The inner optimisation loop runs entirely in JAX (GPU-native) in a
@@ -191,6 +269,11 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
     prevents the large early steps that can send parameters into sentinel
     territory.  A smooth repulsive barrier provides a non-zero gradient in
     sentinel territory so that L-BFGS never gets permanently trapped there.
+
+    When a ``learning_rule`` is provided, the Gaussian random-walk transition
+    becomes  w_{t+1} − w_t ∼ N(v_t, diag(σ²))  where
+    v_t = diag(α) · learning_rule(w_t, data_t).  The learning rates α_k
+    are read from ``hyper['alpha']``.
 
     Args / Returns: same as psytrax._map.getMAP
     """
@@ -235,6 +318,16 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
     dat_jax = jax.tree_util.tree_map(_cast, dat)
     log_likelihood_fn = log_lik_fns[0]
 
+    # ---- learning rule setup ----
+    has_lr = learning_rule is not None
+    if has_lr:
+        alpha = hyper.get('alpha')
+        if alpha is None:
+            raise ValueError("hyper must contain 'alpha' when a learning_rule is provided")
+        alpha_k = jnp.broadcast_to(jnp.asarray(alpha, dtype=dtype), (K,))
+    else:
+        alpha_k = None
+
     # ---- prior-whitening Cholesky (computed once, baked into JIT as constants) ----
     L_diag, L_sub = _prior_chol(K, N, sigma_k, sigInit_k, is_boundary, sigDay_k)
 
@@ -250,7 +343,15 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
         E_flat = _unwhiten(z_flat, K, N, L_diag, L_sub).astype(dtype)
         E      = jnp.reshape(E_flat, (K, N))
         logli  = log_likelihood_fn(E, dat_jax)
-        lp     = _log_prior_jax(E_flat, K, N, sigma_k, sigInit_k, is_boundary, sigDay_k)
+
+        # Compute learning-rule prior mean shift
+        if has_lr:
+            v_mean = _compute_v_mean_jax(E, learning_rule, dat_jax, alpha_k, K, N)
+        else:
+            v_mean = None
+
+        lp = _log_prior_jax(E_flat, K, N, sigma_k, sigInit_k, is_boundary, sigDay_k,
+                            v_mean=v_mean)
         # Barrier: sigmoid activates near 0 when logli/N << -50 (sentinel territory),
         # and stays ≈0 in valid territory (logli/N typically > -5).
         sentinel_weight = jax.nn.sigmoid(-logli / N - 50.0)
@@ -263,7 +364,14 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
         E_flat = _unwhiten(z_flat, K, N, L_diag, L_sub).astype(dtype)
         E      = jnp.reshape(E_flat, (K, N))
         logli  = log_likelihood_fn(E, dat_jax)
-        lp     = _log_prior_jax(E_flat, K, N, sigma_k, sigInit_k, is_boundary, sigDay_k)
+
+        if has_lr:
+            v_mean = _compute_v_mean_jax(E, learning_rule, dat_jax, alpha_k, K, N)
+        else:
+            v_mean = None
+
+        lp = _log_prior_jax(E_flat, K, N, sigma_k, sigInit_k, is_boundary, sigDay_k,
+                            v_mean=v_mean)
         return -(logli + lp)
 
     # ---- initial parameters ----
@@ -359,6 +467,24 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
     finally:
         _map_module._JAX_DTYPE = prev_dtype
 
+    # Correct the log-prior if a learning rule shifts the prior mean
+    if has_lr:
+        from psytrax._helper.helperFunctions import (
+            build_v_mean_flat, correct_logprior_for_learning_rule, make_invSigma,
+        )
+        day_lengths_np = dat.get('dayLength', np.array([], dtype=int))
+        if len(day_lengths_np) > 0:
+            days_arr = np.cumsum(day_lengths_np, dtype=int)[:-1]
+        else:
+            days_arr = np.array([], dtype=int)
+        invSigma = make_invSigma(hyper, days_arr, dat.get('missing_trials'), N, K)
+
+        lr_hat = _compute_lr_hat_numpy(eMode, dat, learning_rule, K, N, dtype=evidence_dtype)
+        v_mean_flat = build_v_mean_flat(lr_hat, np.asarray(hyper['alpha']), K, N)
+        pT['logprior'] = correct_logprior_for_learning_rule(
+            pT['logprior'], eMode, v_mean_flat, invSigma, K, N,
+        )
+
     hess = {
         'H':          lT['ddlogli']['H'],
         'K':          lT['ddlogli']['K'],
@@ -375,6 +501,8 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
         )
 
     llstruct = {'lT': lT, 'pT': pT, 'eMode': eMode}
+    if has_lr:
+        llstruct['lr_hat'] = lr_hat  # (K, N-1) raw learning-rule outputs at MAP
     return hess, logEvd, llstruct
 
 

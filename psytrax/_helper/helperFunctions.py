@@ -139,3 +139,100 @@ def DT_X_D(ddlogprior, K):
     A[1, :-1] = off_diags
     A[2, :-1] = off_diags
     return diags(A, [0, -1, 1], shape=(NK, NK), format='csc')
+
+
+# ---------------------------------------------------------------------------
+# Learning-rule prior-mean helpers
+# ---------------------------------------------------------------------------
+
+def build_v_mean_flat(lr_hat, alpha, K, N):
+    """Build the learning-rule mean vector for the Gaussian walk.
+
+    The random-walk transition model is:
+
+        w_{t+1} − w_t  ∼  N(v_t, diag(σ²))
+
+    where  v_t = diag(α) · lr_hat_t.  This function stacks the v_t values
+    into the (K*N,) layout that matches the ``invSigma`` matrix:
+
+        v[k*N + 0] = 0          (no mean shift on the initial state)
+        v[k*N + t] = α_k · lr_hat[k, t-1]    for t = 1, …, N−1
+
+    Args:
+        lr_hat : (K, N-1) raw learning-rule outputs at each trial
+        alpha  : scalar or (K,) learning rates
+        K, N   : parameter count and trial count
+
+    Returns:
+        (K*N,) flat vector
+    """
+    alpha = _broadcast_hyper_vector(alpha, K, 'alpha')
+    v = np.zeros((K, N))
+    v[:, 1:] = alpha[:, None] * lr_hat      # lr_hat[:, t] drives transition t → t+1
+    return v.flatten()
+
+
+def compute_invC_u(v_mean_flat, invSigma, K, N):
+    """Compute  invC @ u  =  D^T  Σ⁻¹  v   without forming invC explicitly.
+
+    This is the "natural-parameter" contribution of the prior mean to the
+    posterior precision equation.  It is used by the decoupled Laplace
+    approximation when a learning rule shifts the prior mean.
+
+    D is the N×N first-difference matrix (identity on the diagonal, −1 on
+    the sub-diagonal) applied block-independently to each of the K parameters.
+
+    Args:
+        v_mean_flat : (K*N,) output of :func:`build_v_mean_flat`
+        invSigma    : sparse diagonal (K*N, K*N) from :func:`make_invSigma`
+        K, N        : parameter count and trial count
+
+    Returns:
+        (K*N,) vector  D^T Σ⁻¹ v
+    """
+    inv_sig_diag = invSigma.diagonal()
+    Sv = inv_sig_diag * v_mean_flat          # Σ⁻¹ v  (element-wise)
+    Sv = Sv.reshape(K, N)
+
+    # Apply D^T per parameter block:
+    #   (D^T y)_t = y_t − y_{t+1}   for t < N-1
+    #   (D^T y)_{N-1} = y_{N-1}
+    result = np.zeros_like(Sv)
+    result[:, :-1] = Sv[:, :-1] - Sv[:, 1:]
+    result[:, -1] = Sv[:, -1]
+    return result.flatten()
+
+
+def correct_logprior_for_learning_rule(logprior_zero_mean, E_flat, v_mean_flat,
+                                       invSigma, K, N):
+    """Correct a zero-mean log-prior to account for a learning-rule mean shift.
+
+    Given the zero-mean log-prior  −½ (DE)^T Σ⁻¹ (DE) − ½ log|C|  and the
+    learning-rule mean vector *v*, return the shifted version:
+
+        −½ (DE − v)^T Σ⁻¹ (DE − v)  − ½ log|C|
+
+    The correction equals  (DE)^T Σ⁻¹ v  −  ½ v^T Σ⁻¹ v.
+
+    Args:
+        logprior_zero_mean : scalar, the log-prior computed with u = 0
+        E_flat             : (K*N,) parameter vector
+        v_mean_flat        : (K*N,) from :func:`build_v_mean_flat`
+        invSigma           : sparse diagonal from :func:`make_invSigma`
+        K, N               : parameter count and trial count
+
+    Returns:
+        scalar — corrected log-prior value
+    """
+    inv_sig_diag = invSigma.diagonal()
+
+    # Compute DE (first differences, matching the invSigma layout)
+    E = E_flat.reshape(K, N)
+    DE = np.zeros((K, N))
+    DE[:, 0] = E[:, 0]                 # initial state
+    DE[:, 1:] = E[:, 1:] - E[:, :-1]   # transition differences
+    DE_flat = DE.flatten()
+
+    cross_term = np.dot(DE_flat * inv_sig_diag, v_mean_flat)  # (DE)^T Σ⁻¹ v
+    v_quad     = np.dot(v_mean_flat * inv_sig_diag, v_mean_flat)  # v^T Σ⁻¹ v
+    return logprior_zero_mean + cross_term - 0.5 * v_quad

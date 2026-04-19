@@ -6,29 +6,36 @@ from tqdm.auto import tqdm
 from psytrax._map import getPosteriorTerms
 from psytrax._helper.invBlkTriDiag import getCredibleInterval
 from psytrax._helper.jacHessCheck import compHess
-from psytrax._helper.helperFunctions import DT_X_D, make_invSigma, sparse_logdet
+from psytrax._helper.helperFunctions import (
+    DT_X_D, make_invSigma, sparse_logdet,
+    build_v_mean_flat, compute_invC_u, correct_logprior_for_learning_rule,
+)
 
 
 def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
              method=None, showOpt=0, jump=2, hess_calc='weights', show_progress=True,
-             map_tol=1e-6, execution_plan=None, status_callback=None):
+             map_tol=1e-6, execution_plan=None, status_callback=None,
+             learning_rule=None):
     """Optimise hyperparameters and return MAP weights.
 
     Uses the decoupled Laplace approximation to find the hyperparameter values
-    (process noise sigmas) that maximise the marginal likelihood of the data.
+    (process noise sigmas, and optionally learning rates) that maximise the
+    marginal likelihood of the data.
 
     Args:
         dat         : data dict
         hyper       : dict of hyperparameters with initial values
         n_params    : int, number of parameters per trial (K)
         log_lik_fns : (log_likelihood_fn, likelihood_terms_fn)
-        optList     : list of hyper keys to optimise (e.g. ['sigma', 'sigDay'])
+        optList     : list of hyper keys to optimise (e.g. ['sigma', 'sigDay', 'alpha'])
         E0          : initial parameter array shape (K, N); defaults to 0.01
         method      : None | '_constant' | '_days'
         showOpt     : 0 silent | 1 verbose
         jump        : patience — how many consecutive worse steps before stopping
         hess_calc   : 'weights' | 'hyper' | 'All' | None
         map_tol     : convergence tolerance for each inner MAP solve
+        learning_rule : callable or None.  When provided, the random-walk prior
+                        gets a non-zero mean v_t = diag(α) · learning_rule(w_t, data_t).
 
     Returns:
         best_hyper  : dict, optimised hyperparameters
@@ -40,6 +47,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
 
     K = n_params
     N = len(dat['r'])
+    has_lr = learning_rule is not None
 
     for val in optList:
         if val not in hyper or hyper[val] is None:
@@ -62,6 +70,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         'log_lik_fns': log_lik_fns,
         'optList': optList,
         'method': method,
+        'learning_rule': learning_rule,
     }
 
     while True:
@@ -75,6 +84,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
                 E0=current_E0, method=method, showOpt=0, pbar=pbar, map_tol=map_tol,
                 execution_plan=execution_plan,
                 status_callback=status_callback,
+                learning_rule=learning_rule,
             )
         except RuntimeError as exc:
             msg = str(exc).lower()
@@ -97,12 +107,16 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
                 eMode = best_llstruct['eMode']
                 H = best_llstruct['lT']['ddlogli']['H']
                 ddlogprior = best_llstruct['pT']['ddlogprior']
-                LL_v = -(H + ddlogprior) @ eMode
+                LL_v = _compute_LL_v_pure(
+                    eMode, H, ddlogprior, best_llstruct, best_hyper,
+                    dat, has_lr, K, N,
+                )
                 opt_keywords.update({
                     'hyper': best_hyper,
                     'LL_terms': best_llstruct['lT']['ddlogli'],
                     'LL_v': LL_v,
                     'eMode': eMode,
+                    'lr_hat': best_llstruct.get('lr_hat'),
                 })
                 break
             continue
@@ -136,12 +150,16 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             eMode = best_llstruct['eMode']
             H = best_llstruct['lT']['ddlogli']['H']
             ddlogprior = best_llstruct['pT']['ddlogprior']
-            LL_v = -(H + ddlogprior) @ eMode
+            LL_v = _compute_LL_v_pure(
+                eMode, H, ddlogprior, best_llstruct, best_hyper,
+                dat, has_lr, K, N,
+            )
             opt_keywords.update({
                 'hyper': best_hyper,
                 'LL_terms': best_llstruct['lT']['ddlogli'],
                 'LL_v': LL_v,
                 'eMode': eMode,
+                'lr_hat': best_llstruct.get('lr_hat'),
             })
             if showOpt:
                 print('Stopping: no improvement in evidence.')
@@ -151,12 +169,16 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         eMode = llstruct['eMode']
         H = llstruct['lT']['ddlogli']['H']
         ddlogprior = llstruct['pT']['ddlogprior']
-        LL_v = -(H + ddlogprior) @ eMode
+        LL_v = _compute_LL_v_pure(
+            eMode, H, ddlogprior, llstruct, current_hyper,
+            dat, has_lr, K, N,
+        )
         opt_keywords.update({
             'hyper': current_hyper,
             'LL_terms': llstruct['lT']['ddlogli'],
             'LL_v': LL_v,
             'eMode': eMode,
+            'lr_hat': llstruct.get('lr_hat'),
         })
 
         optVals = _pack_optvals(current_hyper, optList, K)
@@ -231,6 +253,40 @@ def _emit_status(callback, message, stage=None, **extra):
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _compute_LL_v_pure(eMode, H, ddlogprior, llstruct, hyper, dat, has_lr, K, N):
+    """Compute the "pure likelihood" vector for the decoupled Laplace step.
+
+    Without a learning rule (zero prior mean):
+        LL_v = -(H + ddlogprior) @ eMode   (= dlogli - H @ eMode)
+
+    With a learning rule (non-zero prior mean u):
+        LL_v_pure = -(H + ddlogprior) @ eMode - invC @ u
+                  = dlogli - H @ eMode
+
+    The subtraction of invC @ u ensures that LL_v encodes only the likelihood
+    information.  The prior mean contribution is re-added in the decoupled loss
+    function for the new hyperparameters.
+    """
+    LL_v = -(H + ddlogprior) @ eMode
+
+    if has_lr and llstruct.get('lr_hat') is not None:
+        alpha = hyper.get('alpha')
+        if alpha is not None:
+            dat.setdefault('dayLength', np.array([], dtype=int))
+            dat.setdefault('missing_trials', None)
+            day_lengths = dat.get('dayLength', np.array([], dtype=int))
+            if len(day_lengths) > 0:
+                days_arr = np.cumsum(day_lengths, dtype=int)[:-1]
+            else:
+                days_arr = np.array([], dtype=int)
+            invSigma = make_invSigma(hyper, days_arr, dat.get('missing_trials'), N, K)
+            v_mean_flat = build_v_mean_flat(llstruct['lr_hat'], alpha, K, N)
+            invC_u = compute_invC_u(v_mean_flat, invSigma, K, N)
+            LL_v = LL_v - invC_u
+
+    return LL_v
+
+
 def _pack_optvals(hyper, optList, K):
     """Flatten hyperparameters into a log2-scaled vector for optimisation."""
     vals = []
@@ -261,12 +317,19 @@ def _hyperOpt_lossfun(optVals, keywords):
     solving a linear system rather than re-running the full MAP optimisation.
     Returns a large positive sentinel (1e20) when numerical issues arise so
     that the outer L-BFGS-B optimiser backs off to a safer region.
+
+    When a learning rule is present, the prior mean is non-zero and the RHS
+    of the decoupled system includes an additional  invC_new @ u_new  term.
+    The log-prior in the evidence also gets a correction for the mean shift.
     """
     N = keywords['dat']['r'].shape[0]
     K = keywords['LL_terms']['K']
     method = keywords['method']
     dat = keywords['dat']
     log_lik_fns = keywords['log_lik_fns']
+    learning_rule = keywords.get('learning_rule')
+    lr_hat = keywords.get('lr_hat')   # (K, N-1) or None
+    has_lr = learning_rule is not None and lr_hat is not None
 
     hyper = keywords['hyper'].copy()
     _unpack_optvals(optVals, hyper, keywords['optList'], K)
@@ -290,11 +353,33 @@ def _hyperOpt_lossfun(optVals, keywords):
         invSigma = make_invSigma(hyper, days_arr, missing_trials, w_N, K)
         ddlogprior = -DT_X_D(invSigma, K)
         H = keywords['LL_terms']['H']
-        LL_v = keywords['LL_v']
+        LL_v = keywords['LL_v']          # "pure likelihood" vector
         Lambda = -H - ddlogprior
-        E_flat = linalg.spsolve(Lambda, LL_v)
+
+        # Build the RHS of the decoupled system
+        if has_lr:
+            alpha_new = hyper.get('alpha')
+            if alpha_new is not None:
+                v_mean_flat = build_v_mean_flat(lr_hat, alpha_new, K, N)
+                invC_u_new = compute_invC_u(v_mean_flat, invSigma, K, N)
+                rhs = LL_v + invC_u_new
+            else:
+                rhs = LL_v
+                v_mean_flat = None
+        else:
+            rhs = LL_v
+            v_mean_flat = None
+
+        E_flat = linalg.spsolve(Lambda, rhs)
 
         pT, lT = getPosteriorTerms(E_flat, dat, hyper, log_lik_fns, method)
+
+        # Correct the log-prior for the learning-rule mean shift
+        if has_lr and v_mean_flat is not None:
+            pT['logprior'] = correct_logprior_for_learning_rule(
+                pT['logprior'], E_flat, v_mean_flat, invSigma, K, N,
+            )
+
         logterm_post = 0.5 * sparse_logdet(-ddlogprior - lT['ddlogli']['H'])
         evd = lT['logli'] + pT['logprior'] - logterm_post
         if not np.isfinite(evd):
