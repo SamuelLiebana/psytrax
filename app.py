@@ -40,33 +40,37 @@ def _theme_colours():
 
     Uses transparent backgrounds so the Streamlit container colour shows
     through, and reads text / secondary colours directly from the frontend
-    theme info when available.  This avoids the timing issues that come with
-    trying to guess dark-vs-light on the first render.
+    theme info when available.
+
+    Defaults to **black** text (matplotlib's natural default) so that labels
+    are always legible on light themes even before the frontend has reported
+    its colours.  On dark themes there may be a barely-visible flash of dark
+    text during the initial page load, which corrects as soon as the frontend
+    theme info arrives.
     """
-    # Defaults (dark theme — Streamlit's default)
+    # Safe defaults: transparent bg, black text (legible on light theme).
     tc = {
-        'bg':         'none',   # transparent — inherits from Streamlit
-        'text':       'white',
-        'spine':      '#555555',
+        'bg':         'none',
+        'text':       'black',
+        'spine':      '#cccccc',
         'legend_bg':  'none',
-        'legend_edge':'#555555',
-        'grid':       'white',
+        'legend_edge':'#cccccc',
+        'grid':       'black',
     }
 
     # 1. Try explicit config.toml / set_page_config values
     try:
         text_color = st.get_option('theme.textColor')
-        bg_color   = st.get_option('theme.backgroundColor')
         base       = st.get_option('theme.base')
         if text_color:
             tc['text'] = text_color
             tc['grid'] = text_color
-        if base == 'light':
-            tc['spine'] = '#cccccc'
-            tc['legend_edge'] = '#cccccc'
+        if base == 'dark':
+            tc['spine'] = '#555555'
+            tc['legend_edge'] = '#555555'
             if not text_color:
-                tc['text'] = 'black'
-                tc['grid'] = 'black'
+                tc['text'] = 'white'
+                tc['grid'] = 'white'
     except Exception:
         pass
 
