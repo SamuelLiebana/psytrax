@@ -318,7 +318,8 @@ _DAP011_CHRONO = os.path.join(_DOC_ASSET_DIR, 'dap011_race_chronometric.png')
 # ---------------------------------------------------------------------------
 st.sidebar.title('psytrax')
 st.sidebar.caption('Empirical Bayes for trial-by-trial decision models')
-page = st.sidebar.radio('Navigation', ['Instructions', 'Fit Model', 'Visualise Results', 'Compare Models'],
+page = st.sidebar.radio('Navigation', ['Instructions', 'Fit Model', 'IBL Explorer',
+                                       'Visualise Results', 'Compare Models'],
                         label_visibility='collapsed')
 
 # ---------------------------------------------------------------------------
@@ -1275,6 +1276,731 @@ def learning_rule(params, dat_trial):
                 key='fit_download',
             )
         st.info('Load this file in **Visualise Results** or **Compare Models** to explore the fit.')
+
+# ---------------------------------------------------------------------------
+# IBL Explorer
+# ---------------------------------------------------------------------------
+elif page == 'IBL Explorer':
+    import pandas as pd
+
+    st.title('IBL Explorer')
+    st.markdown(
+        'Load behavioural data from the '
+        '[International Brain Laboratory](https://www.internationalbrainlab.com/) '
+        'public archive via the **ONE** API, fit a psytrax model, and visualise '
+        'the results — all in one page.'
+    )
+    st.divider()
+
+    # ==================================================================
+    # 1. ONE Connection
+    # ==================================================================
+    st.subheader('1. Connect to IBL')
+
+    try:
+        from one.api import ONE
+        _ONE_AVAILABLE = True
+    except ImportError:
+        _ONE_AVAILABLE = False
+
+    if not _ONE_AVAILABLE:
+        st.error(
+            '**`ONE-api` is not installed.**  \n'
+            'Install it with:\n\n'
+            '```bash\n'
+            'pip install ONE-api\n'
+            '```\n\n'
+            'Then restart the app.'
+        )
+        st.stop()
+
+    # Initialise session-state keys
+    for _k, _v in [
+        ('one_client',  None), ('one_connected', False),
+        ('ibl_subjects', []),  ('ibl_eids', []),
+        ('ibl_data',    None), ('ibl_fit_running', False),
+        ('ibl_fit_result_path', None), ('ibl_fit_log', []),
+        ('ibl_fit_error', None),
+    ]:
+        if _k not in st.session_state:
+            st.session_state[_k] = _v
+
+    if not st.session_state['one_connected']:
+        st.markdown(
+            'Connect to the **IBL public server** '
+            '(`openalyx.internationalbrainlab.org`).  '
+            'No credentials are required for public data.'
+        )
+        if st.button('Connect', key='ibl_connect'):
+            with st.spinner('Connecting…'):
+                try:
+                    _one = ONE(
+                        base_url='https://openalyx.internationalbrainlab.org',
+                        silent=True,
+                    )
+                    st.session_state['one_client'] = _one
+                    st.session_state['one_connected'] = True
+                    st.rerun()
+                except Exception as _e:
+                    st.error(f'Connection failed: {_e}')
+        st.stop()
+
+    st.success('Connected to IBL public server.')
+    one = st.session_state['one_client']
+    st.divider()
+
+    # ==================================================================
+    # 2. Subject browser
+    # ==================================================================
+    st.subheader('2. Select subject')
+
+    _subject = st.text_input(
+        'Subject name (e.g. `KS023`, `ZM_2241`, `CSHL049`)',
+        key='ibl_subject_input',
+    ).strip()
+
+    if not _subject:
+        st.info('Enter a subject name to search for sessions.')
+        st.stop()
+
+    st.divider()
+
+    # ==================================================================
+    # 3. Session selection
+    # ==================================================================
+    st.subheader('3. Select sessions')
+
+    @st.cache_data(show_spinner='Searching sessions…')
+    def _search_sessions(subject):
+        """Return list of (eid, date_str) for a subject."""
+        eids = one.search(subject=subject, dataset='_ibl_trials.choice.npy')
+        sessions = []
+        for eid in eids:
+            det = one.get_details(eid, full=False)
+            date_str = str(det.get('date', eid))
+            n_datasets = det.get('number', '?')
+            sessions.append({'eid': str(eid), 'date': date_str, 'n_datasets': n_datasets})
+        # Sort by date
+        sessions.sort(key=lambda s: s['date'])
+        return sessions
+
+    try:
+        _sessions = _search_sessions(_subject)
+    except Exception as _e:
+        st.error(f'Failed to search sessions: {_e}')
+        st.stop()
+
+    if not _sessions:
+        st.warning(f'No sessions with trial data found for subject **{_subject}**.')
+        st.stop()
+
+    st.caption(f'Found **{len(_sessions)}** session(s) for **{_subject}**.')
+
+    # Date range filter
+    _all_dates = [s['date'] for s in _sessions]
+    _date_col1, _date_col2 = st.columns(2)
+    with _date_col1:
+        _date_from = st.selectbox('From date', _all_dates, index=0, key='ibl_date_from')
+    with _date_col2:
+        _date_to = st.selectbox('To date', _all_dates, index=len(_all_dates) - 1, key='ibl_date_to')
+
+    _filtered = [s for s in _sessions if _date_from <= s['date'] <= _date_to]
+    st.caption(f'**{len(_filtered)}** session(s) in selected range.')
+
+    if not _filtered:
+        st.warning('No sessions in the selected date range.')
+        st.stop()
+
+    # Show session table
+    _sess_df = pd.DataFrame(_filtered)
+    st.dataframe(_sess_df[['date', 'eid']], use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ==================================================================
+    # 4. Load & preview data
+    # ==================================================================
+    st.subheader('4. Load data')
+
+    def _ibl_to_psytrax(trials_list):
+        """Convert list of IBL trial dicts/Bunches to a psytrax data dict."""
+        all_c, all_r, all_t, all_reward = [], [], [], []
+        all_p_left, all_stim_on = [], []
+        session_lengths = []
+
+        for trials in trials_list:
+            # ---- Signed contrast ----
+            cL = np.nan_to_num(np.asarray(trials.contrastLeft, dtype=float), nan=0.0)
+            cR = np.nan_to_num(np.asarray(trials.contrastRight, dtype=float), nan=0.0)
+            c = cR - cL  # positive = rightward stimulus
+
+            # ---- Choice: IBL uses -1 (left) / +1 (right) → psytrax 0 / 1 ----
+            choice = np.asarray(trials.choice, dtype=float)
+            r = (choice + 1.0) / 2.0  # -1 → 0, +1 → 1
+
+            # ---- Reward / feedback: IBL uses -1 (error) / +1 (correct) → 0 / 1 ----
+            fb = np.asarray(trials.feedbackType, dtype=float)
+            reward = (fb + 1.0) / 2.0
+
+            # ---- Reaction time ----
+            rt = np.asarray(trials.response_times, dtype=float)
+            # If stimOn_times is available, compute RT relative to stimulus onset
+            if hasattr(trials, 'stimOn_times') and trials.stimOn_times is not None:
+                stim_on = np.asarray(trials.stimOn_times, dtype=float)
+                rt_rel = rt - stim_on
+                # Fall back to raw response_times if relative RT has issues
+                if np.all(np.isfinite(rt_rel)) and np.all(rt_rel > 0):
+                    rt = rt_rel
+
+            # ---- Optional extras ----
+            p_left = (np.asarray(trials.probabilityLeft, dtype=float)
+                      if hasattr(trials, 'probabilityLeft') and trials.probabilityLeft is not None
+                      else np.full(len(c), 0.5))
+
+            # ---- Filter invalid trials (NaN choice, etc.) ----
+            valid = np.isfinite(c) & np.isfinite(r) & np.isfinite(rt) & (rt > 0)
+            c, r, rt, reward, p_left = c[valid], r[valid], rt[valid], reward[valid], p_left[valid]
+
+            all_c.append(c)
+            all_r.append(r)
+            all_t.append(rt)
+            all_reward.append(reward)
+            all_p_left.append(p_left)
+            session_lengths.append(len(c))
+
+        return {
+            'inputs': {
+                'c': np.concatenate(all_c),
+                'reward': np.concatenate(all_reward),
+                'p_left': np.concatenate(all_p_left),
+            },
+            'responses': np.concatenate(all_r),
+            'times': np.concatenate(all_t),
+            'session_lengths': np.array(session_lengths, dtype=int),
+        }
+
+    _selected_eids = [s['eid'] for s in _filtered]
+
+    if st.button('Load trials from selected sessions', key='ibl_load'):
+        _trials_list = []
+        _load_bar = st.progress(0, text='Loading…')
+        for _i, _eid in enumerate(_selected_eids):
+            _load_bar.progress((_i + 1) / len(_selected_eids),
+                               text=f'Loading session {_i + 1}/{len(_selected_eids)}…')
+            try:
+                _tr = one.load_object(_eid, 'trials')
+                _trials_list.append(_tr)
+            except Exception as _e:
+                st.warning(f'Skipped session `{_eid}`: {_e}')
+        _load_bar.empty()
+
+        if not _trials_list:
+            st.error('No trial data could be loaded.')
+            st.stop()
+
+        _raw = _ibl_to_psytrax(_trials_list)
+        st.session_state['ibl_data'] = _raw
+        # Clear any previous fit when new data is loaded
+        st.session_state['ibl_fit_result_path'] = None
+        st.session_state['ibl_fit_error'] = None
+        st.rerun()
+
+    raw = st.session_state.get('ibl_data')
+    if raw is None:
+        st.info('Click **Load trials** to fetch data from the IBL server.')
+        st.stop()
+
+    _N_data = len(raw['responses'])
+    _n_sess = len(raw['session_lengths'])
+    _has_rt = 'times' in raw
+    _has_ses = 'session_lengths' in raw
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric('Trials', _N_data)
+    c2.metric('Sessions', _n_sess)
+    c3.metric('Has RT', 'yes' if _has_rt else 'no')
+    c4.metric('Has reward', 'reward' in raw.get('inputs', {}))
+
+    with st.expander('Preview data (first 200 trials)'):
+        _n_preview = min(200, _N_data)
+        st.dataframe(pd.DataFrame({
+            'contrast': raw['inputs']['c'][:_n_preview],
+            'response': raw['responses'][:_n_preview],
+            'RT (s)': raw['times'][:_n_preview] if _has_rt else [None] * _n_preview,
+            'reward': raw['inputs'].get('reward', np.full(_n_preview, np.nan))[:_n_preview],
+            'p_left': raw['inputs'].get('p_left', np.full(_n_preview, np.nan))[:_n_preview],
+        }), use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ==================================================================
+    # 5. Choose model & learning rule
+    # ==================================================================
+    st.subheader('5. Choose model')
+
+    _ibl_model = st.selectbox(
+        'Built-in model',
+        ['Race model (inverse-Gaussian)', 'DDM — exact (Navarro & Fuss 2009)',
+         'DDM — approx (inverse-Gaussian)', 'Logistic regression'],
+        key='ibl_model',
+    )
+
+    if _ibl_model == 'Race model (inverse-Gaussian)':
+        from psytrax.models.race import (
+            log_lik_trial as _race_full_llt,
+            make_fixed_sig_i_model as _ibl_make_fixed,
+            default_hyper_fixed_sig_i as _ibl_dhyper,
+            DEFAULT_FIXED_SIG_I as _IBL_FIXED_SIG_I,
+            DATA_SPEC as _ibl_data_spec,
+        )
+        _ibl_race_fixed = True
+        _ibl_llt = _race_full_llt
+        _ibl_K = 5
+        _ibl_pnames = ['wr', 'wl', 'br', 'bl', 'z']
+    elif _ibl_model == 'DDM — exact (Navarro & Fuss 2009)':
+        from psytrax.models.ddm import (
+            log_lik_trial as _ibl_llt, N_PARAMS as _ibl_K,
+            PARAM_NAMES as _ibl_pnames, default_hyper as _ibl_dhyper,
+            DATA_SPEC as _ibl_data_spec,
+        )
+        _ibl_race_fixed = False
+    elif _ibl_model == 'DDM — approx (inverse-Gaussian)':
+        from psytrax.models.ddm_approx import (
+            log_lik_trial as _ibl_llt, N_PARAMS as _ibl_K,
+            PARAM_NAMES as _ibl_pnames, default_hyper as _ibl_dhyper,
+            DATA_SPEC as _ibl_data_spec,
+        )
+        _ibl_race_fixed = False
+    else:
+        import jax, jax.numpy as jnp
+        def _ibl_llt(params, dat_trial):
+            w, b = params
+            p = jax.nn.sigmoid(w * dat_trial['inputs']['c'] + b)
+            p = jnp.clip(p, 1e-7, 1 - 1e-7)
+            return dat_trial['r'] * jnp.log(p) + (1 - dat_trial['r']) * jnp.log(1 - p)
+        _ibl_K = 2
+        _ibl_pnames = ['w', 'b']
+        def _ibl_dhyper():
+            return {'sigma': np.full(2, 2**-3), 'sigInit': np.full(2, 2**4), 'sigDay': None}
+        from psytrax.models.logistic import DATA_SPEC as _ibl_data_spec
+        _ibl_race_fixed = False
+
+    # --- Learning rule ---
+    st.markdown('**Learning rule** *(optional)*')
+    _ibl_lr_choice = st.selectbox(
+        'Learning rule', ['None', 'REINFORCE (built-in)'], key='ibl_lr_choice',
+    )
+
+    _ibl_learning_rule = None
+    _ibl_lr_reward_col = None
+
+    if _ibl_lr_choice == 'REINFORCE (built-in)':
+        from psytrax.learning_rules import augment_data_spec, make_reinforce
+        _ibl_lr_reward_col = 'reward'  # always mapped from feedbackType
+        _ibl_data_spec = augment_data_spec(_ibl_data_spec, make_reinforce(
+            _ibl_llt, reward_key=_ibl_lr_reward_col))
+        if _ibl_race_fixed:
+            _ibl_learning_rule = 'reinforce_deferred'
+        else:
+            _ibl_learning_rule = make_reinforce(_ibl_llt, reward_key=_ibl_lr_reward_col)
+        st.success('REINFORCE enabled — reward signal from IBL `feedbackType`.')
+
+    # Validate data against model spec
+    _ibl_needs_rt = 'rt' in _ibl_data_spec
+    _ibl_spec_inputs = _ibl_data_spec.get('inputs', {})
+    _ibl_missing = [k for k, info in _ibl_spec_inputs.items()
+                    if info.get('required') and k not in raw['inputs']]
+    if _ibl_missing:
+        st.error(f'Data is missing required inputs: {_ibl_missing}')
+        st.stop()
+    if _ibl_needs_rt and 'times' not in raw:
+        st.error('This model requires reaction times, but none are available.')
+        st.stop()
+
+    st.divider()
+
+    # ==================================================================
+    # 6. Configure fitting
+    # ==================================================================
+    st.subheader('6. Configure fitting')
+
+    _fc1, _fc2 = st.columns(2)
+    with _fc1:
+        _ibl_ntrials = st.number_input(
+            'Max trials (0 = all)', min_value=0, value=0, step=100, key='ibl_ntrials')
+        _ibl_ntrials = int(_ibl_ntrials) if _ibl_ntrials > 0 else None
+
+        _ibl_sess_bound = st.checkbox(
+            'Session boundaries (fit sigDay)', value=True, key='ibl_session_boundaries')
+        _ibl_shared_sigma = st.checkbox(
+            'Shared sigma (scalar)', value=False, key='ibl_shared_sigma')
+
+    with _fc2:
+        _ibl_map_tol = st.select_slider(
+            'MAP tolerance', options=[1e-3, 1e-4, 1e-5, 1e-6], value=1e-4,
+            format_func=lambda x: f'{x:.0e}', key='ibl_map_tol')
+        _ibl_hess = st.selectbox(
+            'Credible intervals', ['weights', 'None', 'hyper', 'All'],
+            index=0, key='ibl_hess')
+        _ibl_hess = None if _ibl_hess == 'None' else _ibl_hess
+        _ibl_precision = 'float64'
+        _ibl_fixed_sig_i = _IBL_FIXED_SIG_I if _ibl_race_fixed else None
+
+    with st.expander('Advanced: initial hyperparameters'):
+        st.markdown('Leave blank to use model defaults. Values are in **log₂** scale.')
+        _ibl_default_h = _ibl_dhyper()
+        _ibl_sigma_str = st.text_input(
+            f'sigma (log₂), {_ibl_K} values or single scalar',
+            value=', '.join(f'{np.log2(v):.1f}' for v in np.atleast_1d(_ibl_default_h['sigma'])),
+            key=f'ibl_sigma_init_{_ibl_model}',
+        )
+        try:
+            _sv = [float(x.strip()) for x in _ibl_sigma_str.split(',')]
+            _ibl_custom_sigma = float(2 ** _sv[0]) if len(_sv) == 1 else 2 ** np.array(_sv)
+        except Exception:
+            st.warning('Could not parse sigma — using model default.')
+            _ibl_custom_sigma = _ibl_default_h['sigma']
+
+    _ibl_hyper = _ibl_dhyper()
+    if _ibl_shared_sigma:
+        _ibl_hyper['sigma'] = (float(_ibl_custom_sigma) if np.isscalar(_ibl_custom_sigma)
+                               else float(np.mean(_ibl_custom_sigma)))
+    else:
+        _ibl_hyper['sigma'] = (np.full(_ibl_K, float(_ibl_custom_sigma))
+                               if np.isscalar(_ibl_custom_sigma)
+                               else np.asarray(_ibl_custom_sigma))
+
+    st.divider()
+
+    # ==================================================================
+    # 7. Fit
+    # ==================================================================
+    st.subheader('7. Fit')
+
+    _ibl_run = st.button('Run fit', disabled=st.session_state['ibl_fit_running'], key='ibl_fit_run')
+
+    if _ibl_run:
+        import psytrax
+        import psytrax._hyper_opt as _ibl_hyper_opt_mod
+        import time as _time
+
+        st.session_state['ibl_fit_running'] = True
+        st.session_state['ibl_fit_result_path'] = None
+        st.session_state['ibl_fit_log'] = []
+        st.session_state['ibl_fit_error'] = None
+
+        _iq = queue.Queue()
+
+        class _IBLQueueTqdm:
+            def __init__(self, *args, **kwargs):
+                self._n = 0; self._map_n = 0; self._postfix = {}
+            def update(self, n=1):
+                self._n += n; self._map_n = 0
+                self._postfix.pop('MAP loss', None)
+                _iq.put(('progress', self._n, self._map_n, dict(self._postfix)))
+            def set_postfix(self, d, **kwargs):
+                self._postfix.update(d)
+                if 'MAP loss' in d: self._map_n += 1
+                _iq.put(('progress', self._n, self._map_n, dict(self._postfix)))
+            def close(self): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        def _ibl_status_cb(payload):
+            _iq.put(('status', payload))
+
+        _ibl_orig_tqdm = _ibl_hyper_opt_mod.tqdm
+        _ibl_hyper_opt_mod.tqdm = _IBLQueueTqdm
+
+        def _ibl_run_fit():
+            try:
+                os.makedirs('fits', exist_ok=True)
+                _subj = st.session_state.get('ibl_subject_input', 'ibl_subject')
+                fit_kw = dict(
+                    data=raw,
+                    shared_sigma=_ibl_shared_sigma,
+                    session_boundaries=_ibl_sess_bound,
+                    n_trials=_ibl_ntrials,
+                    hess_calc=_ibl_hess,
+                    map_tol=float(_ibl_map_tol),
+                    precision=_ibl_precision,
+                    subject_name=_subj,
+                    save=True, verbose=True,
+                    status_callback=_ibl_status_cb,
+                )
+
+                _fixed_params = {}
+                _lr = _ibl_learning_rule
+
+                if _ibl_race_fixed:
+                    _fixed_params['sig_i'] = float(_ibl_fixed_sig_i)
+                    _ibl_status_cb({'stage': 'setup',
+                                    'message': f'Using fixed sig_i = {_ibl_fixed_sig_i:.4f}.'})
+                    _llt_f, _K_f, _pn_f, _dh_f, _ = _ibl_make_fixed(_ibl_fixed_sig_i)
+                    fit_kw.update(log_lik_trial=_llt_f, n_params=_K_f, param_names=_pn_f)
+                    if _lr == 'reinforce_deferred':
+                        from psytrax.learning_rules import make_reinforce
+                        _lr = make_reinforce(_llt_f, reward_key=_ibl_lr_reward_col)
+                else:
+                    fit_kw.update(log_lik_trial=_ibl_llt, n_params=_ibl_K,
+                                  param_names=_ibl_pnames)
+
+                if _lr and _lr != 'reinforce_deferred':
+                    fit_kw['learning_rule'] = _lr
+                    _ibl_status_cb({'stage': 'setup',
+                                    'message': 'Learning rule enabled — alpha will be optimised.'})
+
+                result = psytrax.fit(hyper=_ibl_hyper, **fit_kw)
+                if _fixed_params:
+                    _saved = np.load(result, allow_pickle=True).item()
+                    _saved['fixed_params'] = _fixed_params
+                    np.save(result, _saved)
+                _iq.put(('done', result))
+            except Exception:
+                import traceback
+                _iq.put(('error', traceback.format_exc()))
+            finally:
+                _ibl_hyper_opt_mod.tqdm = _ibl_orig_tqdm
+
+        _ibl_thread = threading.Thread(target=_ibl_run_fit, daemon=True)
+        _ibl_thread.start()
+        st.session_state['_ibl_fit_thread'] = _ibl_thread
+        st.session_state['_ibl_fit_queue'] = _iq
+
+    if st.session_state['ibl_fit_running']:
+        import time as _time
+        _iq      = st.session_state['_ibl_fit_queue']
+        _ithread = st.session_state['_ibl_fit_thread']
+
+        st.markdown('**Fitting in progress…** &nbsp; `JAX L-BFGS`')
+        _ic1, _ic2 = st.columns(2)
+        _cyc_txt  = _ic1.empty()
+        _map_txt  = _ic2.empty()
+        _stat_txt = st.empty()
+        _evd_txt  = st.empty()
+        _log_box  = st.empty()
+
+        _cyc, _map_i = 0, 0
+        _evd_s, _best_s, _ml_s = '—', '—', '—'
+        _cur_status = 'Preparing fit…'
+        _flog = st.session_state.get('ibl_fit_log', [])
+
+        while _ithread.is_alive():
+            while not _iq.empty():
+                try:
+                    _m = _iq.get_nowait()
+                    if _m[0] == 'progress':
+                        _, _cyc, _map_i, _pf = _m
+                        _evd_s = _pf.get('log_evd', '—')
+                        _best_s = _pf.get('best', '—')
+                        _ml_s = _pf.get('MAP loss', _ml_s)
+                    elif _m[0] == 'status':
+                        _cur_status = _m[1].get('message', _cur_status)
+                        _flog.append(_cur_status)
+                        _flog = _flog[-12:]
+                        st.session_state['ibl_fit_log'] = _flog
+                except queue.Empty:
+                    break
+            _cyc_txt.metric('Cycles completed', _cyc)
+            _map_txt.metric('MAP iters (current cycle)', _map_i)
+            _stat_txt.markdown(f'**Current step:** {_cur_status}')
+            _evd_txt.markdown(
+                f'Log evidence — current: **{_evd_s}** | best: **{_best_s}**'
+                + (f' | Neg. log posterior: **{_ml_s}**' if _ml_s != '—' else ''))
+            if _flog:
+                _log_box.code('\n'.join(_flog), language='text')
+            _time.sleep(0.5)
+
+        # Drain queue
+        _mtype, _mpay = 'error', 'No result received.'
+        while not _iq.empty():
+            try:
+                _mm = _iq.get_nowait()
+                if _mm[0] in ('done', 'error'):
+                    _mtype, _mpay = _mm[0], _mm[1]
+            except queue.Empty:
+                break
+
+        st.session_state['ibl_fit_running'] = False
+        if _mtype == 'done':
+            st.session_state['ibl_fit_result_path'] = _mpay
+        else:
+            st.session_state['ibl_fit_error'] = _mpay
+        st.rerun()
+
+    if st.session_state['ibl_fit_error']:
+        st.error(f'Fitting failed:\n\n```\n{st.session_state["ibl_fit_error"]}\n```')
+
+    if st.session_state['ibl_fit_result_path']:
+        _ibl_path = st.session_state['ibl_fit_result_path']
+        st.success(f'Fit complete! Saved to `{_ibl_path}`')
+
+        _ibl_res = np.load(_ibl_path, allow_pickle=True).item()
+        _r1, _r2, _r3, _r4 = st.columns(4)
+        _r1.metric('Trials', _ibl_res['params'].shape[1])
+        _r2.metric('Parameters', _ibl_res['params'].shape[0])
+        _r3.metric('Log evidence', f"{_ibl_res['log_evidence']:.1f}")
+        _r4.metric('Duration', str(_ibl_res['duration']).split('.')[0])
+
+        with open(_ibl_path, 'rb') as _f:
+            st.download_button(
+                'Download fit file (.npy)', data=_f.read(),
+                file_name=os.path.basename(_ibl_path),
+                mime='application/octet-stream', key='ibl_download_fit',
+            )
+
+        st.divider()
+
+        # ==============================================================
+        # 8. Visualise results
+        # ==============================================================
+        st.subheader('8. Results')
+
+        _ip = _ibl_res['params']
+        _ipn = _ibl_res['param_names']
+        _iK, _iN = _ip.shape
+        _iWstd = _ibl_res['hess_info'].get('W_std')
+        _idat = _ibl_res['data']
+
+        _i_model_family, _i_fixed_params = _model_family_info(_ipn, result=_ibl_res)
+        _i_rt_key = next((k for k in ('T', 'times') if k in _idat and _idat[k] is not None), None)
+        _i_has_rt = (_i_rt_key is not None) and _i_model_family in _RT_CURVE_FAMILIES
+
+        COLORS = ['#4e9af1', '#f1a44e', '#4ef17a', '#f14e7a', '#c44ef1', '#f1f14e']
+
+        # --- Parameter trajectories ---
+        st.markdown('#### Parameter trajectories')
+        _i_traj_mode = st.radio('Display mode', ['Separate', 'Combined'],
+                                horizontal=True, label_visibility='collapsed',
+                                key='ibl_traj_mode')
+
+        _i_trials = np.arange(_iN)
+        _i_dl = _idat.get('dayLength') if _idat.get('dayLength') is not None else np.array([])
+        _i_bounds = np.cumsum(_i_dl).astype(int) if len(_i_dl) else np.array([], dtype=int)
+
+        if _i_traj_mode == 'Separate':
+            _ncols = min(_iK, 3)
+            _nrows = int(np.ceil(_iK / _ncols))
+            fig, axes = plt.subplots(_nrows, _ncols,
+                                     figsize=(5 * _ncols, 3 * _nrows), squeeze=False)
+            _tc = _style_fig(fig)
+            for k, (ax, name) in enumerate(zip(axes.flat, _ipn)):
+                col = COLORS[k % len(COLORS)]
+                _style_ax(ax, xlabel='Trial', title=name)
+                ax.plot(_i_trials, _ip[k], color=col, lw=0.8, alpha=0.9)
+                if _iWstd is not None:
+                    ax.fill_between(_i_trials, _ip[k] - _iWstd[k], _ip[k] + _iWstd[k],
+                                    color=col, alpha=0.2)
+                for b in _i_bounds[:-1]:
+                    ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
+            for ax in axes.flat[_iK:]:
+                ax.set_visible(False)
+            fig.tight_layout()
+            _show_fig(fig, 'ibl_param_trajectories.png')
+        else:
+            fig, ax = plt.subplots(figsize=(12, 4))
+            _tc = _style_fig(fig)
+            _style_ax(ax, xlabel='Trial', ylabel='Parameter value')
+            for k, name in enumerate(_ipn):
+                col = COLORS[k % len(COLORS)]
+                ax.plot(_i_trials, _ip[k], color=col, lw=0.9, alpha=0.9, label=name)
+                if _iWstd is not None:
+                    ax.fill_between(_i_trials, _ip[k] - _iWstd[k], _ip[k] + _iWstd[k],
+                                    color=col, alpha=0.15)
+            for b in _i_bounds[:-1]:
+                ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
+            _style_legend(ax)
+            fig.tight_layout()
+            _show_fig(fig, 'ibl_param_trajectories.png')
+
+        # --- Psychometric & chronometric curves ---
+        if 'inputs' in _idat and 'c' in _idat['inputs'] and 'r' in _idat:
+            c_data = _idat['inputs']['c']
+            r_data = _idat['r']
+            c_grid = np.linspace(c_data.min() - 0.05, c_data.max() + 0.05, 200)
+
+            st.markdown('#### Psychometric curve: evolution over learning')
+            N_WIN = 4
+            edges = np.linspace(0, _iN, N_WIN + 1, dtype=int)
+
+            fig_evo, axes_evo = plt.subplots(2, 2, figsize=(11, 8))
+            _tc = _style_fig(fig_evo)
+            for wi, ax in enumerate(axes_evo.flat):
+                t0, t1 = int(edges[wi]), int(edges[wi + 1])
+                mask = np.zeros(_iN, dtype=bool)
+                mask[t0:t1] = True
+                c_win, r_win = c_data[mask], r_data[mask]
+                c_uniq = np.unique(c_win)
+                p_win = np.array([r_win[c_win == cv].mean() for cv in c_uniq])
+                n_win = np.array([np.sum(c_win == cv) for cv in c_uniq])
+
+                _style_ax(ax, xlabel='Signed contrast', ylabel='P(right)',
+                          title=f'Trials {t0 + 1}–{t1}')
+                ax.scatter(c_uniq, p_win, s=[max(10, n / 5) for n in n_win],
+                           color=_tc['text'], zorder=3)
+                p_m, _ = _curve_predictions(
+                    _ip[:, t0:t1], _ipn, c_grid, _i_model_family,
+                    fixed_params=_i_fixed_params)
+                if p_m is not None:
+                    ax.plot(c_grid, p_m, color='#4e9af1', lw=2)
+                ax.axhline(0.5, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+                ax.axvline(0, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+                ax.set_ylim(0, 1)
+            fig_evo.suptitle('Psychometric curve evolution', color=_tc['text'], fontsize=13)
+            fig_evo.tight_layout()
+            _show_fig(fig_evo, 'ibl_psychometric_evolution.png')
+
+            # --- Chronometric curves ---
+            if _i_has_rt:
+                T_data = _idat[_i_rt_key]
+                st.markdown('#### Chronometric curve: evolution over learning')
+                with st.spinner('Computing chronometric curves…'):
+                    fig_cevo, axes_cevo = plt.subplots(2, 2, figsize=(11, 8))
+                    _tc = _style_fig(fig_cevo)
+                    panel_data = []
+                    y_series = []
+                    for wi in range(len(axes_cevo.flat)):
+                        t0, t1 = int(edges[wi]), int(edges[wi + 1])
+                        mask = np.zeros(_iN, dtype=bool)
+                        mask[t0:t1] = True
+                        c_win, rt_win = c_data[mask], T_data[mask]
+                        c_uniq = np.unique(c_win)
+                        rt_mean = np.array([rt_win[c_win == cv].mean() for cv in c_uniq])
+                        n_win = np.array([np.sum(c_win == cv) for cv in c_uniq])
+                        _, rt_m = _curve_predictions(
+                            _ip[:, t0:t1], _ipn, c_grid, _i_model_family,
+                            fixed_params=_i_fixed_params)
+                        panel_data.append((t0, t1, c_uniq, rt_mean, n_win, rt_m))
+                        y_series.extend([rt_mean, rt_m])
+
+                    shared_ylim = _shared_ylim(y_series)
+                    for ax, (t0, t1, c_uniq, rt_mean, n_win, rt_m) in zip(
+                            axes_cevo.flat, panel_data):
+                        _style_ax(ax, xlabel='Signed contrast', ylabel='Mean RT (s)',
+                                  title=f'Trials {t0 + 1}–{t1}')
+                        ax.scatter(c_uniq, rt_mean, s=[max(10, n / 5) for n in n_win],
+                                   color=_tc['text'], zorder=3)
+                        if rt_m is not None:
+                            ax.plot(c_grid, rt_m, color='#4e9af1', lw=2)
+                        ax.axvline(0, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+                        if shared_ylim is not None:
+                            ax.set_ylim(*shared_ylim)
+                    fig_cevo.suptitle('Chronometric curve evolution',
+                                      color=_tc['text'], fontsize=13)
+                    fig_cevo.tight_layout()
+                    _show_fig(fig_cevo, 'ibl_chronometric_evolution.png')
+
+        # --- Hyperparameter table ---
+        st.markdown('#### Optimised hyperparameters (log₂ scale)')
+        _i_hyper = _ibl_res['hyper']
+        _hyp_rows = {}
+        for _hk in ('sigma', 'sigInit', 'sigDay', 'alpha'):
+            _hv = _i_hyper.get(_hk)
+            if _hv is not None:
+                _hv = np.atleast_1d(_hv)
+                _hyp_rows[_hk] = {name: f'{np.log2(v):.2f}' for name, v in zip(_ipn, _hv)}
+        if _hyp_rows:
+            st.dataframe(pd.DataFrame(_hyp_rows).T, use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # Visualise Results
