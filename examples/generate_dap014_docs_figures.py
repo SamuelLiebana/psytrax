@@ -1,7 +1,7 @@
-"""Generate documentation figures from the bundled DAP011 race-model fit.
+"""Generate documentation figures from the bundled race-model example fit.
 
 Usage:
-    conda run --no-capture-output -n psytrax python examples/generate_dap011_docs_figures.py
+    conda run --no-capture-output -n psytrax python examples/generate_dap014_docs_figures.py
 """
 
 from __future__ import annotations
@@ -16,8 +16,10 @@ from scipy.stats import norm as _sp_norm
 
 
 REPO_DIR = os.path.dirname(os.path.dirname(__file__))
-FIT_PATH = os.path.join(REPO_DIR, "example_fits", "DAP011_race_fit.npy")
+EXAMPLE_ID = os.environ.get("PSYTRAX_DOC_EXAMPLE", "DAP014")
+FIT_PATH = os.path.join(REPO_DIR, "example_fits", f"{EXAMPLE_ID}_race_fit.npy")
 OUT_DIR = os.path.join(REPO_DIR, "examples", "assets")
+OUT_PREFIX = EXAMPLE_ID.lower()
 
 COLORS = ['#4e9af1', '#f1a44e', '#4ef17a', '#f14e7a', '#c44ef1']
 
@@ -118,9 +120,10 @@ def _save_trajectories(result):
 
     axes[4].set_xlabel('Trial')
     axes[5].set_visible(False)
-    fig.suptitle('DAP011 race-model parameter trajectories', fontsize=15, y=0.99)
+    fig.suptitle(f'{EXAMPLE_ID} race-model parameter trajectories', fontsize=15, y=0.99)
     fig.tight_layout()
-    fig.savefig(os.path.join(OUT_DIR, 'dap011_race_trajectories.png'), dpi=180, bbox_inches='tight')
+    fig.savefig(os.path.join(OUT_DIR, f'{OUT_PREFIX}_race_trajectories.png'),
+                dpi=180, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -179,14 +182,16 @@ def _save_evolution_curves(result):
         if shared_ylim is not None:
             ax.set_ylim(*shared_ylim)
 
-    fig_p.suptitle('DAP011 psychometric evolution over learning', fontsize=15, y=0.98)
+    fig_p.suptitle(f'{EXAMPLE_ID} psychometric evolution over learning', fontsize=15, y=0.98)
     fig_p.tight_layout()
-    fig_p.savefig(os.path.join(OUT_DIR, 'dap011_race_psychometric.png'), dpi=180, bbox_inches='tight')
+    fig_p.savefig(os.path.join(OUT_DIR, f'{OUT_PREFIX}_race_psychometric.png'),
+                  dpi=180, bbox_inches='tight')
     plt.close(fig_p)
 
-    fig_c.suptitle('DAP011 chronometric evolution over learning', fontsize=15, y=0.98)
+    fig_c.suptitle(f'{EXAMPLE_ID} chronometric evolution over learning', fontsize=15, y=0.98)
     fig_c.tight_layout()
-    fig_c.savefig(os.path.join(OUT_DIR, 'dap011_race_chronometric.png'), dpi=180, bbox_inches='tight')
+    fig_c.savefig(os.path.join(OUT_DIR, f'{OUT_PREFIX}_race_chronometric.png'),
+                  dpi=180, bbox_inches='tight')
     plt.close(fig_c)
 
 
@@ -195,7 +200,7 @@ def main():
     result = np.load(FIT_PATH, allow_pickle=True).item()
     _save_trajectories(result)
     _save_evolution_curves(result)
-    print(f"Saved PNGs to {OUT_DIR}")
+    print(f"Saved {EXAMPLE_ID} PNGs to {OUT_DIR}")
 
 
 if __name__ == '__main__':

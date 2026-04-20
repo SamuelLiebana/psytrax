@@ -309,17 +309,18 @@ st.set_page_config(page_title='psytrax', layout='wide')
 
 _APP_DIR = os.path.dirname(__file__)
 _DOC_ASSET_DIR = os.path.join(_APP_DIR, 'examples', 'assets')
-_DAP011_TRAJ = os.path.join(_DOC_ASSET_DIR, 'dap011_race_trajectories.png')
-_DAP011_PSY = os.path.join(_DOC_ASSET_DIR, 'dap011_race_psychometric.png')
-_DAP011_CHRONO = os.path.join(_DOC_ASSET_DIR, 'dap011_race_chronometric.png')
+_DAP014_TRAJ = os.path.join(_DOC_ASSET_DIR, 'dap014_race_trajectories.png')
+_DAP014_PSY = os.path.join(_DOC_ASSET_DIR, 'dap014_race_psychometric.png')
+_DAP014_CHRONO = os.path.join(_DOC_ASSET_DIR, 'dap014_race_chronometric.png')
 
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
 st.sidebar.title('psytrax')
 st.sidebar.caption('Empirical Bayes for trial-by-trial decision models')
-page = st.sidebar.radio('Navigation', ['Instructions', 'Fit Model', 'IBL Explorer',
-                                       'Visualise Results', 'Compare Models'],
+page = st.sidebar.radio('Navigation', ['Instructions', 'Fit Model',
+                                       'Visualise Results', 'Compare Models',
+                                       'IBL Explorer'],
                         label_visibility='collapsed')
 
 # ---------------------------------------------------------------------------
@@ -340,16 +341,16 @@ handles all the inference machinery.
 """)
 
     st.subheader('See a real fit')
-    st.caption('Example output from the bundled DAP011 race-model fit.')
-    if all(os.path.exists(path) for path in (_DAP011_TRAJ, _DAP011_PSY, _DAP011_CHRONO)):
-        st.image(_DAP011_TRAJ, caption='Parameter trajectories recovered across learning',
+    st.caption('Example output from the bundled DAP014 race-model fit.')
+    if all(os.path.exists(path) for path in (_DAP014_TRAJ, _DAP014_PSY, _DAP014_CHRONO)):
+        st.image(_DAP014_TRAJ, caption='Parameter trajectories recovered across learning',
                  use_container_width=True)
         col1, col2 = st.columns(2)
         with col1:
-            st.image(_DAP011_PSY, caption='Psychometric evolution over learning',
+            st.image(_DAP014_PSY, caption='Psychometric evolution over learning',
                      use_container_width=True)
         with col2:
-            st.image(_DAP011_CHRONO, caption='Chronometric evolution over learning',
+            st.image(_DAP014_CHRONO, caption='Chronometric evolution over learning',
                      use_container_width=True)
     else:
         st.info('Documentation example figures are missing from this checkout.')
@@ -529,6 +530,29 @@ Streamlit app and plotting dependencies:
 pip install -e .[web,ibl]
 streamlit run app.py
 ```
+""")
+
+    st.subheader('IBL Explorer')
+    st.markdown("""
+The **IBL Explorer** page pulls public behavioural sessions directly from the
+International Brain Laboratory archive through the **ONE** API and converts
+them into psytrax's standard data dict.
+
+- Public Alyx connection: the page authenticates against the public
+  `openalyx.internationalbrainlab.org` endpoint automatically.
+- Subject discovery: type 2 or more characters to get subject-name matches,
+  then choose a subject to list available sessions.
+- Supported trial layouts: the loader accepts the assembled `trials` object,
+  `_ibl_trials.table.pqt`, and the older per-field `_ibl_trials.*.npy` layout.
+- Conversion conventions: signed contrast is `contrastRight - contrastLeft`
+  so positive values are rightward; `choice == -1` is mapped to a rightward
+  response and `choice == +1` to leftward.
+- RT extraction: the page prefers `firstMovement_times` relative to
+  `stimOn_times` or `goCue_times`, and only uses raw `response_times` when
+  they already look like true per-trial RTs.
+
+For a notebook walkthrough of the same integration outside the app, see
+`examples/ibl_one_integration_walkthrough.ipynb`.
 """)
 
     st.subheader('Data format')

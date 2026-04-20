@@ -10,13 +10,13 @@ It is model-agnostic: you supply a **per-trial log-likelihood function** and psy
 
 ## See what it does
 
-These example outputs come from the bundled DAP011 race-model fit in `example_fits/DAP011_race_fit.npy`.
+These example outputs come from the bundled DAP014 race-model fit in `example_fits/DAP014_race_fit.npy`.
 
-![DAP011 race-model parameter trajectories](examples/assets/dap011_race_trajectories.png)
+![DAP014 race-model parameter trajectories](examples/assets/dap014_race_trajectories.png)
 
 <p align="center">
-  <img src="examples/assets/dap011_race_psychometric.png" alt="DAP011 psychometric evolution" width="49%" />
-  <img src="examples/assets/dap011_race_chronometric.png" alt="DAP011 chronometric evolution" width="49%" />
+  <img src="examples/assets/dap014_race_psychometric.png" alt="DAP014 psychometric evolution" width="49%" />
+  <img src="examples/assets/dap014_race_chronometric.png" alt="DAP014 chronometric evolution" width="49%" />
 </p>
 
 psytrax does not just return a best-fitting scalar. It recovers trial-by-trial parameter trajectories and turns them into learning-dependent psychometric and chronometric predictions like the ones above.
@@ -320,3 +320,30 @@ The app opens automatically at `http://localhost:8501`.
 | Fit Model | Upload a dataset (`.npy` or `.csv`), choose a model, run the fit, download results |
 | Visualise Results | Load a saved fit and explore trial-by-trial parameter trajectories |
 | Compare Models | Overlay multiple fits and compare log-evidence scores |
+| IBL Explorer | Search public IBL subjects and sessions, load trials through ONE, convert them to psytrax format, and fit a model in-app |
+
+### IBL Explorer and ONE integration
+
+The Streamlit app includes an **IBL Explorer** page for pulling public
+behavioural data from the International Brain Laboratory archive with the
+[`ONE-api`](https://pypi.org/project/ONE-api/) dependency already listed in the
+web install requirements.
+
+- The app connects to the public Alyx endpoint at
+  `https://openalyx.internationalbrainlab.org` with the public account
+  automatically, so no extra manual login is needed inside the app.
+- Subject lookup uses autocomplete-style matching, then session search narrows
+  to the selected exact nickname.
+- The loader accepts all three common public IBL trials layouts:
+  assembled `trials` objects, `_ibl_trials.table.pqt`, and the older
+  field-by-field `_ibl_trials.*.npy` arrays.
+- During conversion to the psytrax data dict, signed contrast is defined as
+  `contrastRight - contrastLeft` so positive values are rightward, and IBL
+  `choice == -1` is mapped to a rightward response.
+- RTs are reconstructed per trial from the most informative available timing
+  signals, prioritising `firstMovement_times` relative to `stimOn_times` or
+  `goCue_times` and only falling back to raw `response_times` when they already
+  behave like true RTs.
+
+For a code-first walkthrough outside the Streamlit UI, see
+[`examples/ibl_one_integration_walkthrough.ipynb`](examples/ibl_one_integration_walkthrough.ipynb).
