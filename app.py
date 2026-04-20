@@ -116,19 +116,38 @@ def _is_mlp(param_names):
             any(p.startswith('W1_') for p in param_names))
 
 
-def _mlp_psychometric(params_window, param_names, c_grid):
-    """P(right|c) for the MLP model over a contrast grid.
+_MAX_CURVE_STATES = 8
 
-    Varies contrast; any additional inputs are held at zero.
+
+def _sample_curve_states(params_window, max_states=_MAX_CURVE_STATES):
+    """Select representative parameter states from a window.
+
+    Averaging predictions across a few trial states better reflects
+    learning-rule fits than collapsing the whole window to a single mean
+    parameter vector.
     """
-    mp   = np.mean(params_window, axis=1)
+    params_window = np.asarray(params_window, dtype=float)
+    if params_window.ndim == 1:
+        return params_window[:, None]
+    if params_window.ndim != 2:
+        raise ValueError(f'params_window must be 1D or 2D, got shape {params_window.shape}')
+    n_states = params_window.shape[1]
+    if n_states <= max_states:
+        return params_window
+    idx = np.unique(np.linspace(0, n_states - 1, max_states, dtype=int))
+    return params_window[:, idx]
+
+
+def _mlp_psychometric(params_vec, param_names, c_grid):
+    """P(right|c) for the MLP model over a contrast grid."""
+    params_vec = np.asarray(params_vec, dtype=float)
     n_W1 = sum(1 for p in param_names if p.startswith('W1_'))
     H    = sum(1 for p in param_names if p.startswith('b1_'))
     n_in = n_W1 // H
-    W1 = mp[:n_W1].reshape(n_in, H)
-    b1 = mp[n_W1:n_W1 + H]
-    W2 = mp[n_W1 + H:n_W1 + 2 * H]
-    b2 = mp[-1]
+    W1 = params_vec[:n_W1].reshape(n_in, H)
+    b1 = params_vec[n_W1:n_W1 + H]
+    W2 = params_vec[n_W1 + H:n_W1 + 2 * H]
+    b2 = params_vec[-1]
 
     p_right = np.zeros(len(c_grid))
     for i, c in enumerate(c_grid):
@@ -140,19 +159,15 @@ def _mlp_psychometric(params_window, param_names, c_grid):
     return p_right
 
 
-def _race_curves(params_window, param_names, c_grid, fixed_params=None, t_max=30.0, n_t=2000):
-    """Compute P(right|c) and E[min(T_R,T_L)|c] for the race model.
-
-    Uses the mean of params over the window for a deterministic prediction.
-    Integrates numerically over a time grid using the trapezoidal rule.
-    """
-    mp = np.mean(params_window, axis=1)
+def _race_curves(params_vec, param_names, c_grid, fixed_params=None, t_max=30.0, n_t=2000):
+    """Compute P(right|c) and E[min(T_R,T_L)|c] for one race-model state."""
+    params_vec = np.asarray(params_vec, dtype=float)
     idx = {name: i for i, name in enumerate(param_names)}
-    wr  = mp[idx['wr']];  wl  = mp[idx['wl']]
-    br  = mp[idx['br']];  bl  = mp[idx['bl']]
-    z   = mp[idx['z']]
+    wr  = float(params_vec[idx['wr']]);  wl  = float(params_vec[idx['wl']])
+    br  = float(params_vec[idx['br']]);  bl  = float(params_vec[idx['bl']])
+    z   = float(params_vec[idx['z']])
     if 'sig_i' in idx:
-        si = mp[idx['sig_i']]
+        si = float(params_vec[idx['sig_i']])
     elif fixed_params and 'sig_i' in fixed_params:
         si = float(fixed_params['sig_i'])
     else:
@@ -202,14 +217,14 @@ def _ddm_exact_hit_prob(drift, boundary, start):
     return np.clip(p_right, 0.0, 1.0)
 
 
-def _ddm_exact_curves(params_window, param_names, c_grid):
-    """Compute psychometric and chronometric predictions for the exact DDM."""
-    mp = np.mean(params_window, axis=1)
+def _ddm_exact_curves(params_vec, param_names, c_grid):
+    """Compute psychometric and chronometric predictions for one exact-DDM state."""
+    params_vec = np.asarray(params_vec, dtype=float)
     idx = {name: i for i, name in enumerate(param_names)}
-    w = float(mp[idx['w']])
-    b = float(mp[idx['b']])
-    a = max(float(mp[idx['a']]), 1e-6)
-    z_rel = float(np.clip(mp[idx['z']], 1e-6, 1.0 - 1e-6))
+    w = float(params_vec[idx['w']])
+    b = float(params_vec[idx['b']])
+    a = max(float(params_vec[idx['a']]), 1e-6)
+    z_rel = float(np.clip(params_vec[idx['z']], 1e-6, 1.0 - 1e-6))
     z_abs = a * z_rel
 
     drift = w * np.asarray(c_grid, dtype=float) + b
@@ -223,13 +238,13 @@ def _ddm_exact_curves(params_window, param_names, c_grid):
     return p_right, mean_rts
 
 
-def _ddm_approx_curves(params_window, param_names, c_grid, n_t=2000):
-    """Compute psychometric and chronometric predictions for the approx DDM."""
-    mp = np.mean(params_window, axis=1)
+def _ddm_approx_curves(params_vec, param_names, c_grid, n_t=2000):
+    """Compute psychometric and chronometric predictions for one approx-DDM state."""
+    params_vec = np.asarray(params_vec, dtype=float)
     idx = {name: i for i, name in enumerate(param_names)}
-    w = float(mp[idx['w']])
-    b = float(mp[idx['b']])
-    z = max(float(mp[idx['z']]), 1e-6)
+    w = float(params_vec[idx['w']])
+    b = float(params_vec[idx['b']])
+    z = max(float(params_vec[idx['z']]), 1e-6)
 
     drift = w * np.asarray(c_grid, dtype=float) + b
     finite_abs = np.abs(drift[np.isfinite(drift)])
@@ -269,21 +284,38 @@ def _model_family_info(param_names, result=None):
 
 
 def _curve_predictions(params_window, param_names, c_grid, model_family, fixed_params=None):
-    if model_family == 'race':
-        return _race_curves(params_window, param_names, c_grid, fixed_params=fixed_params)
-    if model_family == 'ddm_exact':
-        return _ddm_exact_curves(params_window, param_names, c_grid)
-    if model_family == 'ddm_approx':
-        return _ddm_approx_curves(params_window, param_names, c_grid)
-    if model_family == 'logistic':
-        mp = np.mean(params_window, axis=1)
-        iw = param_names.index('w')
-        ib = param_names.index('b')
-        psych = 1.0 / (1.0 + np.exp(-(mp[iw] * c_grid + mp[ib])))
-        return psych, None
-    if model_family == 'mlp':
-        return _mlp_psychometric(params_window, param_names, c_grid), None
-    return None, None
+    sampled = _sample_curve_states(params_window)
+    psych_curves = []
+    rt_curves = []
+
+    for col in range(sampled.shape[1]):
+        params_vec = sampled[:, col]
+        psych = rt = None
+
+        if model_family == 'race':
+            psych, rt = _race_curves(params_vec, param_names, c_grid, fixed_params=fixed_params)
+        elif model_family == 'ddm_exact':
+            psych, rt = _ddm_exact_curves(params_vec, param_names, c_grid)
+        elif model_family == 'ddm_approx':
+            psych, rt = _ddm_approx_curves(params_vec, param_names, c_grid)
+        elif model_family == 'logistic':
+            iw = param_names.index('w')
+            ib = param_names.index('b')
+            psych = 1.0 / (1.0 + np.exp(-(params_vec[iw] * c_grid + params_vec[ib])))
+        elif model_family == 'mlp':
+            psych = _mlp_psychometric(params_vec, param_names, c_grid)
+
+        if psych is not None:
+            psych_curves.append(np.asarray(psych, dtype=float))
+        if rt is not None:
+            rt_curves.append(np.asarray(rt, dtype=float))
+
+    if not psych_curves:
+        return None, None
+
+    psych_mean = np.mean(np.stack(psych_curves, axis=0), axis=0)
+    rt_mean = np.nanmean(np.stack(rt_curves, axis=0), axis=0) if rt_curves else None
+    return psych_mean, rt_mean
 
 
 def _shared_ylim(series_list, pad_frac=0.05, min_pad=0.05):
