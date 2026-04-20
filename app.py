@@ -35,95 +35,42 @@ _RT_CURVE_FAMILIES = {'race', 'ddm_exact', 'ddm_approx'}
 # Theme-aware colours
 # ---------------------------------------------------------------------------
 
-def _theme_colours():
-    """Return colours that adapt to the active Streamlit theme.
-
-    Uses transparent backgrounds so the Streamlit container colour shows
-    through, and reads text / secondary colours directly from the frontend
-    theme info when available.
-
-    Defaults to **black** text (matplotlib's natural default) so that labels
-    are always legible on light themes even before the frontend has reported
-    its colours.  On dark themes there may be a barely-visible flash of dark
-    text during the initial page load, which corrects as soon as the frontend
-    theme info arrives.
-    """
-    # Safe defaults: transparent bg, black text (legible on light theme).
-    tc = {
-        'bg':         'none',
-        'text':       'black',
-        'spine':      '#cccccc',
-        'legend_bg':  'none',
-        'legend_edge':'#cccccc',
-        'grid':       'black',
-    }
-
-    # 1. Try explicit config.toml / set_page_config values
-    try:
-        text_color = st.get_option('theme.textColor')
-        base       = st.get_option('theme.base')
-        if text_color:
-            tc['text'] = text_color
-            tc['grid'] = text_color
-        if base == 'dark':
-            tc['spine'] = '#555555'
-            tc['legend_edge'] = '#555555'
-            if not text_color:
-                tc['text'] = 'white'
-                tc['grid'] = 'white'
-    except Exception:
-        pass
-
-    # 2. Override with runtime theme info from the Streamlit frontend
-    #    (populated after the first render via WebSocket).
-    if hasattr(st, 'session_state') and '_stcore_theme' in st.session_state:
-        info = st.session_state['_stcore_theme']
-        if info.get('textColor'):
-            tc['text'] = info['textColor']
-            tc['grid'] = info['textColor']
-        # Derive spine colour from background luminance
-        bg = info.get('backgroundColor', '')
-        if bg.startswith('#') and len(bg) == 7:
-            r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
-            light = (0.299 * r + 0.587 * g + 0.114 * b) >= 128
-            tc['spine'] = '#cccccc' if light else '#555555'
-            tc['legend_edge'] = tc['spine']
-
-    return tc
+_PLOT_COLOURS = {
+    'bg':         '#0e1117',
+    'text':       'white',
+    'spine':      '#333333',
+    'legend_bg':  '#1a1a2e',
+    'legend_edge':'#333333',
+}
 
 
 def _style_fig(fig):
-    """Make figure background transparent and return theme colours."""
-    tc = _theme_colours()
-    fig.patch.set_facecolor(tc['bg'])
-    fig.patch.set_alpha(0)
-    return tc
+    """Set figure background to the standard dark plot theme."""
+    fig.patch.set_facecolor(_PLOT_COLOURS['bg'])
+    return _PLOT_COLOURS
 
 
 def _style_legend(ax, **kwargs):
-    """Apply theme-aware styling to an axis legend."""
-    tc = _theme_colours()
+    """Apply standard dark styling to an axis legend."""
     ax.legend(
-        facecolor=tc['legend_bg'],
-        edgecolor=tc['legend_edge'],
-        labelcolor=tc['text'],
+        facecolor=_PLOT_COLOURS['legend_bg'],
+        edgecolor=_PLOT_COLOURS['legend_edge'],
+        labelcolor=_PLOT_COLOURS['text'],
         **kwargs,
     )
 
 
 def _style_ax(ax, xlabel=None, ylabel=None, title=None):
-    tc = _theme_colours()
-    ax.set_facecolor(tc['bg'])
-    ax.patch.set_alpha(0)
-    ax.tick_params(colors=tc['text'])
+    ax.set_facecolor(_PLOT_COLOURS['bg'])
+    ax.tick_params(colors=_PLOT_COLOURS['text'])
     for spine in ax.spines.values():
-        spine.set_edgecolor(tc['spine'])
+        spine.set_edgecolor(_PLOT_COLOURS['spine'])
     if xlabel:
-        ax.set_xlabel(xlabel, color=tc['text'])
+        ax.set_xlabel(xlabel, color=_PLOT_COLOURS['text'])
     if ylabel:
-        ax.set_ylabel(ylabel, color=tc['text'])
+        ax.set_ylabel(ylabel, color=_PLOT_COLOURS['text'])
     if title:
-        ax.set_title(title, color=tc['text'])
+        ax.set_title(title, color=_PLOT_COLOURS['text'])
 
 
 def _ig_cdf(thr, drift, v, t):
@@ -1388,7 +1335,7 @@ elif page == 'Visualise Results':
         for ax in axes.flat[K:]:
             ax.set_visible(False)
         fig.tight_layout()
-        st.pyplot(fig, transparent=True)
+        st.pyplot(fig)
         plt.close(fig)
     else:  # Combined
         fig, ax = plt.subplots(figsize=(12, 4))
@@ -1404,7 +1351,7 @@ elif page == 'Visualise Results':
             ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
         _style_legend(ax)
         fig.tight_layout()
-        st.pyplot(fig, transparent=True)
+        st.pyplot(fig)
         plt.close(fig)
 
     # --- Psychometric & chronometric curves ---
@@ -1451,7 +1398,7 @@ elif page == 'Visualise Results':
 
         fig_evo.suptitle('Psychometric curve evolution', color=_tc['text'], fontsize=13)
         fig_evo.tight_layout()
-        st.pyplot(fig_evo, transparent=True)
+        st.pyplot(fig_evo)
         plt.close(fig_evo)
 
         # --- Chronometric evolution (RT-capable models only) ---
@@ -1495,7 +1442,7 @@ elif page == 'Visualise Results':
 
                 fig_cevo.suptitle('Chronometric curve evolution', color=_tc['text'], fontsize=13)
                 fig_cevo.tight_layout()
-                st.pyplot(fig_cevo, transparent=True)
+                st.pyplot(fig_cevo)
                 plt.close(fig_cevo)
 
     # --- Hyperparameter table ---
@@ -1584,7 +1531,7 @@ elif page == 'Compare Models':
     ax.bar_label(bars, fmt='%.1f', color=_tc['text'], padding=4)
     ax.set_xticklabels(names, rotation=20, ha='right')
     fig.tight_layout()
-    st.pyplot(fig, transparent=True)
+    st.pyplot(fig)
     plt.close(fig)
 
     # --- Summary table ---
@@ -1659,7 +1606,7 @@ elif page == 'Compare Models':
 
             fig_p.suptitle('Psychometric curve evolution', color=_tc['text'], fontsize=13)
             fig_p.tight_layout()
-            st.pyplot(fig_p, transparent=True)
+            st.pyplot(fig_p)
             plt.close(fig_p)
 
         # --- Chronometric evolution (RT-capable models + RT data) ---
@@ -1711,7 +1658,7 @@ elif page == 'Compare Models':
 
                 fig_c.suptitle('Chronometric curve evolution', color=_tc['text'], fontsize=13)
                 fig_c.tight_layout()
-                st.pyplot(fig_c, transparent=True)
+                st.pyplot(fig_c)
                 plt.close(fig_c)
 
     # --- Parameter trajectories per model ---
@@ -1750,7 +1697,7 @@ elif page == 'Compare Models':
                 for ax in axes.flat[K:]:
                     ax.set_visible(False)
                 fig3.tight_layout()
-                st.pyplot(fig3, transparent=True)
+                st.pyplot(fig3)
                 plt.close(fig3)
             else:  # Combined
                 fig3, ax3 = plt.subplots(figsize=(12, 4))
@@ -1766,5 +1713,5 @@ elif page == 'Compare Models':
                     ax3.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
                 _style_legend(ax3, fontsize=7)
                 fig3.tight_layout()
-                st.pyplot(fig3, transparent=True)
+                st.pyplot(fig3)
                 plt.close(fig3)
