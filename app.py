@@ -36,11 +36,11 @@ _RT_CURVE_FAMILIES = {'race', 'ddm_exact', 'ddm_approx'}
 # ---------------------------------------------------------------------------
 
 _PLOT_COLOURS = {
-    'bg':         '#0e1117',
-    'text':       'white',
-    'spine':      '#333333',
-    'legend_bg':  '#1a1a2e',
-    'legend_edge':'#333333',
+    'bg':         'white',
+    'text':       'black',
+    'spine':      '#cccccc',
+    'legend_bg':  '#f5f5f5',
+    'legend_edge':'#cccccc',
 }
 
 
@@ -71,6 +71,30 @@ def _style_ax(ax, xlabel=None, ylabel=None, title=None):
         ax.set_ylabel(ylabel, color=_PLOT_COLOURS['text'])
     if title:
         ax.set_title(title, color=_PLOT_COLOURS['text'])
+
+
+def _show_fig(fig, filename='figure.png', dpi=200):
+    """Display a matplotlib figure as an image with a PNG download button,
+    then close it.
+
+    Using ``st.image`` instead of ``st.pyplot`` renders a real ``<img>`` tag
+    so users can right-click → *Copy Image*.  The download button provides a
+    high-resolution PNG export.
+    """
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight',
+                facecolor=fig.get_facecolor(), edgecolor='none')
+    buf.seek(0)
+    png_bytes = buf.getvalue()
+
+    st.image(png_bytes, use_container_width=True)
+    st.download_button(
+        label=f'Download {filename}',
+        data=png_bytes,
+        file_name=filename,
+        mime='image/png',
+    )
+    plt.close(fig)
 
 
 def _ig_cdf(thr, drift, v, t):
@@ -1335,8 +1359,7 @@ elif page == 'Visualise Results':
         for ax in axes.flat[K:]:
             ax.set_visible(False)
         fig.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
+        _show_fig(fig, 'param_trajectories.png')
     else:  # Combined
         fig, ax = plt.subplots(figsize=(12, 4))
         _tc = _style_fig(fig)
@@ -1351,8 +1374,7 @@ elif page == 'Visualise Results':
             ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
         _style_legend(ax)
         fig.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
+        _show_fig(fig, 'param_trajectories.png')
 
     # --- Psychometric & chronometric curves ---
     if 'inputs' in dat and 'c' in dat['inputs'] and 'r' in dat:
@@ -1398,8 +1420,7 @@ elif page == 'Visualise Results':
 
         fig_evo.suptitle('Psychometric curve evolution', color=_tc['text'], fontsize=13)
         fig_evo.tight_layout()
-        st.pyplot(fig_evo)
-        plt.close(fig_evo)
+        _show_fig(fig_evo, 'psychometric_evolution.png')
 
         # --- Chronometric evolution (RT-capable models only) ---
         if has_rt:
@@ -1442,8 +1463,7 @@ elif page == 'Visualise Results':
 
                 fig_cevo.suptitle('Chronometric curve evolution', color=_tc['text'], fontsize=13)
                 fig_cevo.tight_layout()
-                st.pyplot(fig_cevo)
-                plt.close(fig_cevo)
+                _show_fig(fig_cevo, 'chronometric_evolution.png')
 
     # --- Hyperparameter table ---
     st.subheader('Optimised hyperparameters (log₂ scale)')
@@ -1531,8 +1551,7 @@ elif page == 'Compare Models':
     ax.bar_label(bars, fmt='%.1f', color=_tc['text'], padding=4)
     ax.set_xticklabels(names, rotation=20, ha='right')
     fig.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
+    _show_fig(fig, 'log_evidence.png')
 
     # --- Summary table ---
     rows = []
@@ -1606,8 +1625,7 @@ elif page == 'Compare Models':
 
             fig_p.suptitle('Psychometric curve evolution', color=_tc['text'], fontsize=13)
             fig_p.tight_layout()
-            st.pyplot(fig_p)
-            plt.close(fig_p)
+            _show_fig(fig_p, 'psychometric_comparison.png')
 
         # --- Chronometric evolution (RT-capable models + RT data) ---
         if _rt_key_cm is not None and any_rt_model:
@@ -1658,8 +1676,7 @@ elif page == 'Compare Models':
 
                 fig_c.suptitle('Chronometric curve evolution', color=_tc['text'], fontsize=13)
                 fig_c.tight_layout()
-                st.pyplot(fig_c)
-                plt.close(fig_c)
+                _show_fig(fig_c, 'chronometric_comparison.png')
 
     # --- Parameter trajectories per model ---
     st.subheader('Parameter trajectories')
@@ -1697,8 +1714,7 @@ elif page == 'Compare Models':
                 for ax in axes.flat[K:]:
                     ax.set_visible(False)
                 fig3.tight_layout()
-                st.pyplot(fig3)
-                plt.close(fig3)
+                _show_fig(fig3, f'params_{name}.png')
             else:  # Combined
                 fig3, ax3 = plt.subplots(figsize=(12, 4))
                 _tc = _style_fig(fig3)
@@ -1713,5 +1729,4 @@ elif page == 'Compare Models':
                     ax3.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
                 _style_legend(ax3, fontsize=7)
                 fig3.tight_layout()
-                st.pyplot(fig3)
-                plt.close(fig3)
+                _show_fig(fig3, f'params_{name}.png')
