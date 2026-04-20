@@ -22,11 +22,15 @@ web = [
     "pandas>=1.5",
     "streamlit>=1.30",
 ]
+ibl = [
+    "ONE-api>=2.0",
+]
 dev = [
     "matplotlib>=3.7",
     "pandas>=1.5",
     "pytest>=8",
     "streamlit>=1.30",
+    "ONE-api>=2.0",
 ]
 
 [tool.setuptools.packages.find]

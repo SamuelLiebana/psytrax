@@ -22,4 +22,5 @@ dependencies:
     - numpy_indexed
     - tqdm
     - streamlit
+    - ONE-api>=2.0
     - -e .

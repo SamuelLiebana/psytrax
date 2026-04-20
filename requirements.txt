@@ -9,6 +9,7 @@ tqdm>=4.60
 matplotlib>=3.7
 pandas>=1.5
 streamlit>=1.30
+ONE-api>=2.0
 
 # Install psytrax itself from the local source
 .

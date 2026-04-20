@@ -526,7 +526,7 @@ pip install -e .
 Streamlit app and plotting dependencies:
 
 ```bash
-pip install -e .[web]
+pip install -e .[web,ibl]
 streamlit run app.py
 ```
 """)
@@ -1306,9 +1306,11 @@ elif page == 'IBL Explorer':
     if not _ONE_AVAILABLE:
         st.error(
             '**`ONE-api` is not installed.**  \n'
-            'Install it with:\n\n'
+            'Install the IBL explorer dependency with:\n\n'
             '```bash\n'
             'pip install ONE-api\n'
+            '# or, from this repo:\n'
+            'pip install -e .[web,ibl]\n'
             '```\n\n'
             'Then restart the app.'
         )
