@@ -1492,43 +1492,100 @@ elif page == 'IBL Explorer':
     # ==================================================================
     st.subheader('4. Load data')
 
+    def _load_ibl_trials(eid):
+        """Load trials for one session, supporting both legacy arrays and table parquet."""
+        _errors = []
+
+        try:
+            return one.load_object(eid, 'trials')
+        except Exception as _e:
+            _errors.append(f'load_object: {_e}')
+
+        try:
+            _table = one.load_dataset(eid, '_ibl_trials.table.pqt')
+            if isinstance(_table, pd.DataFrame):
+                return _table
+        except Exception as _e:
+            _errors.append(f'load_dataset: {_e}')
+
+        try:
+            _table_path = one.load_dataset(eid, '_ibl_trials.table.pqt', download_only=True)
+            return pd.read_parquet(_table_path)
+        except Exception as _e:
+            _errors.append(f'read_parquet: {_e}')
+
+        raise RuntimeError('; '.join(_errors))
+
+    def _trial_array(trials, key):
+        """Extract a trial field as a numpy array from either an AlfBunch or DataFrame."""
+        if isinstance(trials, pd.DataFrame):
+            if key in trials.columns:
+                return np.asarray(trials[key], dtype=float)
+            return None
+        if hasattr(trials, key):
+            return np.asarray(getattr(trials, key), dtype=float)
+        if isinstance(trials, dict) and key in trials:
+            return np.asarray(trials[key], dtype=float)
+        return None
+
     def _ibl_to_psytrax(trials_list):
         """Convert list of IBL trial dicts/Bunches to a psytrax data dict."""
         all_c, all_r, all_t, all_reward = [], [], [], []
-        all_p_left, all_stim_on = [], []
+        all_p_left = []
         session_lengths = []
 
         for trials in trials_list:
             # ---- Signed contrast ----
-            cL = np.nan_to_num(np.asarray(trials.contrastLeft, dtype=float), nan=0.0)
-            cR = np.nan_to_num(np.asarray(trials.contrastRight, dtype=float), nan=0.0)
+            cL = _trial_array(trials, 'contrastLeft')
+            cR = _trial_array(trials, 'contrastRight')
+            if cL is None or cR is None:
+                raise KeyError('contrastLeft/contrastRight')
+            cL = np.nan_to_num(cL, nan=0.0)
+            cR = np.nan_to_num(cR, nan=0.0)
             c = cR - cL  # positive = rightward stimulus
 
             # ---- Choice: IBL uses -1 (left) / +1 (right) → psytrax 0 / 1 ----
-            choice = np.asarray(trials.choice, dtype=float)
-            r = (choice + 1.0) / 2.0  # -1 → 0, +1 → 1
+            choice = _trial_array(trials, 'choice')
+            if choice is None:
+                raise KeyError('choice')
+            r = np.where(choice == -1.0, 0.0, np.where(choice == 1.0, 1.0, np.nan))
 
             # ---- Reward / feedback: IBL uses -1 (error) / +1 (correct) → 0 / 1 ----
-            fb = np.asarray(trials.feedbackType, dtype=float)
-            reward = (fb + 1.0) / 2.0
+            fb = _trial_array(trials, 'feedbackType')
+            if fb is not None:
+                reward = np.where(fb == -1.0, 0.0, np.where(fb == 1.0, 1.0, np.nan))
+            else:
+                reward_volume = _trial_array(trials, 'rewardVolume')
+                if reward_volume is None:
+                    raise KeyError('feedbackType/rewardVolume')
+                reward = (reward_volume > 0).astype(float)
 
             # ---- Reaction time ----
-            rt = np.asarray(trials.response_times, dtype=float)
+            rt = _trial_array(trials, 'response_times')
+            if rt is None:
+                raise KeyError('response_times')
             # If stimOn_times is available, compute RT relative to stimulus onset
-            if hasattr(trials, 'stimOn_times') and trials.stimOn_times is not None:
-                stim_on = np.asarray(trials.stimOn_times, dtype=float)
+            stim_on = _trial_array(trials, 'stimOn_times')
+            if stim_on is not None:
                 rt_rel = rt - stim_on
                 # Fall back to raw response_times if relative RT has issues
                 if np.all(np.isfinite(rt_rel)) and np.all(rt_rel > 0):
                     rt = rt_rel
 
             # ---- Optional extras ----
-            p_left = (np.asarray(trials.probabilityLeft, dtype=float)
-                      if hasattr(trials, 'probabilityLeft') and trials.probabilityLeft is not None
-                      else np.full(len(c), 0.5))
+            p_left = _trial_array(trials, 'probabilityLeft')
+            if p_left is None:
+                p_left = np.full(len(c), 0.5)
 
             # ---- Filter invalid trials (NaN choice, etc.) ----
-            valid = np.isfinite(c) & np.isfinite(r) & np.isfinite(rt) & (rt > 0)
+            valid = (
+                np.isfinite(c) &
+                np.isfinite(r) &
+                np.isfinite(rt) &
+                np.isfinite(reward) &
+                np.isfinite(p_left) &
+                (rt > 0)
+            )
             c, r, rt, reward, p_left = c[valid], r[valid], rt[valid], reward[valid], p_left[valid]
 
             all_c.append(c)
@@ -1558,7 +1615,7 @@ elif page == 'IBL Explorer':
             _load_bar.progress((_i + 1) / len(_selected_eids),
                                text=f'Loading session {_i + 1}/{len(_selected_eids)}…')
             try:
-                _tr = one.load_object(_eid, 'trials')
+                _tr = _load_ibl_trials(_eid)
                 _trials_list.append(_tr)
             except Exception as _e:
                 st.warning(f'Skipped session `{_eid}`: {_e}')
