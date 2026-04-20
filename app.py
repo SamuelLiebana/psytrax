@@ -1296,6 +1296,9 @@ elif page == 'IBL Explorer':
     # 1. ONE Connection
     # ==================================================================
     st.subheader('1. Connect to IBL')
+    _IBL_BASE_URL = 'https://openalyx.internationalbrainlab.org'
+    _IBL_PUBLIC_USER = 'intbrainlab'
+    _IBL_PUBLIC_PASSWORD = 'international'
 
     try:
         from one.api import ONE
@@ -1320,6 +1323,7 @@ elif page == 'IBL Explorer':
     for _k, _v in [
         ('one_client',  None), ('one_connected', False),
         ('ibl_subjects', []),  ('ibl_eids', []),
+        ('ibl_subject_selected', None),
         ('ibl_data',    None), ('ibl_fit_running', False),
         ('ibl_fit_result_path', None), ('ibl_fit_log', []),
         ('ibl_fit_error', None),
@@ -1336,8 +1340,12 @@ elif page == 'IBL Explorer':
         if st.button('Connect', key='ibl_connect'):
             with st.spinner('Connecting…'):
                 try:
+                    # ONE-api silently falls back to an incomplete saved public profile unless the
+                    # public Alyx password is provided explicitly here.
                     _one = ONE(
-                        base_url='https://openalyx.internationalbrainlab.org',
+                        base_url=_IBL_BASE_URL,
+                        username=_IBL_PUBLIC_USER,
+                        password=_IBL_PUBLIC_PASSWORD,
                         silent=True,
                     )
                     st.session_state['one_client'] = _one
@@ -1356,13 +1364,63 @@ elif page == 'IBL Explorer':
     # ==================================================================
     st.subheader('2. Select subject')
 
-    _subject = st.text_input(
-        'Subject name (e.g. `KS023`, `ZM_2241`, `CSHL049`)',
-        key='ibl_subject_input',
+    @st.cache_data(show_spinner='Searching subjects…')
+    def _search_subjects(query):
+        query = query.strip()
+        if len(query) < 2:
+            return []
+
+        _matches = one.alyx.rest(
+            'subjects',
+            'list',
+            django=f'nickname__istartswith,{query}',
+            limit=25,
+        )
+        _matches = _matches[:25] if not isinstance(_matches, list) else _matches
+        if not _matches:
+            _matches = one.alyx.rest(
+                'subjects',
+                'list',
+                django=f'nickname__icontains,{query}',
+                limit=25,
+            )
+            _matches = _matches[:25] if not isinstance(_matches, list) else _matches
+        return list(dict.fromkeys(rec['nickname'] for rec in _matches))
+
+    _subject_query = st.text_input(
+        'Search subject name (e.g. `KS023`, `ZM_2241`, `CSHL049`)',
+        key='ibl_subject_query',
     ).strip()
 
+    if len(_subject_query) < 2:
+        st.info('Type at least 2 characters to see matching subject names.')
+        st.stop()
+
+    try:
+        _subject_matches = _search_subjects(_subject_query)
+    except Exception as _e:
+        st.error(f'Failed to search subjects: {_e}')
+        st.stop()
+
+    st.session_state['ibl_subjects'] = _subject_matches
+    if st.session_state.get('ibl_subject_selected') not in _subject_matches:
+        st.session_state['ibl_subject_selected'] = None
+
+    if not _subject_matches:
+        st.warning(f'No subjects matched **{_subject_query}**.')
+        st.stop()
+
+    _exact = next((s for s in _subject_matches if s.lower() == _subject_query.lower()), None)
+    _subject = st.selectbox(
+        'Matching subjects',
+        _subject_matches,
+        index=_subject_matches.index(_exact) if _exact else None,
+        placeholder='Select a subject',
+        key='ibl_subject_selected',
+    )
+
     if not _subject:
-        st.info('Enter a subject name to search for sessions.')
+        st.info('Select one of the matching subject names to search for sessions.')
         st.stop()
 
     st.divider()
@@ -1374,14 +1432,20 @@ elif page == 'IBL Explorer':
 
     @st.cache_data(show_spinner='Searching sessions…')
     def _search_sessions(subject):
-        """Return list of (eid, date_str) for a subject."""
-        eids = one.search(subject=subject, dataset='_ibl_trials.choice.npy')
+        """Return list of session summaries for an exact subject nickname."""
+        eids, details = one.search(subject=subject, details=True)
         sessions = []
-        for eid in eids:
-            det = one.get_details(eid, full=False)
-            date_str = str(det.get('date', eid))
-            n_datasets = det.get('number', '?')
-            sessions.append({'eid': str(eid), 'date': date_str, 'n_datasets': n_datasets})
+        for eid, det in zip(eids, details):
+            if det.get('subject') != subject:
+                continue
+            date_str = str(det.get('date') or det.get('start_time', '')[:10] or eid)
+            sessions.append({
+                'eid': str(det.get('id', eid)),
+                'date': date_str,
+                'lab': det.get('lab', '?'),
+                'number': det.get('number', '?'),
+                'task_protocol': det.get('task_protocol', '?'),
+            })
         # Sort by date
         sessions.sort(key=lambda s: s['date'])
         return sessions
@@ -1393,7 +1457,7 @@ elif page == 'IBL Explorer':
         st.stop()
 
     if not _sessions:
-        st.warning(f'No sessions with trial data found for subject **{_subject}**.')
+        st.warning(f'No sessions found for subject **{_subject}**.')
         st.stop()
 
     st.caption(f'Found **{len(_sessions)}** session(s) for **{_subject}**.')
@@ -1415,7 +1479,11 @@ elif page == 'IBL Explorer':
 
     # Show session table
     _sess_df = pd.DataFrame(_filtered)
-    st.dataframe(_sess_df[['date', 'eid']], use_container_width=True, hide_index=True)
+    st.dataframe(
+        _sess_df[['date', 'number', 'lab', 'task_protocol', 'eid']],
+        use_container_width=True,
+        hide_index=True,
+    )
 
     st.divider()
 
@@ -1717,7 +1785,8 @@ elif page == 'IBL Explorer':
         def _ibl_run_fit():
             try:
                 os.makedirs('fits', exist_ok=True)
-                _subj = st.session_state.get('ibl_subject_input', 'ibl_subject')
+                _subj = st.session_state.get('ibl_subject_selected') or \
+                    st.session_state.get('ibl_subject_query', 'ibl_subject')
                 fit_kw = dict(
                     data=raw,
                     shared_sigma=_ibl_shared_sigma,
