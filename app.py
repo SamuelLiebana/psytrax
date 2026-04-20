@@ -1496,10 +1496,17 @@ elif page == 'IBL Explorer':
         """Load trials for one session, supporting both legacy arrays and table parquet."""
         _errors = []
 
-        try:
-            return one.load_object(eid, 'trials')
-        except Exception as _e:
-            _errors.append(f'load_object: {_e}')
+        for _kwargs in (
+            {},
+            {'collection': 'alf'},
+            {'namespace': 'ibl'},
+            {'namespace': 'ibl', 'collection': 'alf'},
+        ):
+            try:
+                return one.load_object(eid, 'trials', **_kwargs)
+            except Exception as _e:
+                _label = 'load_object' if not _kwargs else f'load_object{_kwargs}'
+                _errors.append(f'{_label}: {_e}')
 
         try:
             _table = one.load_dataset(eid, '_ibl_trials.table.pqt')
@@ -1514,6 +1521,40 @@ elif page == 'IBL Explorer':
         except Exception as _e:
             _errors.append(f'read_parquet: {_e}')
 
+        _required = {
+            'choice': '_ibl_trials.choice.npy',
+            'contrastLeft': '_ibl_trials.contrastLeft.npy',
+            'contrastRight': '_ibl_trials.contrastRight.npy',
+            'response_times': '_ibl_trials.response_times.npy',
+        }
+        _optional = {
+            'feedbackType': '_ibl_trials.feedbackType.npy',
+            'rewardVolume': '_ibl_trials.rewardVolume.npy',
+            'probabilityLeft': '_ibl_trials.probabilityLeft.npy',
+            'stimOn_times': '_ibl_trials.stimOn_times.npy',
+            'feedback_times': '_ibl_trials.feedback_times.npy',
+            'goCue_times': '_ibl_trials.goCue_times.npy',
+            'firstMovement_times': '_ibl_trials.firstMovement_times.npy',
+            'intervals': '_ibl_trials.intervals.npy',
+        }
+
+        _trial_dict = {}
+        _missing_required = []
+        for _key, _dataset in _required.items():
+            try:
+                _trial_dict[_key] = one.load_dataset(eid, _dataset)
+            except Exception as _e:
+                _missing_required.append(_dataset)
+                _errors.append(f'manual {_dataset}: {_e}')
+
+        if not _missing_required:
+            for _key, _dataset in _optional.items():
+                try:
+                    _trial_dict[_key] = one.load_dataset(eid, _dataset)
+                except Exception:
+                    pass
+            return _trial_dict
+
         raise RuntimeError('; '.join(_errors))
 
     def _trial_array(trials, key):
@@ -1527,6 +1568,57 @@ elif page == 'IBL Explorer':
         if isinstance(trials, dict) and key in trials:
             return np.asarray(trials[key], dtype=float)
         return None
+
+    def _relative_rt_candidates(n_trials, anchor, event):
+        """Return per-trial event-anchor differences where both timestamps are valid."""
+        if anchor is None or event is None:
+            return np.full(n_trials, np.nan)
+        _delta = np.asarray(event, dtype=float) - np.asarray(anchor, dtype=float)
+        _valid = np.isfinite(_delta) & (_delta > 0)
+        return np.where(_valid, _delta, np.nan)
+
+    def _looks_like_relative_rt(raw_rt):
+        """Heuristic to distinguish per-trial RTs from absolute session timestamps."""
+        raw_rt = np.asarray(raw_rt, dtype=float)
+        finite = raw_rt[np.isfinite(raw_rt)]
+        if finite.size == 0:
+            return False
+        if np.nanpercentile(finite, 95) <= 20:
+            return True
+        if finite.size < 3:
+            return False
+        # Absolute timestamps are typically large and almost monotonically increasing.
+        return np.mean(np.diff(finite) >= 0) < 0.95
+
+    def _ibl_rt(trials):
+        """Estimate per-trial RTs from the most informative available timing field."""
+        response_times = _trial_array(trials, 'response_times')
+        if response_times is None:
+            raise KeyError('response_times')
+
+        n_trials = len(response_times)
+        stim_on = _trial_array(trials, 'stimOn_times')
+        first_move = _trial_array(trials, 'firstMovement_times')
+        go_cue = _trial_array(trials, 'goCue_times')
+
+        rt = np.full(n_trials, np.nan)
+
+        # Prefer movement onset relative to stimulus onset when available.
+        for candidate in (
+            _relative_rt_candidates(n_trials, stim_on, first_move),
+            _relative_rt_candidates(n_trials, stim_on, response_times),
+            _relative_rt_candidates(n_trials, go_cue, first_move),
+            _relative_rt_candidates(n_trials, go_cue, response_times),
+        ):
+            use = np.isnan(rt) & np.isfinite(candidate)
+            rt[use] = candidate[use]
+
+        # Only fall back to the raw field when it already looks like a true RT array.
+        if _looks_like_relative_rt(response_times):
+            use = np.isnan(rt) & np.isfinite(response_times) & (response_times > 0)
+            rt[use] = response_times[use]
+
+        return rt
 
     def _ibl_to_psytrax(trials_list):
         """Convert list of IBL trial dicts/Bunches to a psytrax data dict."""
@@ -1544,11 +1636,11 @@ elif page == 'IBL Explorer':
             cR = np.nan_to_num(cR, nan=0.0)
             c = cR - cL  # positive = rightward stimulus
 
-            # ---- Choice: IBL uses -1 (left) / +1 (right) → psytrax 0 / 1 ----
+            # ---- Choice: in IBL, -1 = rightward, +1 = leftward ----
             choice = _trial_array(trials, 'choice')
             if choice is None:
                 raise KeyError('choice')
-            r = np.where(choice == -1.0, 0.0, np.where(choice == 1.0, 1.0, np.nan))
+            r = np.where(choice == -1.0, 1.0, np.where(choice == 1.0, 0.0, np.nan))
 
             # ---- Reward / feedback: IBL uses -1 (error) / +1 (correct) → 0 / 1 ----
             fb = _trial_array(trials, 'feedbackType')
@@ -1561,16 +1653,7 @@ elif page == 'IBL Explorer':
                 reward = (reward_volume > 0).astype(float)
 
             # ---- Reaction time ----
-            rt = _trial_array(trials, 'response_times')
-            if rt is None:
-                raise KeyError('response_times')
-            # If stimOn_times is available, compute RT relative to stimulus onset
-            stim_on = _trial_array(trials, 'stimOn_times')
-            if stim_on is not None:
-                rt_rel = rt - stim_on
-                # Fall back to raw response_times if relative RT has issues
-                if np.all(np.isfinite(rt_rel)) and np.all(rt_rel > 0):
-                    rt = rt_rel
+            rt = _ibl_rt(trials)
 
             # ---- Optional extras ----
             p_left = _trial_array(trials, 'probabilityLeft')
