@@ -2701,61 +2701,235 @@ elif page == 'Compare Models':
 # ---------------------------------------------------------------------------
 elif page == 'Model Recovery':
     import psytrax
-    from psytrax.models import race as _rec_race
+    import psytrax._hyper_opt as _rec_hyper_opt_mod
+    import importlib.util, tempfile
+    import time as _rec_time
+    import pandas as pd
 
     st.title('Model Recovery')
     st.markdown(
         'Generate parameter trajectories with sliders, simulate trial-by-trial '
-        'data from the **race model**, then run `psytrax.fit` and overlay the '
+        'data through any model, then run `psytrax.fit` and overlay the '
         'recovered trajectories on the truth.'
     )
-    st.caption(
-        'Within-trial accumulator noise `sig_i` is treated as a model-level '
-        'hyperparameter and is jointly optimised by Empirical Bayes — the '
-        'recovered value is shown alongside the truth at the bottom.'
+    st.markdown(
+        'This is the cleanest way to sanity-check a model: if the EB fit cannot '
+        'recover trajectories you yourself injected, the same fit on real data '
+        'is unlikely to be informative.'
     )
     st.divider()
 
     # ------------------------------------------------------------------
-    # 1. Trial setup
+    # 1. Choose model
     # ------------------------------------------------------------------
-    st.subheader('1. Trial setup')
+    st.subheader('1. Choose model')
+    _rec_model_choice = st.selectbox(
+        'Model',
+        ['Race model (inverse-Gaussian)',
+         'DDM — exact (Navarro & Fuss 2009)',
+         'DDM — approx (inverse-Gaussian)',
+         'Logistic regression',
+         'Upload custom (.py)'],
+        key='rec_model_choice',
+    )
+
+    def _load_builtin_model(name):
+        if name == 'Race model (inverse-Gaussian)':
+            from psytrax.models import race as _m
+            return {
+                'log_lik_trial': _m.log_lik_trial, 'sample_trial': _m.sample_trial,
+                'N_PARAMS': _m.N_PARAMS, 'PARAM_NAMES': list(_m.PARAM_NAMES),
+                'default_hyper': _m.default_hyper, 'default_E0': _m.default_E0,
+                'default_model_hyper': _m.default_model_hyper,
+                'DATA_SPEC': _m.DATA_SPEC, 'family': 'race',
+                'desc': """
+**Race model** — two independent inverse-Gaussian accumulators racing to a shared
+threshold *z*. The first accumulator to hit threshold determines the choice; its
+first-passage time is the reaction time. The five trial-varying parameters are
+right/left drift weights (`wr`, `wl`), right/left baseline drifts (`br`, `bl`),
+and the shared threshold `z`. The within-trial accumulator noise `sig_i` is a
+model-level scalar estimated by Empirical Bayes alongside the random-walk noise
+`sigma`. Inputs: signed contrast `c`. Outputs: choice + RT.
+""",
+            }
+        if name == 'DDM — exact (Navarro & Fuss 2009)':
+            from psytrax.models import ddm as _m
+            return {
+                'log_lik_trial': _m.log_lik_trial, 'sample_trial': _m.sample_trial,
+                'N_PARAMS': _m.N_PARAMS, 'PARAM_NAMES': list(_m.PARAM_NAMES),
+                'default_hyper': _m.default_hyper, 'default_E0': _m.default_E0,
+                'default_model_hyper': lambda: {},
+                'DATA_SPEC': _m.DATA_SPEC, 'family': 'ddm_exact',
+                'desc': """
+**DDM (exact)** — Wiener process between two absorbing barriers, with a fully
+analytic likelihood (Navarro & Fuss 2009). Four parameters: `w` (contrast
+weight), `b` (drift bias), `a` (boundary separation, > 0), `z` (relative starting
+point in (0, 1)). Sampling integrates a Wiener process with `dt = 1 ms`, so the
+simulator runs slower than the inverse-Gaussian models. Inputs: `c`.
+""",
+            }
+        if name == 'DDM — approx (inverse-Gaussian)':
+            from psytrax.models import ddm_approx as _m
+            return {
+                'log_lik_trial': _m.log_lik_trial, 'sample_trial': _m.sample_trial,
+                'N_PARAMS': _m.N_PARAMS, 'PARAM_NAMES': list(_m.PARAM_NAMES),
+                'default_hyper': _m.default_hyper, 'default_E0': _m.default_E0,
+                'default_model_hyper': lambda: {},
+                'DATA_SPEC': _m.DATA_SPEC, 'family': 'ddm_approx',
+                'desc': """
+**DDM (approx)** — single-accumulator inverse-Gaussian approximation with one
+absorbing barrier. Three parameters: `w`, `b`, `z`. Faster than the exact DDM
+and accurate when error rates are low. Inputs: `c`.
+""",
+            }
+        if name == 'Logistic regression':
+            from psytrax.models import logistic as _m
+            return {
+                'log_lik_trial': _m.log_lik_trial, 'sample_trial': _m.sample_trial,
+                'N_PARAMS': _m.N_PARAMS, 'PARAM_NAMES': list(_m.PARAM_NAMES),
+                'default_hyper': _m.default_hyper, 'default_E0': _m.default_E0,
+                'default_model_hyper': lambda: {},
+                'DATA_SPEC': _m.DATA_SPEC, 'family': 'logistic',
+                'desc': """
+**Logistic regression** — `P(right) = σ(w · c + b)`. Two trial-varying parameters:
+contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
+""",
+            }
+        return None
+
+    _rec_bundle = None
+    if _rec_model_choice == 'Upload custom (.py)':
+        st.markdown(
+            'Upload a `.py` module that exposes:\n\n'
+            '- `log_lik_trial(params, dat_trial, model_hyper)` — JAX-traceable\n'
+            '- `sample_trial(params, dat_trial, rng, model_hyper)` — numpy sampler\n'
+            '- `N_PARAMS`, `PARAM_NAMES` — number/names of the trial-varying parameters\n\n'
+            'Optional: `default_hyper`, `default_E0`, `default_model_hyper`, `DATA_SPEC`. '
+            'When a `default_E0(N)` is provided, the trajectory sliders below default '
+            'to its first/last values; otherwise they default to zero.'
+        )
+        _up = st.file_uploader('Model module (.py)', type=['py'], key='rec_model_upload')
+        if _up is not None:
+            try:
+                _src = _up.read().decode('utf-8')
+                with tempfile.NamedTemporaryFile(suffix='.py', delete=False, mode='w') as _tmp:
+                    _tmp.write(_src)
+                    _tmp_path = _tmp.name
+                _spec = importlib.util.spec_from_file_location('_user_recovery_model', _tmp_path)
+                _mod = importlib.util.module_from_spec(_spec)
+                _spec.loader.exec_module(_mod)
+                missing = [a for a in ('log_lik_trial', 'sample_trial', 'N_PARAMS')
+                           if not hasattr(_mod, a)]
+                if missing:
+                    raise ValueError(
+                        f'Module is missing required attribute(s): {", ".join(missing)}'
+                    )
+                _Knames = list(getattr(
+                    _mod, 'PARAM_NAMES',
+                    [str(i) for i in range(int(_mod.N_PARAMS))]
+                ))
+                _rec_bundle = {
+                    'log_lik_trial': _mod.log_lik_trial,
+                    'sample_trial':  _mod.sample_trial,
+                    'N_PARAMS':      int(_mod.N_PARAMS),
+                    'PARAM_NAMES':   _Knames,
+                    'default_hyper': getattr(_mod, 'default_hyper', None),
+                    'default_E0':    getattr(_mod, 'default_E0', None),
+                    'default_model_hyper': getattr(_mod, 'default_model_hyper', lambda: {}),
+                    'DATA_SPEC':     getattr(_mod, 'DATA_SPEC', None),
+                    'family':        'custom',
+                    'desc': (
+                        f'**Custom model** loaded from `{_up.name}` — '
+                        f'{int(_mod.N_PARAMS)} parameter(s): `{", ".join(_Knames)}`.'
+                    ),
+                }
+                st.success(f'Loaded `{_up.name}` ({int(_mod.N_PARAMS)} params).')
+            except Exception as exc:
+                st.error(f'Failed to load model: {exc}')
+        else:
+            st.info('Upload a Python file to continue.')
+    else:
+        _rec_bundle = _load_builtin_model(_rec_model_choice)
+
+    if _rec_bundle is None:
+        st.stop()
+
+    st.markdown(_rec_bundle['desc'])
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # 2. Trial setup — N, seed, value pools for the model's inputs
+    # ------------------------------------------------------------------
+    st.subheader('2. Trial setup')
     col_n, col_seed = st.columns([2, 1])
     with col_n:
-        N_rec = st.slider('Number of trials', min_value=200, max_value=4000,
-                          value=1000, step=100, key='rec_n_trials',
+        N_rec = st.slider('Number of trials', 200, 4000, 1000, step=100,
+                          key='rec_n_trials',
                           help='More trials → better recovery, longer fit.')
     with col_seed:
         seed_rec = st.number_input('Random seed', min_value=0, max_value=2**31 - 1,
                                    value=42, step=1, key='rec_seed')
 
-    contrasts_default = '-1, -0.5, -0.25, 0, 0.25, 0.5, 1'
-    contrasts_str = st.text_input(
-        'Stimulus contrasts (drawn uniformly per trial)',
-        value=contrasts_default, key='rec_contrasts',
+    st.markdown(
+        '**Trial inputs.** Every trial needs values for each of the model\'s '
+        'inputs — for the race / DDM models this is the signed stimulus contrast '
+        '`c` that the accumulators integrate. List the values you want to expose '
+        'the model to below; one is sampled uniformly per trial. Choosing a '
+        'wide range gives the EB fit more leverage for parameter identification.'
     )
-    try:
-        contrasts_pool = np.asarray([float(x) for x in contrasts_str.split(',')], dtype=float)
-        if contrasts_pool.size == 0:
-            raise ValueError
-    except Exception:
-        st.warning(f'Could not parse contrasts; using default: {contrasts_default}')
-        contrasts_pool = np.asarray([-1, -0.5, -0.25, 0, 0.25, 0.5, 1.0])
+
+    _spec = _rec_bundle.get('DATA_SPEC') or {}
+    _rec_input_keys = list((_spec.get('inputs') or {}).keys()) or ['c']
+    _DEFAULT_VALUE_POOLS = {
+        'c':      '-1, -0.5, -0.25, 0, 0.25, 0.5, 1',
+        'reward': '0, 1',
+    }
+    _rec_value_pools = {}
+    for _key in _rec_input_keys:
+        _info = (_spec.get('inputs') or {}).get(_key, {})
+        _label = (
+            f'`{_key}` — {_info.get("description", "trial input")}'
+            if _info else f'`{_key}` values'
+        )
+        _vals_str = st.text_input(
+            _label,
+            value=_DEFAULT_VALUE_POOLS.get(_key, '0, 1'),
+            key=f'rec_input_{_rec_bundle["family"]}_{_key}',
+            help='Comma-separated list of values; sampled uniformly per trial.',
+        )
+        try:
+            _vals = np.asarray([float(x) for x in _vals_str.split(',') if x.strip()],
+                               dtype=float)
+            if _vals.size == 0:
+                raise ValueError
+        except Exception:
+            _fallback = _DEFAULT_VALUE_POOLS.get(_key, '0, 1')
+            st.warning(f'Could not parse `{_key}`; using default `{_fallback}`')
+            _vals = np.asarray([float(x) for x in _fallback.split(',')])
+        _rec_value_pools[_key] = _vals
 
     st.divider()
 
     # ------------------------------------------------------------------
-    # 2. Trajectory shape sliders, one per dynamic parameter
+    # 3. Trajectory shape sliders + live mini-plot per parameter
     # ------------------------------------------------------------------
-    st.subheader('2. True parameter trajectories')
+    st.subheader('3. True parameter trajectories')
     st.caption(
-        'Each trajectory is `offset + slope · (t/N) + amplitude · sin(2π t / period)`. '
-        'Set amplitude to 0 for a flat-or-linear evolution.'
+        'Each trajectory is `offset + slope · (t / N) + amplitude · sin(2π t / period)`. '
+        'Set amplitude = 0 for a flat-or-linear evolution. The mini-plot in each '
+        'expander updates live as you move the sliders.'
     )
 
-    # Reasonable race-model defaults: weights start small and grow,
-    # biases hover near 0.5, threshold drifts slightly down.
-    _rec_defaults = {
+    _default_E0_fn = _rec_bundle.get('default_E0')
+    if callable(_default_E0_fn):
+        try:
+            _default_E0_arr = np.asarray(_default_E0_fn(N_rec), dtype=float)
+        except Exception:
+            _default_E0_arr = None
+    else:
+        _default_E0_arr = None
+
+    _RACE_TRAJ_DEFAULTS = {
         'wr': dict(offset=1.5, amplitude=0.20, period_frac=0.25, slope=0.5),
         'wl': dict(offset=1.5, amplitude=0.20, period_frac=0.25, slope=0.5),
         'br': dict(offset=0.5, amplitude=0.05, period_frac=0.20, slope=0.0),
@@ -2763,144 +2937,342 @@ elif page == 'Model Recovery':
         'z':  dict(offset=1.0, amplitude=0.05, period_frac=0.40, slope=-0.2),
     }
 
-    _rec_traj_specs = {}
-    for name in _rec_race.PARAM_NAMES:
-        with st.expander(f'`{name}` trajectory shape', expanded=(name == 'wr')):
-            d = _rec_defaults[name]
-            c1, c2 = st.columns(2)
-            with c1:
-                offset = st.slider(f'{name}: offset', -3.0, 5.0, d['offset'], 0.05,
-                                   key=f'rec_{name}_offset')
-                amplitude = st.slider(f'{name}: amplitude', 0.0, 2.0, d['amplitude'], 0.01,
-                                      key=f'rec_{name}_amp')
-            with c2:
-                period = st.slider(
-                    f'{name}: period (trials)',
-                    min_value=20, max_value=max(40, N_rec),
-                    value=int(d['period_frac'] * N_rec), step=10,
-                    key=f'rec_{name}_period',
-                )
-                slope = st.slider(f'{name}: linear slope (over all trials)',
-                                  -3.0, 3.0, d['slope'], 0.05,
-                                  key=f'rec_{name}_slope')
-            _rec_traj_specs[name] = (float(offset), float(amplitude), int(period), float(slope))
+    def _default_traj(k, name):
+        if _rec_bundle['family'] == 'race' and name in _RACE_TRAJ_DEFAULTS:
+            d = _RACE_TRAJ_DEFAULTS[name]
+            return d['offset'], d['amplitude'], int(d['period_frac'] * N_rec), d['slope']
+        if _default_E0_arr is not None and k < _default_E0_arr.shape[0]:
+            row = _default_E0_arr[k]
+            return float(row[0]), 0.0, max(20, N_rec // 4), float(row[-1] - row[0])
+        return 0.0, 0.0, max(20, N_rec // 4), 0.0
 
-    st.subheader('3. Within-trial noise (model_hyper)')
-    col_t, col_i = st.columns(2)
-    with col_t:
-        true_sig_i = st.slider('True `sig_i` (used by the simulator)',
-                               min_value=0.01, max_value=2.0, value=0.10, step=0.01,
-                               key='rec_true_sig_i')
-    with col_i:
-        init_sig_i = st.slider('Initial `sig_i` (EB starting point)',
-                               min_value=0.01, max_value=2.0, value=0.10, step=0.01,
-                               key='rec_init_sig_i')
-
-    st.caption(
-        'EB will optimise `sig_i` from the initial value. Set the two equal to '
-        'check that the optimiser stays put on a well-specified model; set them '
-        'apart to see how far EB pulls back toward the truth.'
-    )
-
-    st.divider()
-
-    # ------------------------------------------------------------------
-    # 3. Build the truth trajectory matrix and preview
-    # ------------------------------------------------------------------
     def _make_traj(offset, amplitude, period, slope, N):
         t = np.arange(N)
         return offset + slope * (t / N) + amplitude * np.sin(2 * np.pi * t / max(period, 1))
 
-    true_params = np.stack([
-        _make_traj(*_rec_traj_specs[name], N_rec) for name in _rec_race.PARAM_NAMES
-    ])
+    _rec_traj_specs = {}
+    for k, name in enumerate(_rec_bundle['PARAM_NAMES']):
+        with st.expander(f'`{name}` trajectory shape', expanded=(k == 0)):
+            d_offset, d_amp, d_period, d_slope = _default_traj(k, name)
+            c1, c2 = st.columns(2)
+            with c1:
+                offset = st.slider(
+                    f'{name}: offset', -5.0, 5.0, d_offset, 0.05,
+                    key=f'rec_{_rec_bundle["family"]}_{name}_offset',
+                )
+                amplitude = st.slider(
+                    f'{name}: amplitude', 0.0, 3.0, d_amp, 0.01,
+                    key=f'rec_{_rec_bundle["family"]}_{name}_amp',
+                )
+            with c2:
+                period = st.slider(
+                    f'{name}: period (trials)',
+                    min_value=20, max_value=max(40, N_rec),
+                    value=int(min(d_period, max(20, N_rec))), step=10,
+                    key=f'rec_{_rec_bundle["family"]}_{name}_period',
+                )
+                slope = st.slider(
+                    f'{name}: linear slope (over all trials)', -5.0, 5.0,
+                    d_slope, 0.05,
+                    key=f'rec_{_rec_bundle["family"]}_{name}_slope',
+                )
+            _rec_traj_specs[name] = (
+                float(offset), float(amplitude), int(period), float(slope)
+            )
 
-    fig_pre, axes_pre = plt.subplots(1, len(_rec_race.PARAM_NAMES),
-                                     figsize=(3 * len(_rec_race.PARAM_NAMES), 2.6))
-    _tc = _style_fig(fig_pre)
-    for k, (ax, name) in enumerate(zip(axes_pre, _rec_race.PARAM_NAMES)):
-        _style_ax(ax, xlabel='Trial', title=name)
-        ax.plot(np.arange(N_rec), true_params[k], color='#000000', lw=1.0)
-    fig_pre.suptitle('Preview: ground-truth trajectories', color=_tc['text'], fontsize=11)
-    fig_pre.tight_layout()
-    _show_fig(fig_pre, 'recovery_truth_preview.png')
+            # Live preview of this trajectory
+            _traj_k = _make_traj(offset, amplitude, period, slope, N_rec)
+            _mini_fig, _mini_ax = plt.subplots(figsize=(5.5, 1.6))
+            _style_fig(_mini_fig)
+            _style_ax(_mini_ax, xlabel='Trial', title=f'{name} preview')
+            _mini_ax.plot(np.arange(N_rec), _traj_k, color='#000000', lw=1.0)
+            _mini_fig.tight_layout()
+            st.pyplot(_mini_fig, use_container_width=True)
+            plt.close(_mini_fig)
+
+    # Build the truth trajectory matrix
+    true_params = np.stack([
+        _make_traj(*_rec_traj_specs[name], N_rec)
+        for name in _rec_bundle['PARAM_NAMES']
+    ])
 
     st.divider()
 
     # ------------------------------------------------------------------
-    # 4. Run recovery
+    # 4. Model-level hyperparameters (true vs init)
     # ------------------------------------------------------------------
-    st.subheader('4. Run recovery')
-    run_rec = st.button('Simulate + fit', key='rec_run', type='primary')
+    _default_mh_fn = _rec_bundle.get('default_model_hyper') or (lambda: {})
+    try:
+        _default_mh = dict(_default_mh_fn() or {})
+    except Exception:
+        _default_mh = {}
+    _rec_true_mh, _rec_init_mh = {}, {}
+    if _default_mh:
+        st.subheader('4. Model-level hyperparameters')
+        st.caption(
+            'These are constants the model exposes to Empirical Bayes (e.g. the '
+            'race model\'s within-trial accumulator noise `sig_i`). The simulator '
+            'uses the **true** value; the EB outer loop is started from the **init** '
+            'value and reports a recovered estimate in the result.'
+        )
+        for _key, _val in _default_mh.items():
+            _max = max(2.0, 4.0 * float(_val))
+            col_t, col_i = st.columns(2)
+            with col_t:
+                _rec_true_mh[_key] = st.slider(
+                    f'True `{_key}` (simulator)',
+                    min_value=0.001, max_value=float(_max),
+                    value=float(_val), step=0.001,
+                    key=f'rec_true_mh_{_rec_bundle["family"]}_{_key}',
+                )
+            with col_i:
+                _rec_init_mh[_key] = st.slider(
+                    f'Initial `{_key}` (EB starting point)',
+                    min_value=0.001, max_value=float(_max),
+                    value=float(_val), step=0.001,
+                    key=f'rec_init_mh_{_rec_bundle["family"]}_{_key}',
+                )
+        st.divider()
+
+    # ------------------------------------------------------------------
+    # 5. Run recovery (threaded, verbose)
+    # ------------------------------------------------------------------
+    st.subheader(f'{"5" if _default_mh else "4"}. Run recovery')
+
+    # Session-state setup
+    if 'rec_running' not in st.session_state:
+        st.session_state['rec_running'] = False
+    if 'rec_result' not in st.session_state:
+        st.session_state['rec_result'] = None
+    if 'rec_log' not in st.session_state:
+        st.session_state['rec_log'] = []
+    if 'rec_error' not in st.session_state:
+        st.session_state['rec_error'] = None
+
+    run_rec = st.button(
+        'Simulate + fit', key='rec_run_btn', type='primary',
+        disabled=st.session_state['rec_running'],
+    )
 
     if run_rec:
-        with st.spinner('Simulating trial-by-trial data and running EB fit…'):
-            rng_rec = np.random.default_rng(int(seed_rec))
-            inputs_rec = {'c': rng_rec.choice(contrasts_pool, size=N_rec)}
+        st.session_state['rec_running'] = True
+        st.session_state['rec_result']  = None
+        st.session_state['rec_log']     = []
+        st.session_state['rec_error']   = None
 
-            # Time the two phases separately so the sidebar info is informative.
-            import time as _time
-            t0 = _time.time()
-            data_rec = psytrax.simulate(
-                _rec_race.sample_trial,
-                true_params,
-                inputs_rec,
-                rng=rng_rec,
-                model_hyper={'sig_i': float(true_sig_i)},
-            )
-            t_sim = _time.time() - t0
+        _rec_q = queue.Queue()
 
-            t0 = _time.time()
+        class _RecQueueTqdm:
+            def __init__(self, *a, **kw):
+                self._n = 0; self._map_n = 0; self._postfix = {}
+            def update(self, n=1):
+                self._n += n; self._map_n = 0
+                self._postfix.pop('MAP loss', None)
+                _rec_q.put(('progress', self._n, self._map_n, dict(self._postfix)))
+            def set_postfix(self, d, **kwargs):
+                self._postfix.update(d)
+                if 'MAP loss' in d:
+                    self._map_n += 1
+                _rec_q.put(('progress', self._n, self._map_n, dict(self._postfix)))
+            def close(self): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        def _rec_status_cb(payload):
+            _rec_q.put(('status', payload))
+
+        _rec_orig_tqdm = _rec_hyper_opt_mod.tqdm
+        _rec_hyper_opt_mod.tqdm = _RecQueueTqdm
+
+        # Snapshot inputs into locals for the worker thread
+        _bundle_local        = _rec_bundle
+        _N_local             = int(N_rec)
+        _seed_local          = int(seed_rec)
+        _true_params_local   = np.array(true_params, copy=True)
+        _value_pools_local   = {k: np.array(v, copy=True) for k, v in _rec_value_pools.items()}
+        _true_mh_local       = dict(_rec_true_mh)
+        _init_mh_local       = dict(_rec_init_mh)
+
+        def _run_recovery():
             try:
-                result_rec = psytrax.fit(
-                    data=data_rec,
-                    log_lik_trial=_rec_race.log_lik_trial,
-                    n_params=_rec_race.N_PARAMS,
-                    param_names=_rec_race.PARAM_NAMES,
-                    hyper=_rec_race.default_hyper(),
-                    E0=_rec_race.default_E0(N_rec),
-                    model_hyper={'sig_i': float(init_sig_i)},
-                    verbose=False,
+                rng = np.random.default_rng(_seed_local)
+                inputs = {k: rng.choice(pool, size=_N_local)
+                          for k, pool in _value_pools_local.items()}
+                _rec_status_cb({'message': f'Simulating {_N_local} trials…',
+                                'stage': 'simulate'})
+                t0 = _rec_time.time()
+                data = psytrax.simulate(
+                    _bundle_local['sample_trial'],
+                    _true_params_local,
+                    inputs,
+                    rng=rng,
+                    model_hyper=_true_mh_local,
                 )
-            except Exception as exc:
-                st.error(f'Fit failed: {exc}')
-                st.stop()
-            t_fit = _time.time() - t0
+                t_sim = _rec_time.time() - t0
+                _rec_status_cb({'message': f'Simulated in {t_sim:.1f}s — running EB fit…',
+                                'stage': 'fit_start'})
 
+                fit_kwargs = dict(
+                    data=data,
+                    log_lik_trial=_bundle_local['log_lik_trial'],
+                    n_params=_bundle_local['N_PARAMS'],
+                    param_names=_bundle_local['PARAM_NAMES'],
+                    verbose=True,
+                    status_callback=_rec_status_cb,
+                )
+                _dh = _bundle_local.get('default_hyper')
+                if callable(_dh):
+                    try:
+                        fit_kwargs['hyper'] = _dh()
+                    except Exception:
+                        pass
+                _de = _bundle_local.get('default_E0')
+                if callable(_de):
+                    try:
+                        fit_kwargs['E0'] = _de(_N_local)
+                    except Exception:
+                        pass
+                if _init_mh_local:
+                    fit_kwargs['model_hyper'] = _init_mh_local
+
+                t0 = _rec_time.time()
+                result = psytrax.fit(**fit_kwargs)
+                t_fit = _rec_time.time() - t0
+
+                # Augment the result with truth so it's self-contained
+                result['true_params']      = _true_params_local
+                result['true_model_hyper'] = _true_mh_local
+                result['simulated_data']   = data
+                result['simulate_time']    = t_sim
+                result['fit_time']         = t_fit
+                result['model_family']     = _bundle_local['family']
+
+                _rec_q.put(('done', result))
+            except Exception:
+                import traceback
+                _rec_q.put(('error', traceback.format_exc()))
+            finally:
+                _rec_hyper_opt_mod.tqdm = _rec_orig_tqdm
+
+        _t = threading.Thread(target=_run_recovery, daemon=True)
+        _t.start()
+        st.session_state['_rec_thread'] = _t
+        st.session_state['_rec_queue']  = _rec_q
+
+    # Stream progress while the thread is alive ----------------------
+    if st.session_state['rec_running']:
+        _rec_q  = st.session_state['_rec_queue']
+        _t      = st.session_state['_rec_thread']
+
+        st.markdown('**Recovery in progress…** &nbsp; `simulate → fit`')
+        col_cyc, col_map = st.columns(2)
+        cycle_text   = col_cyc.empty()
+        map_text     = col_map.empty()
+        status_text  = st.empty()
+        log_evd_text = st.empty()
+        log_box      = st.empty()
+
+        cycle, map_iter = 0, 0
+        log_evd_str, best_str, map_loss_str = '—', '—', '—'
+        current_status = 'Preparing…'
+        rec_log = st.session_state.get('rec_log', [])
+
+        while _t.is_alive():
+            while not _rec_q.empty():
+                try:
+                    msg = _rec_q.get_nowait()
+                    if msg[0] == 'progress':
+                        _, cycle, map_iter, postfix = msg
+                        log_evd_str  = postfix.get('log_evd',  log_evd_str)
+                        best_str     = postfix.get('best',     best_str)
+                        map_loss_str = postfix.get('MAP loss', map_loss_str)
+                    elif msg[0] == 'status':
+                        payload = msg[1]
+                        current_status = payload.get('message', current_status)
+                        rec_log.append(current_status)
+                        rec_log = rec_log[-12:]
+                        st.session_state['rec_log'] = rec_log
+                except queue.Empty:
+                    break
+            cycle_text.metric('Cycles completed', cycle)
+            map_text.metric('MAP iters (current cycle)', map_iter)
+            status_text.markdown(f'**Current step:** {current_status}')
+            log_evd_text.markdown(
+                f'Log evidence (higher is better) — current: **{log_evd_str}** &nbsp;|&nbsp; '
+                f'best: **{best_str}**'
+                + (f' &nbsp;|&nbsp; Neg log-posterior (lower is better): **{map_loss_str}**'
+                   if map_loss_str != '—' else '')
+            )
+            if rec_log:
+                log_box.code('\n'.join(rec_log), language='text')
+            _rec_time.sleep(0.5)
+
+        # Drain the queue once the thread finishes
+        msg_type, payload = 'error', 'No result received from recovery thread.'
+        while not _rec_q.empty():
+            try:
+                m = _rec_q.get_nowait()
+                if m[0] in ('done', 'error'):
+                    msg_type, payload = m[0], m[1]
+            except queue.Empty:
+                break
+
+        st.session_state['rec_running'] = False
+        if msg_type == 'done':
+            st.session_state['rec_result'] = payload
+        else:
+            st.session_state['rec_error']  = payload
+            st.error(f'Recovery failed:\n```\n{payload}\n```')
+
+    # ------------------------------------------------------------------
+    # 6. Results
+    # ------------------------------------------------------------------
+    result_rec = st.session_state.get('rec_result')
+    if result_rec is not None:
         st.success(
-            f'Done — simulated **{N_rec}** trials in {t_sim:.1f}s, '
-            f'fit in {t_fit:.1f}s.  Log evidence: {result_rec["log_evidence"]:.2f}.'
+            f'Done — simulated **{result_rec["params"].shape[1]}** trials in '
+            f'{result_rec.get("simulate_time", 0):.1f}s, '
+            f'fit in {result_rec.get("fit_time", 0):.1f}s.  '
+            f'Log evidence: {result_rec["log_evidence"]:.2f}.'
         )
 
-        # ------------------------------------------------------------
-        # Recovered model-level hyperparameter
-        # ------------------------------------------------------------
-        rec_sig_i = float(result_rec['model_hyper']['sig_i'])
-        col_a, col_b, col_c = st.columns(3)
-        col_a.metric('True sig_i', f'{true_sig_i:.4f}')
-        col_b.metric('Initial sig_i', f'{init_sig_i:.4f}')
-        col_c.metric('Recovered sig_i', f'{rec_sig_i:.4f}',
-                     delta=f'{rec_sig_i - true_sig_i:+.4f}')
+        # --- Recovered model_hyper -------------------------------------
+        rec_mh  = result_rec.get('model_hyper') or {}
+        true_mh = result_rec.get('true_model_hyper') or {}
+        if rec_mh or true_mh:
+            st.subheader('Recovered model_hyper')
+            mh_keys = sorted(set(rec_mh) | set(true_mh))
+            cols = st.columns(min(3, max(1, len(mh_keys))))
+            for i, key in enumerate(mh_keys):
+                tval = true_mh.get(key, np.nan)
+                rval = rec_mh.get(key, np.nan)
+                with cols[i % len(cols)]:
+                    delta = (rval - tval) if (np.isfinite(tval) and np.isfinite(rval)) else None
+                    st.metric(
+                        f'{key}',
+                        f'true {tval:.4f}  →  rec {rval:.4f}',
+                        delta=f'{delta:+.4f}' if delta is not None else None,
+                    )
 
-        # ------------------------------------------------------------
-        # Trajectory overlay
-        # ------------------------------------------------------------
-        recovered = result_rec['params']
-        W_std_rec = (result_rec.get('hess_info') or {}).get('W_std')
+        # --- Trajectory overlay ---------------------------------------
+        recovered     = result_rec['params']
+        true_params_r = result_rec['true_params']
+        param_names_r = result_rec['param_names']
+        K_r, N_r      = recovered.shape
+        W_std_rec     = (result_rec.get('hess_info') or {}).get('W_std')
 
-        n_p = _rec_race.N_PARAMS
-        n_cols = min(n_p, 3)
-        n_rows = int(np.ceil(n_p / n_cols))
+        n_cols = min(K_r, 3)
+        n_rows = int(np.ceil(K_r / n_cols))
         fig_rec, axes_rec = plt.subplots(n_rows, n_cols,
                                          figsize=(5 * n_cols, 3 * n_rows),
                                          squeeze=False)
         _tc = _style_fig(fig_rec)
-        trials_rec = np.arange(N_rec)
+        trials_rec = np.arange(N_r)
 
         per_param_summary = []
-        for k, (ax, name) in enumerate(zip(axes_rec.flat, _rec_race.PARAM_NAMES)):
+        for k, (ax, name) in enumerate(zip(axes_rec.flat, param_names_r)):
             _style_ax(ax, xlabel='Trial', title=name)
-            ax.plot(trials_rec, true_params[k], color='#000000', lw=1.5, label='true')
+            ax.plot(trials_rec, true_params_r[k], color='#000000', lw=1.5, label='true')
             ax.plot(trials_rec, recovered[k], color='#4e9af1', lw=1.0, label='recovered')
             if W_std_rec is not None:
                 ax.fill_between(
@@ -2911,17 +3283,15 @@ elif page == 'Model Recovery':
                 )
             if k == 0:
                 _style_legend(ax)
-
-            mae = float(np.mean(np.abs(recovered[k] - true_params[k])))
-            if np.std(true_params[k]) > 0 and np.std(recovered[k]) > 0:
-                corr = float(np.corrcoef(recovered[k], true_params[k])[0, 1])
+            mae = float(np.mean(np.abs(recovered[k] - true_params_r[k])))
+            if np.std(true_params_r[k]) > 0 and np.std(recovered[k]) > 0:
+                corr = float(np.corrcoef(recovered[k], true_params_r[k])[0, 1])
             else:
                 corr = float('nan')
             per_param_summary.append({'parameter': name, 'MAE': mae, 'corr': corr})
 
-        for ax in axes_rec.flat[n_p:]:
+        for ax in axes_rec.flat[K_r:]:
             ax.set_visible(False)
-
         fig_rec.suptitle('Parameter recovery: true vs recovered',
                          color=_tc['text'], fontsize=12)
         fig_rec.tight_layout()
@@ -2933,17 +3303,93 @@ elif page == 'Model Recovery':
             use_container_width=True,
         )
 
-        # ------------------------------------------------------------
-        # Save the recovery so the user can revisit it via Visualise Results
-        # ------------------------------------------------------------
-        result_rec['true_params'] = true_params
-        result_rec['true_model_hyper'] = {'sig_i': float(true_sig_i)}
+        # --- Behavioural recovery: empirical curves from truth vs recovered ----
+        st.subheader('Behavioural recovery: truth vs recovered')
+        st.caption(
+            'A fresh dataset is sampled from the recovered trajectory (and recovered '
+            'model_hyper) at the same inputs that generated the truth. We bin both '
+            'datasets by the model\'s primary input (the psychometric x-axis) and '
+            'overlay the resulting empirical curves. Close agreement here means the '
+            'recovered trajectory reproduces the simulator\'s behaviour even when '
+            'individual parameters were poorly identified.'
+        )
+
+        sim_data_truth = result_rec.get('simulated_data') or {}
+        inputs_truth   = sim_data_truth.get('inputs') or {}
+        if inputs_truth:
+            try:
+                rng_recover = np.random.default_rng(int(seed_rec) + 1)
+                data_rec_sim = psytrax.simulate(
+                    _rec_bundle['sample_trial'],
+                    recovered,
+                    inputs_truth,
+                    rng=rng_recover,
+                    model_hyper=rec_mh,
+                )
+
+                xkey = 'c' if 'c' in inputs_truth else next(iter(inputs_truth))
+                x_truth = np.asarray(inputs_truth[xkey])
+                bins    = np.unique(x_truth)
+
+                def _binned(data):
+                    r = np.asarray(data['responses'])
+                    p = np.array([
+                        r[x_truth == b].mean() if np.any(x_truth == b) else np.nan
+                        for b in bins
+                    ])
+                    rt = None
+                    if data.get('times') is not None:
+                        T = np.asarray(data['times'])
+                        rt = np.array([
+                            T[x_truth == b].mean() if np.any(x_truth == b) else np.nan
+                            for b in bins
+                        ])
+                    return p, rt
+
+                p_t, rt_t = _binned(sim_data_truth)
+                p_r, rt_r = _binned(data_rec_sim)
+
+                has_rt = rt_t is not None and rt_r is not None
+                fig_b, axes_b = plt.subplots(
+                    1, 2 if has_rt else 1,
+                    figsize=(11 if has_rt else 6, 3.5),
+                    squeeze=False,
+                )
+                _tc = _style_fig(fig_b)
+
+                ax_p = axes_b[0, 0]
+                _style_ax(ax_p, xlabel=xkey, ylabel='P(response = 1)',
+                          title='Psychometric')
+                ax_p.plot(bins, p_t, 'o-', color='#000000', lw=1.5, label='truth')
+                ax_p.plot(bins, p_r, 's--', color='#4e9af1', lw=1.5, label='recovered')
+                ax_p.axhline(0.5, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+                if 0 >= bins.min() and 0 <= bins.max():
+                    ax_p.axvline(0, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+                ax_p.set_ylim(-0.05, 1.05)
+                _style_legend(ax_p)
+
+                if has_rt:
+                    ax_r = axes_b[0, 1]
+                    _style_ax(ax_r, xlabel=xkey, ylabel='Mean RT (s)',
+                              title='Chronometric')
+                    ax_r.plot(bins, rt_t, 'o-', color='#000000', lw=1.5, label='truth')
+                    ax_r.plot(bins, rt_r, 's--', color='#4e9af1', lw=1.5, label='recovered')
+                    if 0 >= bins.min() and 0 <= bins.max():
+                        ax_r.axvline(0, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+                    _style_legend(ax_r)
+
+                fig_b.tight_layout()
+                _show_fig(fig_b, 'recovery_behaviour.png')
+            except Exception as exc:
+                st.warning(f'Could not compute behavioural curves: {exc}')
+
+        # --- Download button ------------------------------------------
         buf = io.BytesIO()
         np.save(buf, result_rec, allow_pickle=True)
         buf.seek(0)
         st.download_button(
             'Download recovery result (.npy)',
             data=buf.getvalue(),
-            file_name='race_model_recovery.npy',
+            file_name=f'{_rec_bundle["family"]}_model_recovery.npy',
             mime='application/octet-stream',
         )
