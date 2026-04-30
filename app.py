@@ -3098,6 +3098,55 @@ contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
     # ------------------------------------------------------------------
     st.subheader(f'{"5" if _default_mh else "4"}. Run recovery')
 
+    with st.expander('What can I expect from recovery on this model?', expanded=False):
+        if _rec_bundle['family'] == 'race':
+            st.markdown("""
+**Race model.** Drift weights (`wr`, `wl`) and the threshold (`z`) recover
+well from low-amplitude trajectories. Baselines (`br`, `bl`) and `sig_i` are
+poorly identified at small magnitudes — try larger amplitudes or more trials
+if those look flat.
+""")
+        elif _rec_bundle['family'] == 'ddm_exact':
+            st.markdown(r"""
+**DDM (exact) — known identifiability caveats.**
+
+- Contrast weight `w` and boundary separation `a` recover reliably.
+
+- Drift bias `b` and starting-point bias `z` both shift response
+  probability toward the upper boundary, so they are **partially confounded**.
+  In practice the recovered `z` trajectory is often a **mirror image around
+  0.5** of the truth — recovered $z \approx 1 - z_{\text{true}}$ — with `b`
+  quietly drifting to compensate. The two interpretations explain the same
+  data nearly equally well in choice and RT, and EB picks one of the modes
+  based on its initialisation. This is a property of the DDM model, not a
+  bug in the recovery code. If you specifically want to test `z`, hold `b`
+  flat (amplitude and slope = 0) and inspect the magnitude of the recovered
+  `z` variation rather than its sign.
+
+- The recovery page also initialises σ at **4× the model default** so EB
+  doesn't get stuck at a *constant-trajectory* local mode. With tight σ
+  initialisation, EB collapses every parameter to its trial-averaged value
+  (corr ≈ 0 for the time-varying ones); the looser start lets it escape
+  into the genuine time-varying mode, which has higher log-evidence anyway.
+""")
+        elif _rec_bundle['family'] == 'ddm_approx':
+            st.markdown("""
+**DDM (approx).** Three parameters (no boundary `a`), so identifiability is
+less fraught than the exact DDM. Drift weight `w` and threshold `z` recover
+well; bias `b` is harder unless you give it large variation.
+""")
+        elif _rec_bundle['family'] == 'logistic':
+            st.markdown("""
+**Logistic regression.** Both parameters recover reliably as long as you
+include strong, well-separated contrast levels in the trial inputs.
+""")
+        else:
+            st.markdown(
+                'Recovery quality depends on how informative the data is about '
+                'the trajectory you injected. If recovery looks flat, try larger '
+                'amplitudes/slopes, more trials, or a wider range of input values.'
+            )
+
     # Session-state setup
     if 'rec_running' not in st.session_state:
         st.session_state['rec_running'] = False
@@ -3179,10 +3228,25 @@ contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
                     verbose=True,
                     status_callback=_rec_status_cb,
                 )
+                # Looser initial sigma for recovery (scale model default ×4).
+                # The marginal-likelihood surface has a "constant trajectory"
+                # local mode that EB easily gets stuck in if it starts at a
+                # tight prior — and that mode collapses every parameter to
+                # its average, hiding the trajectory the user designed. A
+                # looser starting point lets EB escape into the genuine
+                # time-varying mode (which has higher log evidence anyway —
+                # see the page caption for the full story).
+                _SIGMA_RECOVERY_SCALE = 4.0
                 _dh = _bundle_local.get('default_hyper')
                 if callable(_dh):
                     try:
-                        fit_kwargs['hyper'] = _dh()
+                        _hyper_init = _dh()
+                        _sigma = _hyper_init.get('sigma')
+                        if _sigma is not None:
+                            _hyper_init['sigma'] = (
+                                np.asarray(_sigma, dtype=float) * _SIGMA_RECOVERY_SCALE
+                            )
+                        fit_kwargs['hyper'] = _hyper_init
                     except Exception:
                         pass
                 _de = _bundle_local.get('default_E0')
