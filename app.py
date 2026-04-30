@@ -2937,6 +2937,35 @@ contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
         'z':  dict(offset=1.0, amplitude=0.05, period_frac=0.40, slope=-0.2),
     }
 
+    # Per-family parameter bounds.  These are set to the model's mathematical
+    # domain (e.g. DDM `a > 0`, DDM `z in (0, 1)`) so sliders can't produce
+    # invalid parameter values that would crash the simulator or fit.  The
+    # generated trajectory is also clipped to these bounds after building, so
+    # extreme amplitude/slope combinations stay within the valid region.
+    _PARAM_BOUNDS = {
+        'race': {
+            'wr': (0.05, 5.0), 'wl': (0.05, 5.0),
+            'br': (0.05, 3.0), 'bl': (0.05, 3.0),
+            'z':  (0.10, 5.0),
+        },
+        'ddm_exact': {
+            'w': (-3.0, 5.0), 'b': (-2.0, 2.0),
+            'a': (0.20, 4.0),         # boundary separation must be > 0
+            'z': (0.05, 0.95),        # relative starting point in (0, 1)
+        },
+        'ddm_approx': {
+            'w': (-3.0, 5.0), 'b': (-2.0, 2.0),
+            'z': (0.10, 5.0),         # threshold must be > 0
+        },
+        'logistic': {
+            'w': (-5.0, 10.0), 'b': (-3.0, 3.0),
+        },
+    }
+
+    def _bounds_for(name):
+        """(lo, hi) for the named parameter, or generous defaults for custom models."""
+        return _PARAM_BOUNDS.get(_rec_bundle['family'], {}).get(name, (-5.0, 5.0))
+
     def _default_traj(k, name):
         if _rec_bundle['family'] == 'race' and name in _RACE_TRAJ_DEFAULTS:
             d = _RACE_TRAJ_DEFAULTS[name]
@@ -2946,22 +2975,48 @@ contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
             return float(row[0]), 0.0, max(20, N_rec // 4), float(row[-1] - row[0])
         return 0.0, 0.0, max(20, N_rec // 4), 0.0
 
-    def _make_traj(offset, amplitude, period, slope, N):
+    def _make_traj(offset, amplitude, period, slope, N, bounds=None):
+        """Build the slider-driven trajectory and clip to (lo, hi) if bounds are set.
+
+        The clip means amplitude/slope can be set freely without the resulting
+        trajectory ever leaving the model's valid parameter region — useful
+        when the user wants to explore extreme values without crashing the fit.
+        """
         t = np.arange(N)
-        return offset + slope * (t / N) + amplitude * np.sin(2 * np.pi * t / max(period, 1))
+        traj = offset + slope * (t / N) + amplitude * np.sin(2 * np.pi * t / max(period, 1))
+        if bounds is not None:
+            lo, hi = bounds
+            traj = np.clip(traj, lo, hi)
+        return traj
 
     _rec_traj_specs = {}
     for k, name in enumerate(_rec_bundle['PARAM_NAMES']):
         with st.expander(f'`{name}` trajectory shape', expanded=(k == 0)):
+            lo, hi = _bounds_for(name)
             d_offset, d_amp, d_period, d_slope = _default_traj(k, name)
+            d_offset = float(np.clip(d_offset, lo, hi))
+            range_span = hi - lo
+
+            # Slider step: pick something reasonable for the range size.
+            step_offset = max((hi - lo) / 200.0, 0.001)
+            step_amp    = max(range_span / 200.0, 0.001)
+            step_slope  = max(range_span / 200.0, 0.001)
+
+            st.caption(
+                f'Valid range: **[{lo:g}, {hi:g}]**.  The trajectory is clipped to '
+                f'this range — sweep amplitude or slope past the bound to see '
+                f'the parameter saturate.'
+            )
             c1, c2 = st.columns(2)
             with c1:
                 offset = st.slider(
-                    f'{name}: offset', -5.0, 5.0, d_offset, 0.05,
+                    f'{name}: offset', float(lo), float(hi),
+                    d_offset, step_offset,
                     key=f'rec_{_rec_bundle["family"]}_{name}_offset',
                 )
                 amplitude = st.slider(
-                    f'{name}: amplitude', 0.0, 3.0, d_amp, 0.01,
+                    f'{name}: amplitude', 0.0, float(range_span),
+                    float(min(d_amp, range_span)), step_amp,
                     key=f'rec_{_rec_bundle["family"]}_{name}_amp',
                 )
             with c2:
@@ -2972,27 +3027,31 @@ contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
                     key=f'rec_{_rec_bundle["family"]}_{name}_period',
                 )
                 slope = st.slider(
-                    f'{name}: linear slope (over all trials)', -5.0, 5.0,
-                    d_slope, 0.05,
+                    f'{name}: linear slope (over all trials)',
+                    -float(range_span), float(range_span),
+                    float(np.clip(d_slope, -range_span, range_span)), step_slope,
                     key=f'rec_{_rec_bundle["family"]}_{name}_slope',
                 )
             _rec_traj_specs[name] = (
-                float(offset), float(amplitude), int(period), float(slope)
+                float(offset), float(amplitude), int(period), float(slope), (lo, hi)
             )
 
-            # Live preview of this trajectory
-            _traj_k = _make_traj(offset, amplitude, period, slope, N_rec)
+            # Live preview of this trajectory (post-clip, so the user sees
+            # exactly what the simulator will get).
+            _traj_k = _make_traj(offset, amplitude, period, slope, N_rec, bounds=(lo, hi))
             _mini_fig, _mini_ax = plt.subplots(figsize=(5.5, 1.6))
             _style_fig(_mini_fig)
             _style_ax(_mini_ax, xlabel='Trial', title=f'{name} preview')
             _mini_ax.plot(np.arange(N_rec), _traj_k, color='#000000', lw=1.0)
+            _mini_ax.axhline(lo, color='#cc4444', lw=0.6, ls=':', alpha=0.6)
+            _mini_ax.axhline(hi, color='#cc4444', lw=0.6, ls=':', alpha=0.6)
             _mini_fig.tight_layout()
             st.pyplot(_mini_fig, use_container_width=True)
             plt.close(_mini_fig)
 
-    # Build the truth trajectory matrix
+    # Build the truth trajectory matrix (already clipped per parameter)
     true_params = np.stack([
-        _make_traj(*_rec_traj_specs[name], N_rec)
+        _make_traj(*_rec_traj_specs[name][:4], N_rec, bounds=_rec_traj_specs[name][4])
         for name in _rec_bundle['PARAM_NAMES']
     ])
 
@@ -3303,20 +3362,32 @@ contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
             use_container_width=True,
         )
 
-        # --- Behavioural recovery: empirical curves from truth vs recovered ----
-        st.subheader('Behavioural recovery: truth vs recovered')
+        # --- Behavioural recovery: 4-quartile psychometric & chronometric ----
+        st.subheader('Behavioural recovery: truth vs recovered, by quartile')
         st.caption(
-            'A fresh dataset is sampled from the recovered trajectory (and recovered '
-            'model_hyper) at the same inputs that generated the truth. We bin both '
-            'datasets by the model\'s primary input (the psychometric x-axis) and '
-            'overlay the resulting empirical curves. Close agreement here means the '
-            'recovered trajectory reproduces the simulator\'s behaviour even when '
-            'individual parameters were poorly identified.'
+            'Trials are split into four equally-sized windows (early → late). '
+            'For each window we plot the empirical bins from the simulator (black '
+            'dots) and from a fresh re-simulation of the recovered trajectory '
+            '(blue x\'s), and — for built-in models — overlay the analytic '
+            'psychometric (and chronometric) curves computed from the parameter '
+            'values in that window: black for truth, blue dashed for recovered. '
+            'Close agreement means the recovered trajectory reproduces the '
+            'simulator\'s behaviour even when individual parameters were poorly '
+            'identified.'
         )
 
         sim_data_truth = result_rec.get('simulated_data') or {}
         inputs_truth   = sim_data_truth.get('inputs') or {}
-        if inputs_truth:
+
+        # Detect the model family / fixed-params for analytic-curve helpers.
+        # We need to swap in the *true* model_hyper for truth-side curves and
+        # the *recovered* model_hyper for recovered-side curves.
+        model_family, _ = _model_family_info(param_names_r, result_rec)
+
+        truth_fixed_params = dict(true_mh)   # e.g. {'sig_i': true value}
+        rec_fixed_params   = dict(rec_mh)    # e.g. {'sig_i': recovered value}
+
+        if 'c' in inputs_truth:
             try:
                 rng_recover = np.random.default_rng(int(seed_rec) + 1)
                 data_rec_sim = psytrax.simulate(
@@ -3327,61 +3398,140 @@ contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
                     model_hyper=rec_mh,
                 )
 
-                xkey = 'c' if 'c' in inputs_truth else next(iter(inputs_truth))
-                x_truth = np.asarray(inputs_truth[xkey])
-                bins    = np.unique(x_truth)
+                c_data   = np.asarray(inputs_truth['c'])
+                r_truth  = np.asarray(sim_data_truth['responses'])
+                r_rec    = np.asarray(data_rec_sim['responses'])
+                T_truth  = sim_data_truth.get('times')
+                T_rec    = data_rec_sim.get('times')
+                has_rt   = (T_truth is not None and T_rec is not None
+                            and model_family in _RT_CURVE_FAMILIES)
+                if T_truth is not None: T_truth = np.asarray(T_truth)
+                if T_rec is not None:   T_rec   = np.asarray(T_rec)
 
-                def _binned(data):
-                    r = np.asarray(data['responses'])
-                    p = np.array([
-                        r[x_truth == b].mean() if np.any(x_truth == b) else np.nan
-                        for b in bins
-                    ])
-                    rt = None
-                    if data.get('times') is not None:
-                        T = np.asarray(data['times'])
-                        rt = np.array([
-                            T[x_truth == b].mean() if np.any(x_truth == b) else np.nan
-                            for b in bins
-                        ])
-                    return p, rt
+                contrasts_unique = np.unique(c_data)
+                c_grid = np.linspace(contrasts_unique.min(), contrasts_unique.max(), 100)
 
-                p_t, rt_t = _binned(sim_data_truth)
-                p_r, rt_r = _binned(data_rec_sim)
+                N_WIN = 4
+                edges = np.linspace(0, N_r, N_WIN + 1, dtype=int)
 
-                has_rt = rt_t is not None and rt_r is not None
-                fig_b, axes_b = plt.subplots(
-                    1, 2 if has_rt else 1,
-                    figsize=(11 if has_rt else 6, 3.5),
-                    squeeze=False,
-                )
-                _tc = _style_fig(fig_b)
+                # --- Psychometric quartiles ---------------------------------
+                fig_p, axes_p = plt.subplots(2, 2, figsize=(11, 8))
+                _tc = _style_fig(fig_p)
+                for wi, ax in enumerate(axes_p.flat):
+                    t0, t1 = int(edges[wi]), int(edges[wi + 1])
+                    c_win = c_data[t0:t1]
+                    r_t_win = r_truth[t0:t1]
+                    r_r_win = r_rec[t0:t1]
+                    c_uniq = np.unique(c_win)
+                    p_t_emp = np.array([r_t_win[c_win == cv].mean() for cv in c_uniq])
+                    p_r_emp = np.array([r_r_win[c_win == cv].mean() for cv in c_uniq])
+                    n_w     = np.array([np.sum(c_win == cv) for cv in c_uniq])
 
-                ax_p = axes_b[0, 0]
-                _style_ax(ax_p, xlabel=xkey, ylabel='P(response = 1)',
-                          title='Psychometric')
-                ax_p.plot(bins, p_t, 'o-', color='#000000', lw=1.5, label='truth')
-                ax_p.plot(bins, p_r, 's--', color='#4e9af1', lw=1.5, label='recovered')
-                ax_p.axhline(0.5, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
-                if 0 >= bins.min() and 0 <= bins.max():
-                    ax_p.axvline(0, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
-                ax_p.set_ylim(-0.05, 1.05)
-                _style_legend(ax_p)
+                    _style_ax(ax, xlabel='Signed contrast', ylabel='P(right)',
+                              title=f'Trials {t0 + 1}–{t1}')
+                    sizes = [max(10, n / 4) for n in n_w]
+                    ax.scatter(c_uniq, p_t_emp, s=sizes, color=_tc['text'],
+                               alpha=0.85, label='truth (sim)')
+                    ax.scatter(c_uniq, p_r_emp, s=sizes, color='#4e9af1',
+                               alpha=0.85, marker='x', label='recovered (sim)')
 
+                    # Analytic curves where available
+                    p_t_curve, _ = _curve_predictions(
+                        true_params_r[:, t0:t1], param_names_r, c_grid,
+                        model_family, fixed_params=truth_fixed_params,
+                    )
+                    p_r_curve, _ = _curve_predictions(
+                        recovered[:, t0:t1], param_names_r, c_grid,
+                        model_family, fixed_params=rec_fixed_params,
+                    )
+                    if p_t_curve is not None:
+                        ax.plot(c_grid, p_t_curve, color='#000000', lw=1.5,
+                                label='truth (analytic)')
+                    if p_r_curve is not None:
+                        ax.plot(c_grid, p_r_curve, color='#4e9af1', lw=1.5,
+                                ls='--', label='recovered (analytic)')
+
+                    ax.axhline(0.5, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+                    ax.axvline(0,   color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+                    ax.set_ylim(-0.05, 1.05)
+                    if wi == 0:
+                        _style_legend(ax, fontsize=8, loc='lower right')
+
+                fig_p.suptitle('Psychometric quartiles: truth vs recovered',
+                               color=_tc['text'], fontsize=12)
+                fig_p.tight_layout()
+                _show_fig(fig_p, 'recovery_psychometric_quartiles.png')
+
+                # --- Chronometric quartiles (only for RT-bearing models) ----
                 if has_rt:
-                    ax_r = axes_b[0, 1]
-                    _style_ax(ax_r, xlabel=xkey, ylabel='Mean RT (s)',
-                              title='Chronometric')
-                    ax_r.plot(bins, rt_t, 'o-', color='#000000', lw=1.5, label='truth')
-                    ax_r.plot(bins, rt_r, 's--', color='#4e9af1', lw=1.5, label='recovered')
-                    if 0 >= bins.min() and 0 <= bins.max():
-                        ax_r.axvline(0, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
-                    _style_legend(ax_r)
+                    with st.spinner('Computing chronometric quartiles…'):
+                        fig_c, axes_c = plt.subplots(2, 2, figsize=(11, 8))
+                        _tc = _style_fig(fig_c)
+                        panel_data = []
+                        y_series   = []
 
-                fig_b.tight_layout()
-                _show_fig(fig_b, 'recovery_behaviour.png')
+                        for wi in range(N_WIN):
+                            t0, t1 = int(edges[wi]), int(edges[wi + 1])
+                            c_win  = c_data[t0:t1]
+                            T_t_w  = T_truth[t0:t1]
+                            T_r_w  = T_rec[t0:t1]
+                            c_uniq = np.unique(c_win)
+                            rt_t_emp = np.array([T_t_w[c_win == cv].mean() for cv in c_uniq])
+                            rt_r_emp = np.array([T_r_w[c_win == cv].mean() for cv in c_uniq])
+                            n_w      = np.array([np.sum(c_win == cv) for cv in c_uniq])
+
+                            _, rt_t_curve = _curve_predictions(
+                                true_params_r[:, t0:t1], param_names_r, c_grid,
+                                model_family, fixed_params=truth_fixed_params,
+                            )
+                            _, rt_r_curve = _curve_predictions(
+                                recovered[:, t0:t1], param_names_r, c_grid,
+                                model_family, fixed_params=rec_fixed_params,
+                            )
+                            panel_data.append((t0, t1, c_uniq, rt_t_emp, rt_r_emp,
+                                               n_w, rt_t_curve, rt_r_curve))
+                            y_series.extend([rt_t_emp, rt_r_emp,
+                                             rt_t_curve, rt_r_curve])
+
+                        shared_ylim = _shared_ylim(
+                            [np.asarray(s) for s in y_series if s is not None]
+                        )
+
+                        for ax, (t0, t1, c_uniq, rt_t_emp, rt_r_emp,
+                                n_w, rt_t_curve, rt_r_curve) in zip(
+                                axes_c.flat, panel_data):
+                            _style_ax(ax, xlabel='Signed contrast',
+                                      ylabel='Mean RT (s)',
+                                      title=f'Trials {t0 + 1}–{t1}')
+                            sizes = [max(10, n / 4) for n in n_w]
+                            ax.scatter(c_uniq, rt_t_emp, s=sizes, color=_tc['text'],
+                                       alpha=0.85, label='truth (sim)')
+                            ax.scatter(c_uniq, rt_r_emp, s=sizes, color='#4e9af1',
+                                       alpha=0.85, marker='x',
+                                       label='recovered (sim)')
+                            if rt_t_curve is not None:
+                                ax.plot(c_grid, rt_t_curve, color='#000000', lw=1.5,
+                                        label='truth (analytic)')
+                            if rt_r_curve is not None:
+                                ax.plot(c_grid, rt_r_curve, color='#4e9af1', lw=1.5,
+                                        ls='--', label='recovered (analytic)')
+                            ax.axvline(0, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+                            if shared_ylim is not None:
+                                ax.set_ylim(*shared_ylim)
+                            if (t0, t1) == (panel_data[0][0], panel_data[0][1]):
+                                _style_legend(ax, fontsize=8, loc='upper right')
+
+                        fig_c.suptitle('Chronometric quartiles: truth vs recovered',
+                                       color=_tc['text'], fontsize=12)
+                        fig_c.tight_layout()
+                        _show_fig(fig_c, 'recovery_chronometric_quartiles.png')
             except Exception as exc:
                 st.warning(f'Could not compute behavioural curves: {exc}')
+        else:
+            st.info(
+                'Behavioural curves require a `c` input. The selected model '
+                'doesn\'t expose one — skipping psychometric/chronometric plots.'
+            )
 
         # --- Download button ------------------------------------------
         buf = io.BytesIO()
