@@ -29,14 +29,15 @@ DATA_SPEC = {
 }
 
 
-def log_lik_trial(params, dat_trial):
+def log_lik_trial(params, dat_trial, model_hyper=None):
     """Per-trial log-likelihood for logistic regression.
 
     Args:
-        params    : (2,) array [w, b]
-        dat_trial : dict with scalar fields
-                    - inputs['c'] : signed contrast
-                    - r           : response (1=right, 0=left)
+        params      : (2,) array [w, b]
+        dat_trial   : dict with scalar fields
+                      - inputs['c'] : signed contrast
+                      - r           : response (1=right, 0=left)
+        model_hyper : unused (logistic has no model-level hyperparameters).
     """
     w, b = params
     logit = w * dat_trial['inputs']['c'] + b
@@ -55,6 +56,24 @@ def default_hyper(n_params=N_PARAMS, shared_sigma=False):
 
 def default_E0(N, n_params=N_PARAMS):
     return np.tile(np.array([0.5, 0.0])[:, None], N)
+
+
+def sample_trial(params, dat_trial, rng, model_hyper=None):
+    """Sample one trial from the logistic model.
+
+    Args:
+        params      : (2,) array [w, b]
+        dat_trial   : dict with scalar field ``dat_trial['inputs']['c']``.
+        rng         : numpy.random.Generator
+        model_hyper : unused (logistic has no model-level hyperparameters).
+
+    Returns:
+        dict with key ``'r'`` (1 with probability sigmoid(w·c+b), else 0).
+    """
+    w, b = (float(p) for p in params)
+    c = float(dat_trial['inputs']['c'])
+    p_right = 1.0 / (1.0 + np.exp(-(w * c + b)))
+    return {'r': float(rng.uniform() < p_right)}
 
 
 def default_learning_rule(reward_key='reward'):

@@ -15,7 +15,7 @@ from psytrax._helper.helperFunctions import (
 def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
              method=None, showOpt=0, jump=2, hess_calc='weights', show_progress=True,
              map_tol=1e-6, execution_plan=None, status_callback=None,
-             learning_rule=None):
+             learning_rule=None, model_hyper=None, model_hyper_optList=None):
     """Optimise hyperparameters and return MAP weights.
 
     Uses the decoupled Laplace approximation to find the hyperparameter values
@@ -53,10 +53,20 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         if val not in hyper or hyper[val] is None:
             raise Exception(f"Cannot optimise '{val}': not in hyper or is None")
 
+    # ---- model_hyper handling ----
+    if model_hyper is None:
+        model_hyper = {}
+    if model_hyper_optList is None:
+        model_hyper_optList = list(model_hyper.keys())
+    for key in model_hyper_optList:
+        if key not in model_hyper or model_hyper[key] is None:
+            raise Exception(f"Cannot optimise model_hyper '{key}': not in model_hyper or is None")
+
     if E0 is None:
         E0 = 0.01 * np.ones((K, N))
 
     current_hyper = hyper.copy()
+    current_model_hyper = dict(model_hyper)
     best_logEvd = None
     current_jump = jump
     first_iter = True
@@ -71,6 +81,8 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         'optList': optList,
         'method': method,
         'learning_rule': learning_rule,
+        'model_hyper': current_model_hyper,
+        'model_hyper_optList': list(model_hyper_optList),
     }
 
     while True:
@@ -85,6 +97,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
                 execution_plan=execution_plan,
                 status_callback=status_callback,
                 learning_rule=learning_rule,
+                model_hyper=current_model_hyper,
             )
         except RuntimeError as exc:
             msg = str(exc).lower()
@@ -99,6 +112,10 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             current_jump -= 1
             for val in optList:
                 current_hyper[val] = (current_hyper[val] + best_hyper[val]) / 2
+            for key in model_hyper_optList:
+                current_model_hyper[key] = (
+                    current_model_hyper[key] + best_model_hyper[key]
+                ) / 2
             _emit_status(status_callback, f"MAP step invalid, backing off hyperparameters: {exc}",
                          stage="retry")
             if showOpt:
@@ -130,6 +147,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         if best_logEvd is None or logEvd >= best_logEvd:
             current_jump = jump
             best_hyper = current_hyper.copy()
+            best_model_hyper = dict(current_model_hyper)
             best_logEvd = logEvd
             best_Hess = Hess
             best_eMode = llstruct['eMode']
@@ -138,11 +156,17 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             current_jump -= 1
             for val in optList:
                 current_hyper[val] = (current_hyper[val] + best_hyper[val]) / 2
+            for key in model_hyper_optList:
+                current_model_hyper[key] = (
+                    current_model_hyper[key] + best_model_hyper[key]
+                ) / 2
 
         if showOpt:
             print(f'\nLog-evidence: {np.round(logEvd, 5)}')
             for val in optList:
                 print(val, np.round(np.log2(current_hyper[val]), 4))
+            for key in model_hyper_optList:
+                print(f'model_hyper[{key}]', np.round(np.log2(current_model_hyper[key]), 4))
         _emit_status(status_callback, f"Evaluated current hyperparameters (log-evidence {logEvd:.3f}).",
                      stage="cycle", log_evidence=float(logEvd))
 
@@ -156,6 +180,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             )
             opt_keywords.update({
                 'hyper': best_hyper,
+                'model_hyper': best_model_hyper,
                 'LL_terms': best_llstruct['lT']['ddlogli'],
                 'LL_v': LL_v,
                 'eMode': eMode,
@@ -175,13 +200,15 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         )
         opt_keywords.update({
             'hyper': current_hyper,
+            'model_hyper': current_model_hyper,
             'LL_terms': llstruct['lT']['ddlogli'],
             'LL_v': LL_v,
             'eMode': eMode,
             'lr_hat': llstruct.get('lr_hat'),
         })
 
-        optVals = _pack_optvals(current_hyper, optList, K)
+        optVals = _pack_optvals(current_hyper, optList, K,
+                                current_model_hyper, model_hyper_optList)
 
         if showOpt:
             print('\nOptimising hyperparameters...')
@@ -194,7 +221,8 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         _emit_status(status_callback, "Updating hyperparameters for the next cycle…", stage="hyper")
         # L-BFGS-B with bounds keeps the line search away from degenerate sigma
         # values (log2 in [-15, 5] ↔ sigma in [~3e-5, 32]) that make the
-        # log-evidence Hessian singular.
+        # log-evidence Hessian singular.  The same bounds are applied to
+        # model_hyper entries (positivity is enforced via the log2 mapping).
         n_hyper_vals = len(optVals)
         bounds = [(-15, 5)] * n_hyper_vals
         result = minimize(
@@ -215,7 +243,8 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         _emit_status(status_callback, f"Hyperparameter update size {diff:.4f}.", stage="hyper")
 
         if diff > 0.1:
-            _unpack_optvals(result.x, current_hyper, optList, K)
+            _unpack_optvals(result.x, current_hyper, optList, K,
+                            current_model_hyper, model_hyper_optList)
         else:
             break
 
@@ -227,7 +256,8 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
     if hess_calc in ['weights', 'All']:
         hess_info['W_std'] = getCredibleInterval(best_Hess)
     if hess_calc in ['hyper', 'All']:
-        optVals = _pack_optvals(best_hyper, optList, K)
+        optVals = _pack_optvals(best_hyper, optList, K,
+                                best_model_hyper, model_hyper_optList)
         num_hess, _ = compHess(
             fun=_hyperOpt_lossfun,
             x0=np.array(optVals),
@@ -236,7 +266,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         )
         hess_info['hyp_std'] = np.sqrt(np.diag(np.linalg.inv(num_hess)))
 
-    return best_hyper, best_logEvd, best_eMode, hess_info
+    return best_hyper, best_logEvd, best_eMode, hess_info, best_model_hyper
 
 
 def _emit_status(callback, message, stage=None, **extra):
@@ -287,19 +317,34 @@ def _compute_LL_v_pure(eMode, H, ddlogprior, llstruct, hyper, dat, has_lr, K, N)
     return LL_v
 
 
-def _pack_optvals(hyper, optList, K):
-    """Flatten hyperparameters into a log2-scaled vector for optimisation."""
+def _pack_optvals(hyper, optList, K, model_hyper=None, model_hyper_optList=None):
+    """Flatten hyperparameters into a log2-scaled vector for optimisation.
+
+    Layout: ``[hyper entries…, model_hyper entries…]``.  Each ``hyper`` entry
+    contributes either 1 (scalar) or K (length-K vector) values; each
+    ``model_hyper`` entry currently contributes a single scalar (vector
+    model_hyper is not yet supported — extend the helper if needed).
+    """
     vals = []
     for val in optList:
         if np.isscalar(hyper[val]):
             vals.append(np.log2(hyper[val]))
         else:
             vals.extend(np.log2(hyper[val]).tolist())
+    if model_hyper is not None and model_hyper_optList:
+        for key in model_hyper_optList:
+            v = model_hyper[key]
+            if not np.isscalar(v):
+                raise NotImplementedError(
+                    f"model_hyper['{key}'] must be scalar; vector model_hyper is not yet supported"
+                )
+            vals.append(float(np.log2(v)))
     return vals
 
 
-def _unpack_optvals(result_x, hyper, optList, K):
-    """Write optimised log2 values back into the hyper dict in-place."""
+def _unpack_optvals(result_x, hyper, optList, K,
+                    model_hyper=None, model_hyper_optList=None):
+    """Write optimised log2 values back into hyper / model_hyper in-place."""
     count = 0
     for val in optList:
         if np.isscalar(hyper[val]):
@@ -308,6 +353,10 @@ def _unpack_optvals(result_x, hyper, optList, K):
         else:
             hyper[val] = 2 ** np.array(result_x[count:count + K])
             count += K
+    if model_hyper is not None and model_hyper_optList:
+        for key in model_hyper_optList:
+            model_hyper[key] = float(2 ** result_x[count])
+            count += 1
 
 
 def _hyperOpt_lossfun(optVals, keywords):
@@ -321,6 +370,11 @@ def _hyperOpt_lossfun(optVals, keywords):
     When a learning rule is present, the prior mean is non-zero and the RHS
     of the decoupled system includes an additional  invC_new @ u_new  term.
     The log-prior in the evidence also gets a correction for the mean shift.
+
+    Model-level hyperparameters (``keywords['model_hyper']``) re-enter the
+    likelihood at the new value via ``getPosteriorTerms``; the linear system
+    above is solved with the previous H, so this is a quasi-Newton step that
+    converges over multiple outer cycles.
     """
     N = keywords['dat']['r'].shape[0]
     K = keywords['LL_terms']['K']
@@ -332,7 +386,10 @@ def _hyperOpt_lossfun(optVals, keywords):
     has_lr = learning_rule is not None and lr_hat is not None
 
     hyper = keywords['hyper'].copy()
-    _unpack_optvals(optVals, hyper, keywords['optList'], K)
+    model_hyper = dict(keywords.get('model_hyper') or {})
+    model_hyper_optList = keywords.get('model_hyper_optList') or []
+    _unpack_optvals(optVals, hyper, keywords['optList'], K,
+                    model_hyper, model_hyper_optList)
 
     if method is None:
         w_N = N
@@ -372,7 +429,8 @@ def _hyperOpt_lossfun(optVals, keywords):
 
         E_flat = linalg.spsolve(Lambda, rhs)
 
-        pT, lT = getPosteriorTerms(E_flat, dat, hyper, log_lik_fns, method)
+        pT, lT = getPosteriorTerms(E_flat, dat, hyper, log_lik_fns, method,
+                                   model_hyper=model_hyper)
 
         # Correct the log-prior for the learning-rule mean shift
         if has_lr and v_mean_flat is not None:

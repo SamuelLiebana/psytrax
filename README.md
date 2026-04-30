@@ -95,11 +95,14 @@ Provide any JAX-compatible per-trial function:
 import jax
 import jax.numpy as jnp
 
-def my_log_lik_trial(params, dat_trial):
+def my_log_lik_trial(params, dat_trial, model_hyper):
     """
-    params    : jnp array (K,)  — parameters for this trial
-    dat_trial : dict — same keys as your data dict but scalar-valued per trial
-                (psytrax vmaps over trials automatically)
+    params      : jnp array (K,)  — trial-varying parameters for this trial
+    dat_trial   : dict — same keys as your data dict but scalar-valued per trial
+                  (psytrax vmaps over trials automatically)
+    model_hyper : dict — model-level scalar hyperparameters (constants across
+                  trials), jointly optimised by Empirical Bayes alongside σ.
+                  Pass an empty dict if your model doesn't need any.
     """
     w, b = params
     p = jax.nn.sigmoid(w * dat_trial['inputs']['x'] + b)
@@ -109,6 +112,27 @@ result = psytrax.fit(data=data, log_lik_trial=my_log_lik_trial, n_params=2)
 ```
 
 The function must be written with **`jax.numpy`** (not `numpy`) so that psytrax can differentiate through it to obtain the gradient and Hessian needed for MAP estimation and the Laplace approximation.
+
+### Model-level hyperparameters
+
+Some models have nuisance parameters that are *constant* across trials but
+nonetheless need to be estimated from the data — for example, the race
+model's within-trial accumulator noise `sig_i`. Expose them via
+`default_model_hyper()` and read them from the third argument of
+`log_lik_trial`:
+
+```python
+def default_model_hyper():
+    return {'sig_i': 0.1}   # starting point for Empirical Bayes
+
+def log_lik_trial(params, dat_trial, model_hyper):
+    sig_i = model_hyper['sig_i']
+    ...
+```
+
+`psytrax.fit` auto-detects `default_model_hyper()` from your model module and
+optimises every entry jointly with `sigma`. Pass `optimise_model_hyper=False`
+to keep them fixed.
 
 You can also add a `DATA_SPEC` dict to your model to declare its data requirements. The web app uses this to drive interactive column mapping when users upload CSV data:
 
@@ -139,7 +163,7 @@ DATA_SPEC = {
 | Logistic | `models/logistic.py` | 2 | No | Binary logistic regression |
 | DDM (exact) | `models/ddm.py` | 4 | Yes | Drift diffusion model — Navarro & Fuss (2009) / Bogacz et al. (2006) series solution |
 | DDM (approx) | `models/ddm_approx.py` | 3 | Yes | Drift diffusion model — inverse-Gaussian single-barrier approximation |
-| Race | `models/race.py` | 6 | Yes | Race model with separate accumulators |
+| Race | `models/race.py` | 5 + `sig_i` | Yes | Race model with separate accumulators (sig_i is a model_hyper estimated by EB) |
 | MLP | `models/mlp.py` | 13 | No | 1→4→1 MLP with tanh hidden layer |
 
 Each model exposes: `log_lik_trial`, `N_PARAMS`, `PARAM_NAMES`, `default_hyper()`, `default_E0(N)`, `default_learning_rule()`.
@@ -271,6 +295,50 @@ NVIDIA CUDA (float64) is expected to give a further **3–8× speedup** for mode
 
 ---
 
+## Model recovery
+
+`psytrax.simulate` and `psytrax.recover` let you sanity-check a model by
+generating synthetic trial-by-trial data with known parameter trajectories,
+fitting the model to that data, and comparing recovered to truth.
+
+```python
+import numpy as np
+import psytrax
+from psytrax.models import race
+
+N = 1000
+true_params = np.stack([
+    np.linspace(1.0, 2.0, N),    # wr
+    np.linspace(1.0, 2.0, N),    # wl
+    np.full(N, 0.5),             # br
+    np.full(N, 0.5),             # bl
+    np.linspace(1.0, 0.8, N),    # z
+])
+inputs = {'c': np.random.choice([-1, -0.5, 0, 0.5, 1.0], size=N)}
+
+result = psytrax.recover(
+    sample_trial    = race.sample_trial,
+    log_lik_trial   = race.log_lik_trial,
+    n_params        = race.N_PARAMS,
+    true_params     = true_params,
+    inputs          = inputs,
+    param_names     = race.PARAM_NAMES,
+    true_model_hyper= {'sig_i': 0.10},   # ground truth for the simulator
+)
+
+result['true_params']        # (K, N) ground truth
+result['params']             # (K, N) recovered MAP
+result['true_model_hyper']   # {'sig_i': 0.10}
+result['model_hyper']        # {'sig_i': <EB-recovered value>}
+```
+
+Each built-in model exposes a matching `sample_trial(params, dat_trial, rng,
+model_hyper)` you can use directly, or you can pass your own. The web app's
+**Model Recovery** page provides an interactive version of this for the race
+model with sliders that shape the trajectories.
+
+---
+
 ## Web app
 
 The web app lets you fit models, visualise results, and compare models — all from a browser, with no coding required.
@@ -320,6 +388,7 @@ The app opens automatically at `http://localhost:8501`.
 | Fit Model | Upload a dataset (`.npy` or `.csv`), choose a model, run the fit, download results |
 | Visualise Results | Load a saved fit and explore trial-by-trial parameter trajectories |
 | Compare Models | Overlay multiple fits and compare log-evidence scores |
+| Model Recovery | Shape race-model parameter trajectories with sliders, simulate trial-by-trial data, fit, and overlay recovered vs true trajectories |
 | IBL Explorer | Search public IBL subjects and sessions, load trials through ONE, convert them to psytrax format, and fit a model in-app |
 
 ### IBL Explorer and ONE integration

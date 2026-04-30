@@ -98,18 +98,9 @@ def _load_mouse_data(mouse, needs_rt):
 
 
 def _fit_kwargs_for_model(label, module, n_trials):
-    if label.startswith('Race fixed sig_i'):
-        log_lik_trial, n_params, param_names, default_hyper, _ = module.make_fixed_sig_i_model(
-            module.DEFAULT_FIXED_SIG_I
-        )
-        return {
-            'log_lik_trial': log_lik_trial,
-            'n_params': n_params,
-            'param_names': param_names,
-            'hyper': default_hyper(),
-            'E0': module.default_E0_fixed_sig_i(n_trials),
-        }
-
+    # Race's sig_i now lives in model_hyper and is estimated by Empirical
+    # Bayes — psytrax.fit auto-detects it from module.default_model_hyper()
+    # so this branch no longer needs to special-case the race model.
     return {
         'log_lik_trial': module.log_lik_trial,
         'n_params': module.N_PARAMS,

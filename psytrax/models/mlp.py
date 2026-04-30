@@ -48,7 +48,7 @@ def make_model(input_keys=None, hidden=_H):
         ['b2']
     )
 
-    def log_lik_trial(params, dat_trial):
+    def log_lik_trial(params, dat_trial, model_hyper=None):
         # Unpack flat parameter vector
         W1 = params[:n_in * H].reshape(n_in, H)   # (n_in, H)
         b1 = params[n_in * H:n_in * H + H]        # (H,)

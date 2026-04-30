@@ -63,8 +63,8 @@ def make_reinforce(log_lik_trial, reward_key='reward'):
     """
     grad_fn = jax.grad(log_lik_trial, argnums=0)
 
-    def learning_rule(params, dat_trial):
-        score = grad_fn(params, dat_trial)
+    def learning_rule(params, dat_trial, model_hyper=None):
+        score = grad_fn(params, dat_trial, model_hyper if model_hyper is not None else {})
         reward = dat_trial['inputs'][reward_key]
         return score * reward
 
@@ -109,8 +109,8 @@ def make_reinforce_baseline(log_lik_trial, reward_key='reward',
     """
     grad_fn = jax.grad(log_lik_trial, argnums=0)
 
-    def learning_rule(params, dat_trial):
-        score = grad_fn(params, dat_trial)
+    def learning_rule(params, dat_trial, model_hyper=None):
+        score = grad_fn(params, dat_trial, model_hyper if model_hyper is not None else {})
         advantage = dat_trial['inputs'][reward_key] - dat_trial['inputs'][baseline_key]
         return score * advantage
 

@@ -24,12 +24,7 @@ import argparse
 import numpy as np
 
 import psytrax
-from psytrax.models.race import (
-    DEFAULT_FIXED_SIG_I,
-    default_E0_fixed_sig_i,
-    default_hyper_fixed_sig_i,
-    make_fixed_sig_i_model,
-)
+from psytrax.models import race
 
 _REPO_DIR = os.path.dirname(__file__)
 _DATA_DIR = os.path.join(_REPO_DIR, 'data')
@@ -49,7 +44,14 @@ def _git_push(mouse, out_path):
 
 
 def fit_mouse(mouse, verbose=True, precision='float64', device='auto',
-              fixed_sig_i=DEFAULT_FIXED_SIG_I):
+              init_sig_i=None):
+    """Fit the race model to one mouse.
+
+    ``sig_i`` (within-trial accumulator noise) is now estimated jointly with
+    ``sigma`` by Empirical Bayes — pass ``init_sig_i`` only to override the
+    starting point for the EB optimiser; otherwise the model's
+    ``default_model_hyper()`` value is used.
+    """
     data_path = os.path.join(_DATA_DIR, f'{mouse}_data.npy')
     out_path  = os.path.join(_OUT_DIR,  f'{mouse}_race_fit.npy')
 
@@ -58,22 +60,23 @@ def fit_mouse(mouse, verbose=True, precision='float64', device='auto',
 
     # session_lengths may have been dropped for mice with NaN RTs (e.g. DAP044)
     has_sessions = 'session_lengths' in raw or 'dayLength' in raw
-    log_lik_trial, n_params, param_names, _, _ = make_fixed_sig_i_model(fixed_sig_i)
+
+    model_hyper = None if init_sig_i is None else {'sig_i': float(init_sig_i)}
 
     result = psytrax.fit(
         data               = raw,
-        log_lik_trial      = log_lik_trial,
-        n_params           = n_params,
-        param_names        = param_names,
-        hyper              = default_hyper_fixed_sig_i(),
-        E0                 = default_E0_fixed_sig_i(n_trials),
+        log_lik_trial      = race.log_lik_trial,
+        n_params           = race.N_PARAMS,
+        param_names        = race.PARAM_NAMES,
+        hyper              = race.default_hyper(),
+        E0                 = race.default_E0(n_trials),
         session_boundaries = has_sessions,
         hess_calc          = 'weights',
         device             = device,
         precision          = precision,
         verbose            = verbose,
+        model_hyper        = model_hyper,
     )
-    result['fixed_params'] = {'sig_i': float(fixed_sig_i)}
 
     np.save(out_path, result)
     return result
@@ -117,7 +120,8 @@ def main():
     print(
         f'Fitting {len(mice)} mice (sorted by trial count, '
         f'device={args.device}, precision={args.precision}, '
-        f'fixed sig_i={DEFAULT_FIXED_SIG_I:.4f}): {mice}'
+        f'sig_i estimated by Empirical Bayes from initial value '
+        f'{race.DEFAULT_SIG_I:.4f}): {mice}'
     )
     if args.push:
         print('Auto-push enabled: each fit will be pushed to GitHub on completion.')

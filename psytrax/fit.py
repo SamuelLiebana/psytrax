@@ -34,7 +34,9 @@ def fit(data, log_lik_trial, n_params,
         subject_name=None,
         save=False,
         status_callback=None,
-        verbose=False):
+        verbose=False,
+        model_hyper=None,
+        optimise_model_hyper=True):
     """Fit a decision model to behavioural data using Empirical Bayes + Laplace.
 
     Parameters
@@ -70,6 +72,16 @@ def fit(data, log_lik_trial, n_params,
     session_boundaries : bool
         If True, fit a larger process noise ('sigDay') at session boundaries.
         Requires 'session_lengths' in data.
+    model_hyper : dict, optional
+        Model-level scalar hyperparameters (constants across trials, e.g. the
+        race model's within-trial accumulator noise ``sig_i``).  These are
+        optimised jointly with ``sigma`` by Empirical Bayes when
+        ``optimise_model_hyper=True``.  If not provided and the model module
+        exposes a ``default_model_hyper()`` callable, those defaults are used.
+    optimise_model_hyper : bool
+        If True (default), all entries of ``model_hyper`` are optimised in
+        the EB outer loop.  Set to False to keep them fixed at their initial
+        values.
     learning_rule : callable, optional
         A JAX-traceable function with signature
             learning_rule(params, dat_trial) -> (K,) array
@@ -190,6 +202,12 @@ def fit(data, log_lik_trial, n_params,
     _validate_hyper(hyper, K)
 
     # ------------------------------------------------------------------
+    # Model-level hyperparameters (optimised by EB alongside σ)
+    # ------------------------------------------------------------------
+    model_hyper = _resolve_model_hyper(model_hyper, log_lik_trial)
+    model_hyper_optList = list(model_hyper.keys()) if optimise_model_hyper else []
+
+    # ------------------------------------------------------------------
     # Build batched likelihood functions
     # ------------------------------------------------------------------
     log_lik_fns = make_likelihood_fns(log_lik_trial)
@@ -208,6 +226,7 @@ def fit(data, log_lik_trial, n_params,
         dtype=_dtype,
         status_callback=status_callback,
         verbose=verbose,
+        model_hyper=model_hyper,
     )
 
     # ------------------------------------------------------------------
@@ -237,7 +256,7 @@ def fit(data, log_lik_trial, n_params,
                     f"Attempting fit with {attempt_plan.description} and {init_name}.",
                     stage="fit_attempt",
                 )
-                best_hyper, log_evd, eMode, hess_info = hyperOpt(
+                best_hyper, log_evd, eMode, hess_info, best_model_hyper = hyperOpt(
                     dat=dat,
                     hyper=current_hyper,
                     n_params=K,
@@ -252,6 +271,8 @@ def fit(data, log_lik_trial, n_params,
                     execution_plan=attempt_plan,
                     status_callback=status_callback,
                     learning_rule=learning_rule,
+                    model_hyper=dict(model_hyper),
+                    model_hyper_optList=list(model_hyper_optList),
                 )
                 plan = attempt_plan
                 break
@@ -279,6 +300,7 @@ def fit(data, log_lik_trial, n_params,
         'params': params,
         'param_names': param_names or [str(i) for i in range(K)],
         'hyper': best_hyper,
+        'model_hyper': best_model_hyper,
         'log_evidence': log_evd,
         'hess_info': hess_info,
         'data': dat,
@@ -307,6 +329,45 @@ def fit(data, log_lik_trial, n_params,
 # ---------------------------------------------------------------------------
 # Internal
 # ---------------------------------------------------------------------------
+
+def _resolve_model_hyper(model_hyper, log_lik_trial):
+    """Return a validated dict of model-level scalar hyperparameters.
+
+    Resolution order:
+      1. If the caller passes ``model_hyper`` explicitly, use it (after
+         validation).
+      2. Otherwise, look up the model's source module and call
+         ``default_model_hyper()`` if it exists.
+      3. Otherwise, return an empty dict (model has no extra hyperparameters).
+    """
+    if model_hyper is not None:
+        if not isinstance(model_hyper, dict):
+            raise TypeError(f"model_hyper must be a dict, not {type(model_hyper)}")
+        for k, v in model_hyper.items():
+            if not np.isscalar(v) or not np.isfinite(v) or v <= 0:
+                raise ValueError(
+                    f"model_hyper['{k}']={v!r} must be a positive finite scalar"
+                )
+        return {k: float(v) for k, v in model_hyper.items()}
+
+    module_name = getattr(log_lik_trial, "__module__", None)
+    if module_name:
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:
+            module = None
+        if module is not None:
+            default_fn = getattr(module, "default_model_hyper", None)
+            if callable(default_fn):
+                resolved = default_fn()
+                if not isinstance(resolved, dict):
+                    raise TypeError(
+                        f"{module_name}.default_model_hyper() must return a dict, "
+                        f"not {type(resolved)}"
+                    )
+                return {k: float(v) for k, v in resolved.items()}
+    return {}
+
 
 def _normalise_dat(raw):
     """Translate user-facing key names to the internal convention."""
@@ -448,7 +509,7 @@ def _to_jax(dat, dtype=None):
 
 
 def _warm_start_constant(dat, log_lik_fns, K, N, verbose=False,
-                         dtype=None, status_callback=None):
+                         dtype=None, status_callback=None, model_hyper=None):
     """Find constant MAP parameters by maximising total log-likelihood.
 
     Optimises a single (K,) parameter vector shared across all N trials,
@@ -471,6 +532,9 @@ def _warm_start_constant(dat, log_lik_fns, K, N, verbose=False,
         dtype = _map_module._JAX_DTYPE
     log_lik_fn = log_lik_fns[0]
     dat_jax = _to_jax(dat, dtype=dtype)
+    if model_hyper is None:
+        model_hyper = {}
+    model_hyper_jax = {k: jnp.asarray(v, dtype=dtype) for k, v in model_hyper.items()}
     _emit_status(status_callback, "Compiling warm-start objective…", stage="warm_start")
 
     # Define the objective once so JAX compiles it only on the first call and
@@ -478,7 +542,8 @@ def _warm_start_constant(dat, log_lik_fns, K, N, verbose=False,
     # (Defining a new lambda inside the loop would force re-tracing each call.)
     @jax.jit
     def _ll_of_params(params):
-        return log_lik_fn(jnp.tile(params[:, jnp.newaxis], (1, N)), dat_jax)
+        return log_lik_fn(jnp.tile(params[:, jnp.newaxis], (1, N)), dat_jax,
+                          model_hyper_jax)
 
     _ll_and_grad = jax.jit(jax.value_and_grad(_ll_of_params))
 
@@ -523,7 +588,7 @@ def _warm_start_constant(dat, log_lik_fns, K, N, verbose=False,
     return np.array(best_result.x)
 
 
-def _check_E0_validity(E0, dat, log_lik_fns, K, N):
+def _check_E0_validity(E0, dat, log_lik_fns, K, N, model_hyper=None):
     """Warn if E0 causes many sentinel (invalid) log-likelihoods.
 
     The race model (and similar) returns a large negative sentinel (-1e12)
@@ -541,8 +606,11 @@ def _check_E0_validity(E0, dat, log_lik_fns, K, N):
     log_lik_fn = log_lik_fns[0]
     E0_jax = jnp.asarray(E0, dtype=jnp.float64)
     dat_jax = _to_jax(dat)
+    if model_hyper is None:
+        model_hyper = {}
+    model_hyper_jax = {k: jnp.asarray(v, dtype=jnp.float64) for k, v in model_hyper.items()}
 
-    total_ll = float(log_lik_fn(E0_jax, dat_jax))
+    total_ll = float(log_lik_fn(E0_jax, dat_jax, model_hyper_jax))
 
     # A realistic per-trial log-likelihood for a well-specified model is O(-1).
     # Sentinel values are -1e12, so even one sentinel completely dominates.
@@ -560,13 +628,13 @@ def _check_E0_validity(E0, dat, log_lik_fns, K, N):
 
 
 def _build_initialization_candidates(E0, dat, log_lik_trial, log_lik_fns, K, N, dtype,
-                                     status_callback, verbose):
+                                     status_callback, verbose, model_hyper=None):
     """Return ordered E0 candidates for retries and constrained-model recovery."""
     candidates = []
 
     if E0 is not None:
         arr = np.asarray(E0, dtype=float)
-        _check_E0_validity(arr, dat, log_lik_fns, K, N)
+        _check_E0_validity(arr, dat, log_lik_fns, K, N, model_hyper=model_hyper)
         candidates.append(("provided E0", arr))
 
     warm_start = None
@@ -574,14 +642,15 @@ def _build_initialization_candidates(E0, dat, log_lik_trial, log_lik_fns, K, N, 
         if verbose:
             print('Finding warm-start initialisation (constant-parameter fit)...')
         const_params = _warm_start_constant(
-            dat, log_lik_fns, K, N, verbose=verbose, dtype=dtype, status_callback=status_callback
+            dat, log_lik_fns, K, N, verbose=verbose, dtype=dtype,
+            status_callback=status_callback, model_hyper=model_hyper,
         )
         warm_start = np.tile(const_params[:, np.newaxis], N)
         candidates.append(("automatic warm-start", warm_start))
 
     model_default = _model_default_E0(log_lik_trial, N, K)
     if model_default is not None and not any(np.array_equal(model_default, e0) for _, e0 in candidates):
-        _check_E0_validity(model_default, dat, log_lik_fns, K, N)
+        _check_E0_validity(model_default, dat, log_lik_fns, K, N, model_hyper=model_hyper)
         candidates.append(("model default_E0", model_default))
 
     if warm_start is not None and model_default is not None:

@@ -22,6 +22,19 @@ A few common gotchas when porting numpy → jax:
 If your model is truly non-differentiable (e.g. a simulator), finite-difference
 gradients are possible but will be slow.  Consider whether you can replace
 the simulator with a JAX-compatible approximation (normalizing flows, etc.).
+
+Per-trial log-likelihood signature
+----------------------------------
+``log_lik_trial(params, dat_trial, model_hyper)`` returns a scalar.
+
+  - ``params``      : (K,) jnp array — trial-varying parameters at trial t
+  - ``dat_trial``   : dict — trial-aligned data (scalar fields per trial)
+  - ``model_hyper`` : dict — model-level scalar hyperparameters (constant across
+                     trials) optimised by Empirical Bayes alongside σ.  May be
+                     ``{}`` for models without any.
+
+Models that don't need model_hyper still take three arguments — they just
+ignore the third one.
 """
 
 import jax
@@ -53,43 +66,37 @@ def make_likelihood_fns(log_lik_trial):
 
     Args:
         log_lik_trial: callable with signature
-            log_lik_trial(params_k, dat_trial) -> scalar
+            log_lik_trial(params_k, dat_trial, model_hyper) -> scalar
 
-            params_k  : jnp array of shape (K,) — parameters for one trial
-            dat_trial : dict — same keys as dat, but each array-valued field
-                        contains a single trial's worth of data (scalar or
-                        reduced leading dimension).  Fields that are not
-                        trial-indexed (e.g. dayLength) are passed through
-                        unchanged.
+            params_k     : jnp array of shape (K,) — parameters for one trial
+            dat_trial    : dict — per-trial scalar-valued mirror of ``dat``
+            model_hyper  : dict — static (non-trial-indexed) model-level
+                           hyperparameters.  Broadcast across trials by vmap
+                           and re-evaluated when the EB outer loop moves
+                           model_hyper, without triggering a JIT retrace.
 
             The function must be JAX-traceable (written with jax.numpy).
 
     Returns:
-        log_likelihood_fn : callable(E, dat) -> scalar
-            E   : (K, N) parameter matrix
-            dat : dict with arrays of shape (N, ...)
-        likelihood_terms_fn : callable(E, dat) -> tuple
-            Returns (logli, dlogli, hessian_blocks) where:
-              - logli is a scalar
-              - dlogli has shape (K, N)
-              - hessian_blocks has shape (N, K, K)
+        log_likelihood_fn   : callable(E, dat, model_hyper) -> scalar
+        likelihood_terms_fn : callable(E, dat, model_hyper) -> tuple
+            (logli, dlogli (K, N), hessian_blocks (N, K, K))
     """
-
     trial_value_grad_fn = value_and_grad(log_lik_trial, argnums=0)
-    trial_hessian_fn = hessian(log_lik_trial, argnums=0)
+    trial_hessian_fn    = hessian(log_lik_trial, argnums=0)
 
     @jit
-    def log_likelihood_fn(E, dat):
+    def log_likelihood_fn(E, dat, model_hyper):
         N = E.shape[1]
-        in_axes = (1, _make_vmap_axes(dat, N))
-        return jnp.sum(vmap(log_lik_trial, in_axes)(E, dat))
+        in_axes = (1, _make_vmap_axes(dat, N), None)
+        return jnp.sum(vmap(log_lik_trial, in_axes)(E, dat, model_hyper))
 
     @jit
-    def likelihood_terms_fn(E, dat):
+    def likelihood_terms_fn(E, dat, model_hyper):
         N = E.shape[1]
-        in_axes = (1, _make_vmap_axes(dat, N))
-        values, grads = vmap(trial_value_grad_fn, in_axes)(E, dat)
-        hessians = vmap(trial_hessian_fn, in_axes)(E, dat)
+        in_axes = (1, _make_vmap_axes(dat, N), None)
+        values, grads = vmap(trial_value_grad_fn, in_axes)(E, dat, model_hyper)
+        hessians = vmap(trial_hessian_fn, in_axes)(E, dat, model_hyper)
         return jnp.sum(values), jnp.swapaxes(grads, 0, 1), hessians
 
     return log_likelihood_fn, likelihood_terms_fn

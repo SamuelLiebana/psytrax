@@ -73,15 +73,16 @@ _K_VEC     = np.arange(1, _N_LARGE + 1,         dtype=np.float64)       # 1..N  
 _IMG_VEC   = np.arange(-_K_SMALL, _K_SMALL + 1, dtype=np.float64)       # −K..K
 
 
-def log_lik_trial(params, dat_trial):
+def log_lik_trial(params, dat_trial, model_hyper=None):
     """Per-trial log-likelihood of the DDM.
 
     Args:
-        params    : (4,) array [w, b, a, z]
-        dat_trial : dict with scalar fields
-                    - inputs['c'] : signed contrast (positive = rightward)
-                    - r           : response (1 = upper/right, 0 = lower/left)
-                    - T           : RT in seconds (non-decision time already removed)
+        params      : (4,) array [w, b, a, z]
+        dat_trial   : dict with scalar fields
+                      - inputs['c'] : signed contrast (positive = rightward)
+                      - r           : response (1 = upper/right, 0 = lower/left)
+                      - T           : RT in seconds (non-decision time already removed)
+        model_hyper : unused (DDM has no model-level hyperparameters).
 
     Returns:
         scalar log-likelihood
@@ -166,6 +167,50 @@ def default_hyper(n_params=N_PARAMS, shared_sigma=False):
 def default_E0(N, n_params=N_PARAMS):
     """Heuristic initial parameter matrix (K, N) for the DDM."""
     return np.tile(np.array([1.0, 0.0, 1.0, 0.5])[:, None], N)
+
+
+def sample_trial(params, dat_trial, rng, model_hyper=None, dt=1e-3, t_max=10.0):
+    """Sample one trial from the two-barrier DDM via Euler-Maruyama.
+
+    A Wiener process with drift ``v = w·c + b`` and unit variance per unit
+    time is integrated forward from absolute starting point ``z·a`` until it
+    hits 0 (left/lower) or ``a`` (right/upper).  This is the most general
+    sampler available for the exact DDM — closed-form sampling does not
+    have a simple form.
+
+    Args:
+        params    : (4,) array [w, b, a, z]
+        dat_trial : dict with scalar field ``dat_trial['inputs']['c']``.
+        rng       : numpy.random.Generator
+        dt        : integration step size in seconds (default 1 ms).
+        t_max     : maximum simulated time before declaring a non-decision.
+
+    Returns:
+        dict with keys ``'r'`` (1=upper/right, 0=lower/left) and ``'T'`` (RT).
+        If neither boundary is hit before ``t_max`` the trial is forced to
+        the closer boundary at time ``t_max``.
+    """
+    w, b, a, z_rel = (float(p) for p in params)
+    c = float(dat_trial['inputs']['c'])
+
+    if not (a > 0.0 and 0.0 < z_rel < 1.0):
+        # Slider-driven trajectories may briefly leave the valid region.
+        return {'r': 1.0 if rng.uniform() < z_rel else 0.0, 'T': float(t_max)}
+
+    v = w * c + b
+    x = z_rel * a
+    sqrt_dt = np.sqrt(dt)
+    n_steps = int(np.ceil(t_max / dt))
+    noise = rng.standard_normal(n_steps)
+
+    for i in range(n_steps):
+        x += v * dt + sqrt_dt * noise[i]
+        if x >= a:
+            return {'r': 1.0, 'T': float((i + 1) * dt)}
+        if x <= 0.0:
+            return {'r': 0.0, 'T': float((i + 1) * dt)}
+    # Forced choice at t_max
+    return {'r': 1.0 if x > a / 2.0 else 0.0, 'T': float(t_max)}
 
 
 def default_learning_rule(reward_key='reward'):

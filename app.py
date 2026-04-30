@@ -268,7 +268,19 @@ def _ddm_approx_curves(params_vec, param_names, c_grid, n_t=2000):
 
 
 def _model_family_info(param_names, result=None):
-    fixed_params = (result or {}).get('fixed_params') or {}
+    """Detect the model family and pull out any constant nuisance params.
+
+    Constant params can come from two sources:
+      - ``result['model_hyper']`` (new K=5 race fits — sig_i is an EB-estimated
+        model-level hyperparameter).
+      - ``result['fixed_params']`` (legacy K=5 fits saved from the old
+        ``make_fixed_sig_i_model`` wrapper).
+    Both are merged into a single ``fixed_params`` dict for the curve
+    helpers, which only need the scalar value.
+    """
+    result = result or {}
+    fixed_params = dict(result.get('fixed_params') or {})
+    fixed_params.update({k: float(v) for k, v in (result.get('model_hyper') or {}).items()})
     param_set = set(param_names)
     if param_set == _RACE_FULL_PARAMS or (param_set == _RACE_DYNAMIC_PARAMS and 'sig_i' in fixed_params):
         return 'race', fixed_params
@@ -352,7 +364,7 @@ st.sidebar.title('psytrax')
 st.sidebar.caption('Empirical Bayes for trial-by-trial decision models')
 page = st.sidebar.radio('Navigation', ['Instructions', 'Fit Model',
                                        'Visualise Results', 'Compare Models',
-                                       'IBL Explorer'],
+                                       'Model Recovery', 'IBL Explorer'],
                         label_visibility='collapsed')
 
 # ---------------------------------------------------------------------------
@@ -708,22 +720,20 @@ columns to the required fields.
 
     if model_choice == 'Race model (inverse-Gaussian)':
         from psytrax.models.race import (
-            log_lik_trial as _race_full_llt,
-            make_fixed_sig_i_model as _make_fixed_sig_i_model,
-            default_hyper_fixed_sig_i as _race_fixed_dhyper,
-            DEFAULT_FIXED_SIG_I as _RACE_FIXED_SIG_I,
+            log_lik_trial as _llt,
+            N_PARAMS as _K,
+            PARAM_NAMES as _pnames,
+            default_hyper as _dhyper,
             DATA_SPEC as _data_spec,
         )
-        _race_fixed_sig_i = True
-        _llt = _race_full_llt
-        _K = 5
-        _pnames = ['wr', 'wl', 'br', 'bl', 'z']
-        _dhyper = _race_fixed_dhyper
+        _race_fixed_sig_i = False  # legacy flag, kept for downstream branches
 
         st.markdown("""
 **Race model** — two independent inverse-Gaussian accumulators racing to threshold.
-`sig_i` is held fixed over learning at a built-in nuisance value.
-The learning fit therefore uses 5 trial-varying parameters: `wr, wl, br, bl, z`.
+The 5 trial-varying parameters (`wr, wl, br, bl, z`) evolve under a Gaussian
+random-walk prior; the within-trial accumulator noise `sig_i` is a static
+model-level hyperparameter, estimated jointly with `sigma` by Empirical
+Bayes (you'll see the recovered value in the result).
 """)
     elif model_choice == 'DDM — exact (Navarro & Fuss 2009)':
         from psytrax.models.ddm import (
@@ -806,12 +816,7 @@ barrier). Faster than the exact DDM; accurate when error rates are low.
         # UI alongside the model's own inputs.
         _data_spec = augment_data_spec(_data_spec, make_reinforce(
             _llt, reward_key=_lr_reward_col))
-        # Build the learning rule callable (race model with fixed sig_i is
-        # deferred until _run_fit where the wrapped likelihood is available).
-        if model_choice == 'Race model (inverse-Gaussian)' and _race_fixed_sig_i:
-            _learning_rule = 'reinforce_deferred'
-        else:
-            _learning_rule = make_reinforce(_llt, reward_key=_lr_reward_col)
+        _learning_rule = make_reinforce(_llt, reward_key=_lr_reward_col)
 
     elif _lr_choice == 'Upload custom (.py)':
         st.markdown("""
@@ -1074,7 +1079,6 @@ def learning_rule(params, dat_trial):
                                  index=0, key='fit_hess')
         hess_calc = None if hess_calc == 'None' else hess_calc
         precision = 'float64'
-        fixed_sig_i = _RACE_FIXED_SIG_I if model_choice == 'Race model (inverse-Gaussian)' and _race_fixed_sig_i else None
 
     st.divider()
 
@@ -1189,42 +1193,21 @@ def learning_rule(params, dat_trial):
                     status_callback=_status_cb,
                 )
 
-                fixed_params = {}
-                _lr_actual = _learning_rule  # may be callable, 'reinforce_deferred', or None
-
-                if model_choice == 'Race model (inverse-Gaussian)' and _race_fixed_sig_i:
-                    fixed_params['sig_i'] = float(fixed_sig_i)
-                    _status_cb({'stage': 'setup', 'message': f'Using fixed sig_i = {fixed_sig_i:.4f}.'})
-                    _llt_fit, _K_fit, _pnames_fit, _dhyper_fit, _ = _make_fixed_sig_i_model(fixed_sig_i)
-                    fit_kwargs.update(
-                        log_lik_trial=_llt_fit,
-                        n_params=_K_fit,
-                        param_names=_pnames_fit,
-                    )
-                    # Build REINFORCE rule for the fixed-sig_i wrapper
-                    if _lr_actual == 'reinforce_deferred':
-                        from psytrax.learning_rules import make_reinforce
-                        _lr_actual = make_reinforce(_llt_fit, reward_key=_lr_reward_col)
-                else:
-                    fit_kwargs.update(
-                        log_lik_trial=_llt,
-                        n_params=_K,
-                        param_names=_pnames,
-                    )
+                fit_kwargs.update(
+                    log_lik_trial=_llt,
+                    n_params=_K,
+                    param_names=_pnames,
+                )
 
                 # Pass learning rule if one was selected
-                if _lr_actual and _lr_actual != 'reinforce_deferred':
-                    fit_kwargs['learning_rule'] = _lr_actual
+                if _learning_rule is not None:
+                    fit_kwargs['learning_rule'] = _learning_rule
                     _status_cb({'stage': 'setup', 'message': 'Learning rule enabled — alpha will be optimised.'})
 
                 result = psytrax.fit(
                     hyper=hyper,
                     **fit_kwargs,
                 )
-                if fixed_params:
-                    _saved = np.load(result, allow_pickle=True).item()
-                    _saved['fixed_params'] = fixed_params
-                    np.save(result, _saved)
                 _q.put(('done', result))
             except Exception as e:
                 import traceback
@@ -1813,16 +1796,13 @@ elif page == 'IBL Explorer':
 
     if _ibl_model == 'Race model (inverse-Gaussian)':
         from psytrax.models.race import (
-            log_lik_trial as _race_full_llt,
-            make_fixed_sig_i_model as _ibl_make_fixed,
-            default_hyper_fixed_sig_i as _ibl_dhyper,
-            DEFAULT_FIXED_SIG_I as _IBL_FIXED_SIG_I,
+            log_lik_trial as _ibl_llt,
+            N_PARAMS as _ibl_K,
+            PARAM_NAMES as _ibl_pnames,
+            default_hyper as _ibl_dhyper,
             DATA_SPEC as _ibl_data_spec,
         )
-        _ibl_race_fixed = True
-        _ibl_llt = _race_full_llt
-        _ibl_K = 5
-        _ibl_pnames = ['wr', 'wl', 'br', 'bl', 'z']
+        _ibl_race_fixed = False  # legacy flag (sig_i is now an EB-estimated model_hyper)
     elif _ibl_model == 'DDM — exact (Navarro & Fuss 2009)':
         from psytrax.models.ddm import (
             log_lik_trial as _ibl_llt, N_PARAMS as _ibl_K,
@@ -1865,10 +1845,7 @@ elif page == 'IBL Explorer':
         _ibl_lr_reward_col = 'reward'  # always mapped from feedbackType
         _ibl_data_spec = augment_data_spec(_ibl_data_spec, make_reinforce(
             _ibl_llt, reward_key=_ibl_lr_reward_col))
-        if _ibl_race_fixed:
-            _ibl_learning_rule = 'reinforce_deferred'
-        else:
-            _ibl_learning_rule = make_reinforce(_ibl_llt, reward_key=_ibl_lr_reward_col)
+        _ibl_learning_rule = make_reinforce(_ibl_llt, reward_key=_ibl_lr_reward_col)
         st.success('REINFORCE enabled — reward signal from IBL `feedbackType`.')
 
     # Validate data against model spec
@@ -1910,7 +1887,6 @@ elif page == 'IBL Explorer':
             index=0, key='ibl_hess')
         _ibl_hess = None if _ibl_hess == 'None' else _ibl_hess
         _ibl_precision = 'float64'
-        _ibl_fixed_sig_i = _IBL_FIXED_SIG_I if _ibl_race_fixed else None
 
     with st.expander('Advanced: initial hyperparameters'):
         st.markdown('Leave blank to use model defaults. Values are in **log₂** scale.')
@@ -1996,32 +1972,15 @@ elif page == 'IBL Explorer':
                     status_callback=_ibl_status_cb,
                 )
 
-                _fixed_params = {}
-                _lr = _ibl_learning_rule
+                fit_kw.update(log_lik_trial=_ibl_llt, n_params=_ibl_K,
+                              param_names=_ibl_pnames)
 
-                if _ibl_race_fixed:
-                    _fixed_params['sig_i'] = float(_ibl_fixed_sig_i)
-                    _ibl_status_cb({'stage': 'setup',
-                                    'message': f'Using fixed sig_i = {_ibl_fixed_sig_i:.4f}.'})
-                    _llt_f, _K_f, _pn_f, _dh_f, _ = _ibl_make_fixed(_ibl_fixed_sig_i)
-                    fit_kw.update(log_lik_trial=_llt_f, n_params=_K_f, param_names=_pn_f)
-                    if _lr == 'reinforce_deferred':
-                        from psytrax.learning_rules import make_reinforce
-                        _lr = make_reinforce(_llt_f, reward_key=_ibl_lr_reward_col)
-                else:
-                    fit_kw.update(log_lik_trial=_ibl_llt, n_params=_ibl_K,
-                                  param_names=_ibl_pnames)
-
-                if _lr and _lr != 'reinforce_deferred':
-                    fit_kw['learning_rule'] = _lr
+                if _ibl_learning_rule is not None:
+                    fit_kw['learning_rule'] = _ibl_learning_rule
                     _ibl_status_cb({'stage': 'setup',
                                     'message': 'Learning rule enabled — alpha will be optimised.'})
 
                 result = psytrax.fit(hyper=_ibl_hyper, **fit_kw)
-                if _fixed_params:
-                    _saved = np.load(result, allow_pickle=True).item()
-                    _saved['fixed_params'] = _fixed_params
-                    np.save(result, _saved)
                 _iq.put(('done', result))
             except Exception:
                 import traceback
@@ -2478,6 +2437,18 @@ elif page == 'Visualise Results':
     if hyper_rows:
         st.dataframe(pd.DataFrame(hyper_rows).set_index('hyperparameter'), use_container_width=True)
 
+    # --- Model-level hyperparameters (linear scale, one scalar per entry) ---
+    _model_hyper = result.get('model_hyper') or {}
+    if _model_hyper:
+        st.subheader('Optimised model-level hyperparameters')
+        st.caption('These are constants the model exposes to Empirical Bayes (e.g. the race model\'s within-trial accumulator noise `sig_i`).')
+        st.dataframe(
+            pd.DataFrame(
+                [{'hyperparameter': k, 'value': float(v)} for k, v in _model_hyper.items()]
+            ).set_index('hyperparameter'),
+            use_container_width=True,
+        )
+
 # ---------------------------------------------------------------------------
 # Compare Models
 # ---------------------------------------------------------------------------
@@ -2723,3 +2694,256 @@ elif page == 'Compare Models':
                 _style_legend(ax3, fontsize=7)
                 fig3.tight_layout()
                 _show_fig(fig3, f'params_{name}.png')
+
+
+# ---------------------------------------------------------------------------
+# Model Recovery
+# ---------------------------------------------------------------------------
+elif page == 'Model Recovery':
+    import psytrax
+    from psytrax.models import race as _rec_race
+
+    st.title('Model Recovery')
+    st.markdown(
+        'Generate parameter trajectories with sliders, simulate trial-by-trial '
+        'data from the **race model**, then run `psytrax.fit` and overlay the '
+        'recovered trajectories on the truth.'
+    )
+    st.caption(
+        'Within-trial accumulator noise `sig_i` is treated as a model-level '
+        'hyperparameter and is jointly optimised by Empirical Bayes — the '
+        'recovered value is shown alongside the truth at the bottom.'
+    )
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # 1. Trial setup
+    # ------------------------------------------------------------------
+    st.subheader('1. Trial setup')
+    col_n, col_seed = st.columns([2, 1])
+    with col_n:
+        N_rec = st.slider('Number of trials', min_value=200, max_value=4000,
+                          value=1000, step=100, key='rec_n_trials',
+                          help='More trials → better recovery, longer fit.')
+    with col_seed:
+        seed_rec = st.number_input('Random seed', min_value=0, max_value=2**31 - 1,
+                                   value=42, step=1, key='rec_seed')
+
+    contrasts_default = '-1, -0.5, -0.25, 0, 0.25, 0.5, 1'
+    contrasts_str = st.text_input(
+        'Stimulus contrasts (drawn uniformly per trial)',
+        value=contrasts_default, key='rec_contrasts',
+    )
+    try:
+        contrasts_pool = np.asarray([float(x) for x in contrasts_str.split(',')], dtype=float)
+        if contrasts_pool.size == 0:
+            raise ValueError
+    except Exception:
+        st.warning(f'Could not parse contrasts; using default: {contrasts_default}')
+        contrasts_pool = np.asarray([-1, -0.5, -0.25, 0, 0.25, 0.5, 1.0])
+
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # 2. Trajectory shape sliders, one per dynamic parameter
+    # ------------------------------------------------------------------
+    st.subheader('2. True parameter trajectories')
+    st.caption(
+        'Each trajectory is `offset + slope · (t/N) + amplitude · sin(2π t / period)`. '
+        'Set amplitude to 0 for a flat-or-linear evolution.'
+    )
+
+    # Reasonable race-model defaults: weights start small and grow,
+    # biases hover near 0.5, threshold drifts slightly down.
+    _rec_defaults = {
+        'wr': dict(offset=1.5, amplitude=0.20, period_frac=0.25, slope=0.5),
+        'wl': dict(offset=1.5, amplitude=0.20, period_frac=0.25, slope=0.5),
+        'br': dict(offset=0.5, amplitude=0.05, period_frac=0.20, slope=0.0),
+        'bl': dict(offset=0.5, amplitude=0.05, period_frac=0.20, slope=0.0),
+        'z':  dict(offset=1.0, amplitude=0.05, period_frac=0.40, slope=-0.2),
+    }
+
+    _rec_traj_specs = {}
+    for name in _rec_race.PARAM_NAMES:
+        with st.expander(f'`{name}` trajectory shape', expanded=(name == 'wr')):
+            d = _rec_defaults[name]
+            c1, c2 = st.columns(2)
+            with c1:
+                offset = st.slider(f'{name}: offset', -3.0, 5.0, d['offset'], 0.05,
+                                   key=f'rec_{name}_offset')
+                amplitude = st.slider(f'{name}: amplitude', 0.0, 2.0, d['amplitude'], 0.01,
+                                      key=f'rec_{name}_amp')
+            with c2:
+                period = st.slider(
+                    f'{name}: period (trials)',
+                    min_value=20, max_value=max(40, N_rec),
+                    value=int(d['period_frac'] * N_rec), step=10,
+                    key=f'rec_{name}_period',
+                )
+                slope = st.slider(f'{name}: linear slope (over all trials)',
+                                  -3.0, 3.0, d['slope'], 0.05,
+                                  key=f'rec_{name}_slope')
+            _rec_traj_specs[name] = (float(offset), float(amplitude), int(period), float(slope))
+
+    st.subheader('3. Within-trial noise (model_hyper)')
+    col_t, col_i = st.columns(2)
+    with col_t:
+        true_sig_i = st.slider('True `sig_i` (used by the simulator)',
+                               min_value=0.01, max_value=2.0, value=0.10, step=0.01,
+                               key='rec_true_sig_i')
+    with col_i:
+        init_sig_i = st.slider('Initial `sig_i` (EB starting point)',
+                               min_value=0.01, max_value=2.0, value=0.10, step=0.01,
+                               key='rec_init_sig_i')
+
+    st.caption(
+        'EB will optimise `sig_i` from the initial value. Set the two equal to '
+        'check that the optimiser stays put on a well-specified model; set them '
+        'apart to see how far EB pulls back toward the truth.'
+    )
+
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # 3. Build the truth trajectory matrix and preview
+    # ------------------------------------------------------------------
+    def _make_traj(offset, amplitude, period, slope, N):
+        t = np.arange(N)
+        return offset + slope * (t / N) + amplitude * np.sin(2 * np.pi * t / max(period, 1))
+
+    true_params = np.stack([
+        _make_traj(*_rec_traj_specs[name], N_rec) for name in _rec_race.PARAM_NAMES
+    ])
+
+    fig_pre, axes_pre = plt.subplots(1, len(_rec_race.PARAM_NAMES),
+                                     figsize=(3 * len(_rec_race.PARAM_NAMES), 2.6))
+    _tc = _style_fig(fig_pre)
+    for k, (ax, name) in enumerate(zip(axes_pre, _rec_race.PARAM_NAMES)):
+        _style_ax(ax, xlabel='Trial', title=name)
+        ax.plot(np.arange(N_rec), true_params[k], color='#000000', lw=1.0)
+    fig_pre.suptitle('Preview: ground-truth trajectories', color=_tc['text'], fontsize=11)
+    fig_pre.tight_layout()
+    _show_fig(fig_pre, 'recovery_truth_preview.png')
+
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # 4. Run recovery
+    # ------------------------------------------------------------------
+    st.subheader('4. Run recovery')
+    run_rec = st.button('Simulate + fit', key='rec_run', type='primary')
+
+    if run_rec:
+        with st.spinner('Simulating trial-by-trial data and running EB fit…'):
+            rng_rec = np.random.default_rng(int(seed_rec))
+            inputs_rec = {'c': rng_rec.choice(contrasts_pool, size=N_rec)}
+
+            # Time the two phases separately so the sidebar info is informative.
+            import time as _time
+            t0 = _time.time()
+            data_rec = psytrax.simulate(
+                _rec_race.sample_trial,
+                true_params,
+                inputs_rec,
+                rng=rng_rec,
+                model_hyper={'sig_i': float(true_sig_i)},
+            )
+            t_sim = _time.time() - t0
+
+            t0 = _time.time()
+            try:
+                result_rec = psytrax.fit(
+                    data=data_rec,
+                    log_lik_trial=_rec_race.log_lik_trial,
+                    n_params=_rec_race.N_PARAMS,
+                    param_names=_rec_race.PARAM_NAMES,
+                    hyper=_rec_race.default_hyper(),
+                    E0=_rec_race.default_E0(N_rec),
+                    model_hyper={'sig_i': float(init_sig_i)},
+                    verbose=False,
+                )
+            except Exception as exc:
+                st.error(f'Fit failed: {exc}')
+                st.stop()
+            t_fit = _time.time() - t0
+
+        st.success(
+            f'Done — simulated **{N_rec}** trials in {t_sim:.1f}s, '
+            f'fit in {t_fit:.1f}s.  Log evidence: {result_rec["log_evidence"]:.2f}.'
+        )
+
+        # ------------------------------------------------------------
+        # Recovered model-level hyperparameter
+        # ------------------------------------------------------------
+        rec_sig_i = float(result_rec['model_hyper']['sig_i'])
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric('True sig_i', f'{true_sig_i:.4f}')
+        col_b.metric('Initial sig_i', f'{init_sig_i:.4f}')
+        col_c.metric('Recovered sig_i', f'{rec_sig_i:.4f}',
+                     delta=f'{rec_sig_i - true_sig_i:+.4f}')
+
+        # ------------------------------------------------------------
+        # Trajectory overlay
+        # ------------------------------------------------------------
+        recovered = result_rec['params']
+        W_std_rec = (result_rec.get('hess_info') or {}).get('W_std')
+
+        n_p = _rec_race.N_PARAMS
+        n_cols = min(n_p, 3)
+        n_rows = int(np.ceil(n_p / n_cols))
+        fig_rec, axes_rec = plt.subplots(n_rows, n_cols,
+                                         figsize=(5 * n_cols, 3 * n_rows),
+                                         squeeze=False)
+        _tc = _style_fig(fig_rec)
+        trials_rec = np.arange(N_rec)
+
+        per_param_summary = []
+        for k, (ax, name) in enumerate(zip(axes_rec.flat, _rec_race.PARAM_NAMES)):
+            _style_ax(ax, xlabel='Trial', title=name)
+            ax.plot(trials_rec, true_params[k], color='#000000', lw=1.5, label='true')
+            ax.plot(trials_rec, recovered[k], color='#4e9af1', lw=1.0, label='recovered')
+            if W_std_rec is not None:
+                ax.fill_between(
+                    trials_rec,
+                    recovered[k] - W_std_rec[k],
+                    recovered[k] + W_std_rec[k],
+                    color='#4e9af1', alpha=0.15,
+                )
+            if k == 0:
+                _style_legend(ax)
+
+            mae = float(np.mean(np.abs(recovered[k] - true_params[k])))
+            if np.std(true_params[k]) > 0 and np.std(recovered[k]) > 0:
+                corr = float(np.corrcoef(recovered[k], true_params[k])[0, 1])
+            else:
+                corr = float('nan')
+            per_param_summary.append({'parameter': name, 'MAE': mae, 'corr': corr})
+
+        for ax in axes_rec.flat[n_p:]:
+            ax.set_visible(False)
+
+        fig_rec.suptitle('Parameter recovery: true vs recovered',
+                         color=_tc['text'], fontsize=12)
+        fig_rec.tight_layout()
+        _show_fig(fig_rec, 'recovery_overlay.png')
+
+        st.subheader('Per-parameter recovery quality')
+        st.dataframe(
+            pd.DataFrame(per_param_summary).set_index('parameter').round(4),
+            use_container_width=True,
+        )
+
+        # ------------------------------------------------------------
+        # Save the recovery so the user can revisit it via Visualise Results
+        # ------------------------------------------------------------
+        result_rec['true_params'] = true_params
+        result_rec['true_model_hyper'] = {'sig_i': float(true_sig_i)}
+        buf = io.BytesIO()
+        np.save(buf, result_rec, allow_pickle=True)
+        buf.seek(0)
+        st.download_button(
+            'Download recovery result (.npy)',
+            data=buf.getvalue(),
+            file_name='race_model_recovery.npy',
+            mime='application/octet-stream',
+        )

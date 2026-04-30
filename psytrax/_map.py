@@ -21,7 +21,7 @@ _JAX_DTYPE = jnp.float64
 
 
 def getMAP(dat, hyper, n_params, log_lik_fns, method=None, E0=None, showOpt=0,
-           pbar=None, map_tol=1e-6):
+           pbar=None, map_tol=1e-6, model_hyper=None):
     """Estimate MAP parameters under a Gaussian random-walk prior.
 
     Args:
@@ -82,7 +82,9 @@ def getMAP(dat, hyper, n_params, log_lik_fns, method=None, E0=None, showOpt=0,
     # --- MAP optimisation ---
     prior_cache = make_prior_cache(dat, hyper, K, method)
     lossfun = memoize(negLogPost)
-    my_args = (dat, prior_cache, log_lik_fns, method)
+    if model_hyper is None:
+        model_hyper = {}
+    my_args = (dat, prior_cache, log_lik_fns, method, model_hyper)
 
     _map_pbar = tqdm(desc='  MAP', unit='iter', leave=False, disable=pbar is None)
 
@@ -152,10 +154,10 @@ def getMAP(dat, hyper, n_params, log_lik_fns, method=None, E0=None, showOpt=0,
     return hess, logEvd, llstruct
 
 
-def negLogPost(E_flat, dat, prior_cache, log_lik_fns, method=None):
+def negLogPost(E_flat, dat, prior_cache, log_lik_fns, method=None, model_hyper=None):
     """Return (neg log-posterior, its gradient, its Hessian dict) at E_flat."""
     priorTerms, liTerms = getPosteriorTerms(
-        E_flat, dat, prior_cache, log_lik_fns, method
+        E_flat, dat, prior_cache, log_lik_fns, method, model_hyper=model_hyper,
     )
     negPost = -priorTerms['logprior'] - liTerms['logli']
     negdPost = -priorTerms['dlogprior'] - liTerms['dlogli']
@@ -167,7 +169,8 @@ def negLogPost(E_flat, dat, prior_cache, log_lik_fns, method=None):
     return negPost, negdPost, negddPost
 
 
-def getPosteriorTerms(E_flat, dat, hyper_or_prior, log_lik_fns, method=None):
+def getPosteriorTerms(E_flat, dat, hyper_or_prior, log_lik_fns, method=None,
+                      model_hyper=None):
     """Compute prior and likelihood terms (with derivatives) at E_flat.
 
     Args:
@@ -223,7 +226,10 @@ def getPosteriorTerms(E_flat, dat, hyper_or_prior, log_lik_fns, method=None):
         return x
     dat_jax = jax.tree_util.tree_map(_cast, dat)
 
-    logli, dlogli_matrix, HlliList = likelihood_terms_fn(E_jax, dat_jax)
+    if model_hyper is None:
+        model_hyper = {}
+    model_hyper_jax = _to_jax_pytree(model_hyper, _JAX_DTYPE)
+    logli, dlogli_matrix, HlliList = likelihood_terms_fn(E_jax, dat_jax, model_hyper_jax)
     # Cast back to float64 so scipy's trust-ncg optimizer stays numerically stable
     dlogli = onp.asarray(dlogli_matrix, dtype=onp.float64).flatten()
     HlliList = onp.asarray(HlliList, dtype=onp.float64)
@@ -231,6 +237,21 @@ def getPosteriorTerms(E_flat, dat, hyper_or_prior, log_lik_fns, method=None):
 
     liTerms = {'logli': logli, 'dlogli': dlogli, 'ddlogli': ddlogli}
     return priorTerms, liTerms
+
+
+def _to_jax_pytree(d, dtype):
+    """Recursively convert numeric leaves of a dict to JAX scalars/arrays.
+
+    Used to bring ``model_hyper`` (a Python dict of floats / 0-D numpy values)
+    into the right dtype before handing it to the JIT-compiled likelihood.
+    """
+    if isinstance(d, dict):
+        return {k: _to_jax_pytree(v, dtype) for k, v in d.items()}
+    if isinstance(d, (jnp.ndarray, onp.ndarray)) and jnp.issubdtype(jnp.asarray(d).dtype, jnp.floating):
+        return jnp.asarray(d, dtype=dtype)
+    if isinstance(d, (float, int)):
+        return jnp.asarray(d, dtype=dtype)
+    return d
 
 
 def make_prior_cache(dat, hyper, n_params, method=None):

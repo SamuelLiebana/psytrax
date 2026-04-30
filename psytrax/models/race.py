@@ -1,14 +1,18 @@
 """Built-in race model (inverse-Gaussian race-to-threshold).
 
 This module also serves as a template for writing your own model.
-The only requirement is a JAX-compatible per-trial log-likelihood function
-with the signature:
+A psytrax model exposes:
 
-    log_lik_trial(params_k, dat_trial) -> scalar
+    log_lik_trial(params, dat_trial, model_hyper) -> scalar
+    sample_trial (params, dat_trial, rng, model_hyper) -> dict   # for simulation
+    default_model_hyper() -> dict                                 # optional
 
-params_k  : jnp array of shape (K,)
-dat_trial : dict — same keys as your dat dict, but each trial-indexed field
-            is a scalar (psytrax vmaps over trials automatically).
+``params`` are the *trial-varying* parameters (one (K,) vector per trial),
+``model_hyper`` carries *constants* shared across all trials and is jointly
+optimised by Empirical Bayes alongside ``sigma``.
+
+The race model has K = 5 trial-varying parameters (wr, wl, br, bl, z) and one
+model-level scalar (``sig_i`` — within-trial accumulator noise).
 
 See psytrax/_likelihood.py for JAX porting tips.
 """
@@ -23,11 +27,8 @@ import numpy as np
 # Model specification
 # -----------------------------------------------------------------------
 
-N_PARAMS = 6
-PARAM_NAMES = ['wr', 'wl', 'br', 'bl', 'z', 'sig_i']
-N_DYNAMIC_PARAMS = 5
-DYNAMIC_PARAM_NAMES = ['wr', 'wl', 'br', 'bl', 'z']
-DEFAULT_FIXED_SIG_I = 0.1
+N_PARAMS = 5
+PARAM_NAMES = ['wr', 'wl', 'br', 'bl', 'z']
 
 DATA_SPEC = {
     'inputs': {
@@ -49,8 +50,22 @@ DATA_SPEC = {
 _SIG_O = 1.0
 _INVALID_LOG_LIK = -1e12
 
+# Default initial value for the within-trial accumulator noise (used as the
+# starting point for the EB outer loop unless the caller overrides it).
+DEFAULT_SIG_I = 0.1
 
-def log_lik_trial(params, dat_trial):
+
+def default_model_hyper():
+    """Initial values for the model-level scalar hyperparameters.
+
+    The race model has one: ``sig_i`` — the within-trial accumulator noise.
+    Empirical Bayes optimises this alongside ``sigma`` by maximising the log
+    evidence, so the value below is just a starting point.
+    """
+    return {'sig_i': float(DEFAULT_SIG_I)}
+
+
+def log_lik_trial(params, dat_trial, model_hyper):
     """Per-trial log-likelihood of the race model.
 
     The model assumes two accumulators (right / left) with inverse-Gaussian
@@ -58,16 +73,18 @@ def log_lik_trial(params, dat_trial):
     threshold z first; the unchosen accumulator has not yet hit threshold.
 
     Args:
-        params    : (6,) array [wr, wl, br, bl, z, sig_i]
-        dat_trial : dict with scalar fields
-                    - inputs['c'] : signed contrast (positive = rightward)
-                    - r           : response (1 = right, 0 = left)
-                    - T           : reaction time
+        params      : (5,) array [wr, wl, br, bl, z]
+        dat_trial   : dict with scalar fields
+                      - inputs['c'] : signed contrast (positive = rightward)
+                      - r           : response (1 = right, 0 = left)
+                      - T           : reaction time
+        model_hyper : dict with key 'sig_i' (within-trial accumulator noise)
 
     Returns:
         scalar log-likelihood for this trial
     """
-    wr, wl, br, bl, z, sig_i = params
+    wr, wl, br, bl, z = params
+    sig_i = model_hyper['sig_i']
     T = dat_trial['T']
     valid = (
         jnp.isfinite(z) &
@@ -77,13 +94,17 @@ def log_lik_trial(params, dat_trial):
         (sig_i >= 0.0) &
         (T > 0.0)
     )
-    return lax.cond(valid, lambda _: _log_lik_trial_valid(params, dat_trial),
-                    lambda _: jnp.array(_INVALID_LOG_LIK, dtype=params.dtype), operand=None)
+    return lax.cond(
+        valid,
+        lambda _: _log_lik_trial_valid(params, dat_trial, sig_i),
+        lambda _: jnp.array(_INVALID_LOG_LIK, dtype=params.dtype),
+        operand=None,
+    )
 
 
-def _log_lik_trial_valid(params, dat_trial):
+def _log_lik_trial_valid(params, dat_trial, sig_i):
     """Per-trial log-likelihood assuming positive threshold and RT."""
-    wr, wl, br, bl, z, sig_i = params
+    wr, wl, br, bl, z = params
     c = dat_trial['inputs']['c']
     r = dat_trial['r']
     T = dat_trial['T']
@@ -116,7 +137,7 @@ def default_hyper(n_params=N_PARAMS, shared_sigma=False):
     if shared_sigma:
         sigma = float(2 ** -3)
     else:
-        sigma = np.array([2 ** -3] * (n_params - 1) + [2 ** -10])  # tiny variance for sig_i
+        sigma = np.array([2 ** -3] * n_params)
     return {
         'sigma': sigma,
         'sigInit': np.full(n_params, 2 ** 4),
@@ -132,27 +153,63 @@ def default_E0(N, n_params=N_PARAMS):
         np.linspace(0.4,  0.7,  N),  # br
         np.linspace(0.4,  0.7,  N),  # bl
         np.ones(N),                   # z
-        np.full(N, DEFAULT_FIXED_SIG_I),  # sig_i
     ])
     return E0
 
 
-def default_E0_fixed_sig_i(N, n_params=N_DYNAMIC_PARAMS):
-    """Heuristic initial parameter matrix when sig_i is fixed across trials."""
-    return default_E0(N)[:n_params]
+# -----------------------------------------------------------------------
+# Forward simulation
+# -----------------------------------------------------------------------
+
+def sample_trial(params, dat_trial, rng, model_hyper):
+    """Sample one trial from the race model.
+
+    Two independent inverse-Gaussian first-passage times are drawn (one per
+    accumulator); the winner determines the choice and the elapsed time.
+
+    Args:
+        params      : (5,) array [wr, wl, br, bl, z]
+        dat_trial   : dict with scalar fields — must contain
+                      ``dat_trial['inputs']['c']`` (signed contrast).
+        rng         : numpy.random.Generator
+        model_hyper : dict with key 'sig_i'.
+
+    Returns:
+        dict with keys ``'r'`` (1=right, 0=left) and ``'T'`` (RT in seconds).
+    """
+    wr, wl, br, bl, z = (float(p) for p in params)
+    sig_i = float(model_hyper['sig_i'])
+    c = float(dat_trial['inputs']['c'])
+
+    # Drift rates and diffusion variances for the two accumulators.
+    drift_r = wr * max(c, 0.0) + br
+    drift_l = wl * max(-c, 0.0) + bl
+    v_r = wr ** 2 * sig_i ** 2 + _SIG_O ** 2
+    v_l = wl ** 2 * sig_i ** 2 + _SIG_O ** 2
+
+    t_r = _sample_inv_gauss_fpt(z, drift_r, v_r, rng)
+    t_l = _sample_inv_gauss_fpt(z, drift_l, v_l, rng)
+
+    if t_r < t_l:
+        return {'r': 1.0, 'T': float(t_r)}
+    return {'r': 0.0, 'T': float(t_l)}
 
 
-def default_hyper_fixed_sig_i(n_params=N_DYNAMIC_PARAMS, shared_sigma=False):
-    """Starting hyperparameters when sig_i is fixed across learning."""
-    if shared_sigma:
-        sigma = float(2 ** -3)
-    else:
-        sigma = np.array([2 ** -3] * n_params)
-    return {
-        'sigma': sigma,
-        'sigInit': np.full(n_params, 2 ** 4),
-        'sigDay': None,
-    }
+def _sample_inv_gauss_fpt(threshold, drift, variance, rng):
+    """Sample an inverse-Gaussian first-passage time.
+
+    Returns +inf if the drift is non-positive (the accumulator never
+    deterministically reaches threshold under a one-shot Wald draw — the race
+    model treats this as "never wins").  This keeps the sampler well-defined
+    when slider-driven trajectories briefly enter that region.
+    """
+    if not np.isfinite(drift) or drift <= 0.0 or threshold <= 0.0 or variance <= 0.0:
+        return np.inf
+    # Time to threshold z under a Brownian motion with drift `drift` and
+    # variance per unit time `variance` is IG with mean=z/drift, shape=z²/variance.
+    mean = threshold / drift
+    shape = threshold ** 2 / variance
+    return float(rng.wald(mean, shape))
 
 
 def default_learning_rule(reward_key='reward'):
@@ -165,35 +222,9 @@ def default_learning_rule(reward_key='reward'):
 
     The data dict must contain ``data['inputs']['reward']``, typically
     1 for correct and 0 otherwise.
-
-    Returns
-    -------
-    learning_rule : callable
     """
     from psytrax.learning_rules import make_reinforce
     return make_reinforce(log_lik_trial, reward_key=reward_key)
-
-
-def make_fixed_sig_i_model(sig_i_fixed):
-    """Return a race-model view where sig_i is a single fixed scalar.
-
-    The returned model has 5 trial-varying parameters:
-    wr, wl, br, bl, z. The nuisance parameter sig_i is held constant across
-    learning but still contributes to the trial likelihood.
-    """
-    sig_i_fixed = float(sig_i_fixed)
-
-    def log_lik_trial_fixed(params, dat_trial):
-        full = jnp.concatenate([params, jnp.array([sig_i_fixed], dtype=params.dtype)])
-        return log_lik_trial(full, dat_trial)
-
-    return (
-        log_lik_trial_fixed,
-        N_DYNAMIC_PARAMS,
-        DYNAMIC_PARAM_NAMES.copy(),
-        default_hyper_fixed_sig_i,
-        default_E0_fixed_sig_i,
-    )
 
 
 # -----------------------------------------------------------------------

@@ -53,15 +53,16 @@ _SIG        = 1.0
 _INVALID_LOG_LIK = -1e12
 
 
-def log_lik_trial(params, dat_trial):
+def log_lik_trial(params, dat_trial, model_hyper=None):
     """Per-trial log-likelihood of the one-barrier DDM.
 
     Args:
-        params    : (3,) array [w, b, z]
-        dat_trial : dict with scalar fields
-                    - inputs['c'] : signed contrast (positive = rightward)
-                    - r           : response (1 = right, 0 = left)
-                    - T           : reaction time (non-decision time already removed)
+        params      : (3,) array [w, b, z]
+        dat_trial   : dict with scalar fields
+                      - inputs['c'] : signed contrast (positive = rightward)
+                      - r           : response (1 = right, 0 = left)
+                      - T           : reaction time (non-decision time already removed)
+        model_hyper : unused (DDM-approx has no model-level hyperparameters).
 
     Returns:
         scalar log-likelihood
@@ -114,6 +115,42 @@ def default_E0(N, n_params=N_PARAMS):
         np.zeros(N),                 # b
         np.ones(N),                  # z
     ])
+
+
+def sample_trial(params, dat_trial, rng, model_hyper=None):
+    """Sample one trial from the one-barrier inverse-Gaussian DDM.
+
+    Two inverse-Gaussian first-passage times are drawn — one toward the
+    right boundary (drift +v) and one toward the left boundary (drift −v).
+    The earlier one wins.  When a drift is non-positive that side is
+    treated as never winning (returns +inf).
+
+    Args:
+        params    : (3,) array [w, b, z]
+        dat_trial : dict with scalar field ``dat_trial['inputs']['c']``.
+        rng       : numpy.random.Generator
+
+    Returns:
+        dict with keys ``'r'`` (0/1) and ``'T'`` (RT in seconds).
+    """
+    w, b, z = (float(p) for p in params)
+    c = float(dat_trial['inputs']['c'])
+    v = w * c + b
+
+    t_r = _sample_inv_gauss_fpt(z,  v, _SIG ** 2, rng)
+    t_l = _sample_inv_gauss_fpt(z, -v, _SIG ** 2, rng)
+
+    if t_r < t_l:
+        return {'r': 1.0, 'T': float(t_r)}
+    return {'r': 0.0, 'T': float(t_l)}
+
+
+def _sample_inv_gauss_fpt(threshold, drift, variance, rng):
+    if not np.isfinite(drift) or drift <= 0.0 or threshold <= 0.0 or variance <= 0.0:
+        return np.inf
+    mean = threshold / drift
+    shape = threshold ** 2 / variance
+    return float(rng.wald(mean, shape))
 
 
 # ---------------------------------------------------------------------------

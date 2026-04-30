@@ -200,7 +200,7 @@ def _make_vmap_axes(x, N):
     return None
 
 
-def _compute_lr_hat_numpy(eMode, dat, learning_rule, K, N, dtype=None):
+def _compute_lr_hat_numpy(eMode, dat, learning_rule, K, N, dtype=None, model_hyper=None):
     """Compute raw learning-rule outputs at a numpy MAP estimate.
 
     Returns lr_hat as a numpy (K, N-1) array.  Used for the evidence
@@ -229,15 +229,20 @@ def _compute_lr_hat_numpy(eMode, dat, learning_rule, K, N, dtype=None):
 
     dat_lr = jax.tree_util.tree_map(_slice, dat_jax)
     N_lr = N - 1
-    in_axes_lr = (1, _make_vmap_axes(dat_lr, N_lr))
-    lr_out = jax.vmap(learning_rule, in_axes=in_axes_lr)(E_jax[:, :-1], dat_lr)  # (N-1, K)
+    if model_hyper is None:
+        model_hyper = {}
+    model_hyper_jax = {k: jnp.asarray(v, dtype=dtype) for k, v in model_hyper.items()}
+    in_axes_lr = (1, _make_vmap_axes(dat_lr, N_lr), None)
+    lr_out = jax.vmap(learning_rule, in_axes=in_axes_lr)(
+        E_jax[:, :-1], dat_lr, model_hyper_jax
+    )  # (N-1, K)
     return np.asarray(lr_out.T, dtype=np.float64)  # (K, N-1)
 
 
-def _compute_v_mean_jax(E, learning_rule, dat_jax, alpha_k, K, N):
+def _compute_v_mean_jax(E, learning_rule, dat_jax, alpha_k, K, N, model_hyper_jax):
     """Compute the learning-rule prior-mean shift v_mean (K, N-1).
 
-    v_mean[:, t] = alpha_k * learning_rule(E[:, t], dat_trial_t)
+    v_mean[:, t] = alpha_k * learning_rule(E[:, t], dat_trial_t, model_hyper)
     for t = 0, …, N-2.  This is the mean for transition t → t+1, i.e. it is
     subtracted from dE[:, t] = E[:, t+1] − E[:, t] in the log-prior.
     """
@@ -252,15 +257,17 @@ def _compute_v_mean_jax(E, learning_rule, dat_jax, alpha_k, K, N):
 
     dat_lr = jax.tree_util.tree_map(_slice, dat_jax)
     N_lr = N - 1
-    in_axes_lr = (1, _make_vmap_axes(dat_lr, N_lr))
-    lr_out = jax.vmap(learning_rule, in_axes=in_axes_lr)(E[:, :-1], dat_lr)  # (N-1, K)
+    in_axes_lr = (1, _make_vmap_axes(dat_lr, N_lr), None)
+    lr_out = jax.vmap(learning_rule, in_axes=in_axes_lr)(
+        E[:, :-1], dat_lr, model_hyper_jax
+    )  # (N-1, K)
     return (alpha_k[None, :] * lr_out).T   # (K, N-1)
 
 
 def getMAP_jax(dat, hyper, n_params, log_lik_fns,
                E0=None, method=None, showOpt=0, pbar=None, map_tol=1e-6,
                execution_plan=None, status_callback=None,
-               learning_rule=None):
+               learning_rule=None, model_hyper=None):
     """MAP estimation using JAX L-BFGS in prior-whitened space.
 
     The inner optimisation loop runs entirely in JAX (GPU-native) in a
@@ -318,6 +325,14 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
     dat_jax = jax.tree_util.tree_map(_cast, dat)
     log_likelihood_fn = log_lik_fns[0]
 
+    # ---- model-level hyperparameters (broadcast across trials) ----
+    if model_hyper is None:
+        model_hyper = {}
+    model_hyper_jax = jax.tree_util.tree_map(
+        lambda v: jnp.asarray(v, dtype=dtype) if isinstance(v, (int, float, np.floating, np.ndarray, jnp.ndarray)) else v,
+        model_hyper,
+    )
+
     # ---- learning rule setup ----
     has_lr = learning_rule is not None
     if has_lr:
@@ -342,11 +357,12 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
         """
         E_flat = _unwhiten(z_flat, K, N, L_diag, L_sub).astype(dtype)
         E      = jnp.reshape(E_flat, (K, N))
-        logli  = log_likelihood_fn(E, dat_jax)
+        logli  = log_likelihood_fn(E, dat_jax, model_hyper_jax)
 
         # Compute learning-rule prior mean shift
         if has_lr:
-            v_mean = _compute_v_mean_jax(E, learning_rule, dat_jax, alpha_k, K, N)
+            v_mean = _compute_v_mean_jax(E, learning_rule, dat_jax, alpha_k, K, N,
+                                         model_hyper_jax)
         else:
             v_mean = None
 
@@ -363,10 +379,11 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
         """Unpenalised neg-log-posterior (used for validity check and final evaluation)."""
         E_flat = _unwhiten(z_flat, K, N, L_diag, L_sub).astype(dtype)
         E      = jnp.reshape(E_flat, (K, N))
-        logli  = log_likelihood_fn(E, dat_jax)
+        logli  = log_likelihood_fn(E, dat_jax, model_hyper_jax)
 
         if has_lr:
-            v_mean = _compute_v_mean_jax(E, learning_rule, dat_jax, alpha_k, K, N)
+            v_mean = _compute_v_mean_jax(E, learning_rule, dat_jax, alpha_k, K, N,
+                                         model_hyper_jax)
         else:
             v_mean = None
 
@@ -463,7 +480,10 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
         _map_module._JAX_DTYPE = evidence_dtype
         _emit_status(status_callback, "Computing Hessian and Laplace evidence…", stage="evidence")
         with ctx:
-            pT, lT = getPosteriorTerms(eMode, dat, hyper, log_lik_fns, method=None)
+            pT, lT = getPosteriorTerms(
+                eMode, dat, hyper, log_lik_fns, method=None,
+                model_hyper=model_hyper,
+            )
     finally:
         _map_module._JAX_DTYPE = prev_dtype
 
@@ -479,7 +499,8 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
             days_arr = np.array([], dtype=int)
         invSigma = make_invSigma(hyper, days_arr, dat.get('missing_trials'), N, K)
 
-        lr_hat = _compute_lr_hat_numpy(eMode, dat, learning_rule, K, N, dtype=evidence_dtype)
+        lr_hat = _compute_lr_hat_numpy(eMode, dat, learning_rule, K, N,
+                                       dtype=evidence_dtype, model_hyper=model_hyper)
         v_mean_flat = build_v_mean_flat(lr_hat, np.asarray(hyper['alpha']), K, N)
         pT['logprior'] = correct_logprior_for_learning_rule(
             pT['logprior'], eMode, v_mean_flat, invSigma, K, N,
