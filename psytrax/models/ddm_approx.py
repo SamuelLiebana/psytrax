@@ -102,8 +102,9 @@ def _log_lik_valid(params, dat_trial):
 # ---------------------------------------------------------------------------
 
 def default_hyper(n_params=N_PARAMS, shared_sigma=False):
+    """Looser sigma so EB can escape the constant-trajectory local mode."""
     return {
-        'sigma':   float(2 ** -3) if shared_sigma else np.full(n_params, 2 ** -3),
+        'sigma':   float(2 ** -1) if shared_sigma else np.full(n_params, 2 ** -1),
         'sigInit': np.full(n_params, 2 ** 4),
         'sigDay':  None,
     }

@@ -1,9 +1,9 @@
 """Drift diffusion model (DDM) — Navarro & Fuss (2009) / Bogacz et al. (2006) likelihood.
 
-A Wiener process with drift v = w·c + b drifts between two absorbing barriers
-(upper at a, lower at 0) starting from z·a.  The per-trial log-likelihood uses
-the Navarro & Fuss (2009) hybrid series, which switches between two
-complementary series depending on the standardised time τ = t/a²:
+A Wiener process with drift v = w·c + b diffuses between two absorbing barriers
+(upper at a, lower at 0) starting from a/2 (unbiased start).  The per-trial
+log-likelihood uses the Navarro & Fuss (2009) hybrid series, which switches
+between two complementary series depending on the standardised time τ = t/a²:
 
   Large-τ series (Ratcliff 1978 / Bogacz et al. 2006, good for τ ≳ 0.18):
 
@@ -15,16 +15,22 @@ complementary series depending on the standardised time τ = t/a²:
 
 The full density is then recovered as:
 
-      f+(t|v,a,z) = (1/a²) · exp(v·z − v²t/2) · f_T(t/a² | z/a)
+      f+(t|v,a) = (1/a²) · exp(v·a/2 − v²t/2) · f_T(t/a² | 1/2)
 
-The lower barrier follows by negating v and reflecting z → a−z.
+The lower barrier follows by negating v and reflecting the start point.
 
-Parameters (K = 4)
+Parameters (K = 3)
 ------------------
 w   : contrast weight  (drift = w·c + b)
 b   : drift bias       (baseline rightward drift)
 a   : boundary separation (> 0)
-z   : relative starting point in (0, 1);  absolute start = z·a  (0.5 = unbiased)
+
+The starting point is fixed at a/2 (unbiased).  This eliminates the well-known
+b/z degeneracy in the DDM: a starting-point bias z and a drift bias b both
+shift response probability toward the upper boundary, so fitting both as free
+trial-varying parameters lets the inferred trajectories swap weight between
+them and recover sign-flipped solutions.  Bias is captured exclusively by `b`
+in this implementation — the standard convention in many DDM applications.
 
 Note: within-trial noise σ is fixed at 1 (standard DDM convention; scale is absorbed
 into a and w).  Subtract non-decision time from RTs before calling psytrax.fit().
@@ -44,8 +50,11 @@ from jax import jit, lax
 # Model specification
 # ---------------------------------------------------------------------------
 
-N_PARAMS    = 4
-PARAM_NAMES = ['w', 'b', 'a', 'z']
+N_PARAMS    = 3
+PARAM_NAMES = ['w', 'b', 'a']
+
+# Relative starting point fixed at the midpoint between barriers (unbiased).
+_Z_REL = 0.5
 
 DATA_SPEC = {
     'inputs': {
@@ -77,7 +86,7 @@ def log_lik_trial(params, dat_trial, model_hyper=None):
     """Per-trial log-likelihood of the DDM.
 
     Args:
-        params      : (4,) array [w, b, a, z]
+        params      : (3,) array [w, b, a]
         dat_trial   : dict with scalar fields
                       - inputs['c'] : signed contrast (positive = rightward)
                       - r           : response (1 = upper/right, 0 = lower/left)
@@ -87,13 +96,11 @@ def log_lik_trial(params, dat_trial, model_hyper=None):
     Returns:
         scalar log-likelihood
     """
-    w, b, a, z_rel = params
+    w, b, a = params
     T = dat_trial['T']
     valid = (
-        jnp.isfinite(w) & jnp.isfinite(b) &
-        jnp.isfinite(a) & jnp.isfinite(z_rel) &
-        (a > 0.0) & (z_rel > 0.0) & (z_rel < 1.0) &
-        (T > 0.0)
+        jnp.isfinite(w) & jnp.isfinite(b) & jnp.isfinite(a) &
+        (a > 0.0) & (T > 0.0)
     )
     return lax.cond(
         valid,
@@ -104,15 +111,17 @@ def log_lik_trial(params, dat_trial, model_hyper=None):
 
 
 def _log_lik_valid(params, dat_trial):
-    w, b, a, z_rel = params
+    w, b, a = params
     c = dat_trial['inputs']['c']
     r = dat_trial['r']
     T = dat_trial['T']
 
     v = w * c + b           # signed drift toward upper boundary
-    z = z_rel * a           # absolute starting point
+    z = _Z_REL * a          # absolute starting point at a/2
 
-    # Lower-boundary response (r=0): negate drift and reflect starting point
+    # Lower-boundary response (r=0): negate drift and reflect starting point.
+    # With z = a/2 the reflection (a − z) is also a/2, so z_eff = a/2 always —
+    # the only effective change between r=0 and r=1 is the sign of the drift.
     v_eff = jnp.where(r == 1.0, v, -v)
     z_eff = jnp.where(r == 1.0, z, a - z)
 
@@ -151,12 +160,18 @@ def _log_fpt_upper(v, a, z, t):
 # ---------------------------------------------------------------------------
 
 def default_hyper(n_params=N_PARAMS, shared_sigma=False):
-    """Reasonable starting hyperparameters for the DDM."""
+    """Reasonable starting hyperparameters for the DDM.
+
+    Initial sigma is scaled to give EB room to escape the constant-trajectory
+    local mode of the marginal-likelihood surface.  EB optimises sigma anyway,
+    so the starting value mostly determines which local mode the outer loop
+    settles into.
+    """
     if shared_sigma:
-        sigma = float(2 ** -3)
+        sigma = float(2 ** -1)
     else:
-        # z lives in (0,1) so give it less process noise than w / b / a
-        sigma = np.array([2 ** -3, 2 ** -3, 2 ** -4, 2 ** -6])
+        # `a` is constrained > 0 so it gets a tighter starting prior than w/b.
+        sigma = np.array([2 ** -1, 2 ** -1, 2 ** -2])
     return {
         'sigma':   sigma,
         'sigInit': np.full(n_params, 2 ** 4),
@@ -166,20 +181,20 @@ def default_hyper(n_params=N_PARAMS, shared_sigma=False):
 
 def default_E0(N, n_params=N_PARAMS):
     """Heuristic initial parameter matrix (K, N) for the DDM."""
-    return np.tile(np.array([1.0, 0.0, 1.0, 0.5])[:, None], N)
+    return np.tile(np.array([1.0, 0.0, 1.0])[:, None], N)
 
 
 def sample_trial(params, dat_trial, rng, model_hyper=None, dt=1e-3, t_max=10.0):
     """Sample one trial from the two-barrier DDM via Euler-Maruyama.
 
     A Wiener process with drift ``v = w·c + b`` and unit variance per unit
-    time is integrated forward from absolute starting point ``z·a`` until it
-    hits 0 (left/lower) or ``a`` (right/upper).  This is the most general
+    time is integrated forward from the unbiased start point ``a/2`` until
+    it hits 0 (left/lower) or ``a`` (right/upper).  This is the most general
     sampler available for the exact DDM — closed-form sampling does not
     have a simple form.
 
     Args:
-        params    : (4,) array [w, b, a, z]
+        params    : (3,) array [w, b, a]
         dat_trial : dict with scalar field ``dat_trial['inputs']['c']``.
         rng       : numpy.random.Generator
         dt        : integration step size in seconds (default 1 ms).
@@ -190,15 +205,15 @@ def sample_trial(params, dat_trial, rng, model_hyper=None, dt=1e-3, t_max=10.0):
         If neither boundary is hit before ``t_max`` the trial is forced to
         the closer boundary at time ``t_max``.
     """
-    w, b, a, z_rel = (float(p) for p in params)
+    w, b, a = (float(p) for p in params)
     c = float(dat_trial['inputs']['c'])
 
-    if not (a > 0.0 and 0.0 < z_rel < 1.0):
+    if not (a > 0.0):
         # Slider-driven trajectories may briefly leave the valid region.
-        return {'r': 1.0 if rng.uniform() < z_rel else 0.0, 'T': float(t_max)}
+        return {'r': float(rng.integers(0, 2)), 'T': float(t_max)}
 
     v = w * c + b
-    x = z_rel * a
+    x = _Z_REL * a              # unbiased start at a/2
     sqrt_dt = np.sqrt(dt)
     n_steps = int(np.ceil(t_max / dt))
     noise = rng.standard_normal(n_steps)

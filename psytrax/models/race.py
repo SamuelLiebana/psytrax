@@ -133,11 +133,17 @@ def _log_lik_trial_valid(params, dat_trial, sig_i):
 # -----------------------------------------------------------------------
 
 def default_hyper(n_params=N_PARAMS, shared_sigma=False):
-    """Reasonable starting hyperparameters for the race model."""
+    """Reasonable starting hyperparameters for the race model.
+
+    Initial sigma is set loose enough that EB can escape the
+    constant-trajectory local mode of the marginal-likelihood surface.
+    EB optimises sigma anyway, so the starting value mostly determines
+    which local mode the outer loop settles into.
+    """
     if shared_sigma:
-        sigma = float(2 ** -3)
+        sigma = float(2 ** -1)
     else:
-        sigma = np.array([2 ** -3] * n_params)
+        sigma = np.array([2 ** -1] * n_params)
     return {
         'sigma': sigma,
         'sigInit': np.full(n_params, 2 ** 4),

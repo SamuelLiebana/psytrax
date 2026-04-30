@@ -25,7 +25,7 @@ else:
 
 _RACE_DYNAMIC_PARAMS = {'wr', 'wl', 'br', 'bl', 'z'}
 _RACE_FULL_PARAMS = _RACE_DYNAMIC_PARAMS | {'sig_i'}
-_DDM_EXACT_PARAMS = {'w', 'b', 'a', 'z'}
+_DDM_EXACT_PARAMS = {'w', 'b', 'a'}
 _DDM_APPROX_PARAMS = {'w', 'b', 'z'}
 _LOGISTIC_PARAMS = {'w', 'b'}
 _RT_CURVE_FAMILIES = {'race', 'ddm_exact', 'ddm_approx'}
@@ -218,14 +218,17 @@ def _ddm_exact_hit_prob(drift, boundary, start):
 
 
 def _ddm_exact_curves(params_vec, param_names, c_grid):
-    """Compute psychometric and chronometric predictions for one exact-DDM state."""
+    """Psychometric + chronometric predictions for one exact-DDM state.
+
+    The starting point is fixed at a/2 (unbiased) — see psytrax.models.ddm
+    for the rationale (b/z degeneracy is removed by hardcoding z = 0.5).
+    """
     params_vec = np.asarray(params_vec, dtype=float)
     idx = {name: i for i, name in enumerate(param_names)}
     w = float(params_vec[idx['w']])
     b = float(params_vec[idx['b']])
     a = max(float(params_vec[idx['a']]), 1e-6)
-    z_rel = float(np.clip(params_vec[idx['z']], 1e-6, 1.0 - 1e-6))
-    z_abs = a * z_rel
+    z_abs = 0.5 * a   # unbiased start, matches the model
 
     drift = w * np.asarray(c_grid, dtype=float) + b
     p_right = _ddm_exact_hit_prob(drift, a, z_abs)
@@ -746,8 +749,9 @@ Bayes (you'll see the recovered value in the result).
         st.markdown("""
 **DDM (exact)** — Wiener process between two absorbing barriers, using the
 Navarro & Fuss (2009) / Bogacz et al. (2006) hybrid series solution.
-4 parameters: `w` (contrast weight), `b` (bias), `a` (boundary separation),
-`z` (relative starting point, 0–1).
+3 parameters: `w` (contrast weight), `b` (drift bias), `a` (boundary
+separation). The starting point is fixed at `a/2` (unbiased); bias is
+captured exclusively by `b`, which removes the well-known b/z degeneracy.
 """)
         _race_fixed_sig_i = False
     elif model_choice == 'DDM — approx (inverse-Gaussian)':
@@ -2762,10 +2766,13 @@ model-level scalar estimated by Empirical Bayes alongside the random-walk noise
                 'DATA_SPEC': _m.DATA_SPEC, 'family': 'ddm_exact',
                 'desc': """
 **DDM (exact)** — Wiener process between two absorbing barriers, with a fully
-analytic likelihood (Navarro & Fuss 2009). Four parameters: `w` (contrast
-weight), `b` (drift bias), `a` (boundary separation, > 0), `z` (relative starting
-point in (0, 1)). Sampling integrates a Wiener process with `dt = 1 ms`, so the
-simulator runs slower than the inverse-Gaussian models. Inputs: `c`.
+analytic likelihood (Navarro & Fuss 2009). Three parameters: `w` (contrast
+weight), `b` (drift bias), `a` (boundary separation, > 0). The starting point
+is fixed at `a/2` (unbiased) — see `psytrax.models.ddm` for the rationale
+(eliminates the b/z redundancy where both shift response probability the same
+way and EB swaps weight between them). Sampling integrates a Wiener process
+with `dt = 1 ms`, so the simulator runs slower than the inverse-Gaussian
+models. Inputs: `c`.
 """,
             }
         if name == 'DDM — approx (inverse-Gaussian)':
@@ -2951,7 +2958,6 @@ contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
         'ddm_exact': {
             'w': (-3.0, 5.0), 'b': (-2.0, 2.0),
             'a': (0.20, 4.0),         # boundary separation must be > 0
-            'z': (0.05, 0.95),        # relative starting point in (0, 1)
         },
         'ddm_approx': {
             'w': (-3.0, 5.0), 'b': (-2.0, 2.0),
@@ -3098,55 +3104,6 @@ contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
     # ------------------------------------------------------------------
     st.subheader(f'{"5" if _default_mh else "4"}. Run recovery')
 
-    with st.expander('What can I expect from recovery on this model?', expanded=False):
-        if _rec_bundle['family'] == 'race':
-            st.markdown("""
-**Race model.** Drift weights (`wr`, `wl`) and the threshold (`z`) recover
-well from low-amplitude trajectories. Baselines (`br`, `bl`) and `sig_i` are
-poorly identified at small magnitudes — try larger amplitudes or more trials
-if those look flat.
-""")
-        elif _rec_bundle['family'] == 'ddm_exact':
-            st.markdown(r"""
-**DDM (exact) — known identifiability caveats.**
-
-- Contrast weight `w` and boundary separation `a` recover reliably.
-
-- Drift bias `b` and starting-point bias `z` both shift response
-  probability toward the upper boundary, so they are **partially confounded**.
-  In practice the recovered `z` trajectory is often a **mirror image around
-  0.5** of the truth — recovered $z \approx 1 - z_{\text{true}}$ — with `b`
-  quietly drifting to compensate. The two interpretations explain the same
-  data nearly equally well in choice and RT, and EB picks one of the modes
-  based on its initialisation. This is a property of the DDM model, not a
-  bug in the recovery code. If you specifically want to test `z`, hold `b`
-  flat (amplitude and slope = 0) and inspect the magnitude of the recovered
-  `z` variation rather than its sign.
-
-- The recovery page also initialises σ at **4× the model default** so EB
-  doesn't get stuck at a *constant-trajectory* local mode. With tight σ
-  initialisation, EB collapses every parameter to its trial-averaged value
-  (corr ≈ 0 for the time-varying ones); the looser start lets it escape
-  into the genuine time-varying mode, which has higher log-evidence anyway.
-""")
-        elif _rec_bundle['family'] == 'ddm_approx':
-            st.markdown("""
-**DDM (approx).** Three parameters (no boundary `a`), so identifiability is
-less fraught than the exact DDM. Drift weight `w` and threshold `z` recover
-well; bias `b` is harder unless you give it large variation.
-""")
-        elif _rec_bundle['family'] == 'logistic':
-            st.markdown("""
-**Logistic regression.** Both parameters recover reliably as long as you
-include strong, well-separated contrast levels in the trial inputs.
-""")
-        else:
-            st.markdown(
-                'Recovery quality depends on how informative the data is about '
-                'the trajectory you injected. If recovery looks flat, try larger '
-                'amplitudes/slopes, more trials, or a wider range of input values.'
-            )
-
     # Session-state setup
     if 'rec_running' not in st.session_state:
         st.session_state['rec_running'] = False
@@ -3228,25 +3185,10 @@ include strong, well-separated contrast levels in the trial inputs.
                     verbose=True,
                     status_callback=_rec_status_cb,
                 )
-                # Looser initial sigma for recovery (scale model default ×4).
-                # The marginal-likelihood surface has a "constant trajectory"
-                # local mode that EB easily gets stuck in if it starts at a
-                # tight prior — and that mode collapses every parameter to
-                # its average, hiding the trajectory the user designed. A
-                # looser starting point lets EB escape into the genuine
-                # time-varying mode (which has higher log evidence anyway —
-                # see the page caption for the full story).
-                _SIGMA_RECOVERY_SCALE = 4.0
                 _dh = _bundle_local.get('default_hyper')
                 if callable(_dh):
                     try:
-                        _hyper_init = _dh()
-                        _sigma = _hyper_init.get('sigma')
-                        if _sigma is not None:
-                            _hyper_init['sigma'] = (
-                                np.asarray(_sigma, dtype=float) * _SIGMA_RECOVERY_SCALE
-                            )
-                        fit_kwargs['hyper'] = _hyper_init
+                        fit_kwargs['hyper'] = _dh()
                     except Exception:
                         pass
                 _de = _bundle_local.get('default_E0')

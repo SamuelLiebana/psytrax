@@ -68,8 +68,9 @@ def make_model(input_keys=None, hidden=_H):
         return dat_trial['r'] * log_p_right + (1 - dat_trial['r']) * log_p_left
 
     def default_hyper(n_params=K, shared_sigma=False):
+        """Looser sigma so EB can escape the constant-trajectory local mode."""
         return {
-            'sigma':   float(2 ** -3) if shared_sigma else np.full(n_params, 2 ** -3),
+            'sigma':   float(2 ** -1) if shared_sigma else np.full(n_params, 2 ** -1),
             'sigInit': np.full(n_params, 2 **  2),
             'sigDay':  None,
         }
