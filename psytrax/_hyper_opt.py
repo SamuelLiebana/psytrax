@@ -258,13 +258,34 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
     if hess_calc in ['hyper', 'All']:
         optVals = _pack_optvals(best_hyper, optList, K,
                                 best_model_hyper, model_hyper_optList)
-        num_hess, _ = compHess(
-            fun=_hyperOpt_lossfun,
-            x0=np.array(optVals),
-            dx=0.01,
-            kwargs={'keywords': opt_keywords},
-        )
-        hess_info['hyp_std'] = np.sqrt(np.diag(np.linalg.inv(num_hess)))
+        try:
+            num_hess, _ = compHess(
+                fun=_hyperOpt_lossfun,
+                x0=np.array(optVals),
+                dx=0.01,
+                kwargs={'keywords': opt_keywords},
+            )
+            inv_hess = np.linalg.inv(num_hess)
+            diag = np.diag(inv_hess)
+            # Negative or non-finite diag entries indicate a degenerate Hessian
+            # (e.g. a hyperparameter sat at its bound).  Mask those rather than
+            # producing nonsense sqrt-of-negative numbers.
+            with np.errstate(invalid='ignore'):
+                hyp_std = np.where(np.isfinite(diag) & (diag > 0),
+                                   np.sqrt(np.abs(diag)),
+                                   np.nan)
+            hess_info['hyp_std'] = hyp_std
+            hess_info['hyp_optList'] = list(optList)
+            hess_info['hyp_model_hyper_optList'] = list(model_hyper_optList)
+        except (np.linalg.LinAlgError, RuntimeError, ValueError) as exc:
+            # Singular numerical Hessian — happens when a hyperparameter sits
+            # at a bound or two hypers are highly confounded.  Skip the CIs
+            # rather than crash the whole fit.
+            if showOpt:
+                print(f'WARNING: hyperparameter Hessian inversion failed ({exc}); '
+                      'skipping hyperparameter credible intervals.')
+            hess_info['hyp_std'] = None
+            hess_info['hyp_std_error'] = str(exc)
 
     return best_hyper, best_logEvd, best_eMode, hess_info, best_model_hyper
 

@@ -27,8 +27,21 @@ _RACE_DYNAMIC_PARAMS = {'wr', 'wl', 'br', 'bl', 'z'}
 _RACE_FULL_PARAMS = _RACE_DYNAMIC_PARAMS | {'sig_i'}
 _DDM_EXACT_PARAMS = {'w', 'b', 'a'}
 _DDM_APPROX_PARAMS = {'w', 'b', 'z'}
-_LOGISTIC_PARAMS = {'w', 'b'}
 _RT_CURVE_FAMILIES = {'race', 'ddm_exact', 'ddm_approx'}
+
+
+def _is_logistic(param_names):
+    """Detect a logistic model from its parameter names.
+
+    Single-input logistic has names ``['w', 'b']``; multi-input variants
+    use ``['w_<key1>', 'w_<key2>', ..., 'b']``.
+    """
+    if not param_names or param_names[-1] != 'b':
+        return False
+    weights = param_names[:-1]
+    if not weights:
+        return False
+    return all(w == 'w' or w.startswith('w_') for w in weights)
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +304,7 @@ def _model_family_info(param_names, result=None):
         return 'ddm_exact', fixed_params
     if param_set == _DDM_APPROX_PARAMS:
         return 'ddm_approx', fixed_params
-    if param_set == _LOGISTIC_PARAMS:
+    if _is_logistic(param_names):
         return 'logistic', fixed_params
     if _is_mlp(param_names):
         return 'mlp', fixed_params
@@ -314,8 +327,17 @@ def _curve_predictions(params_window, param_names, c_grid, model_family, fixed_p
         elif model_family == 'ddm_approx':
             psych, rt = _ddm_approx_curves(params_vec, param_names, c_grid)
         elif model_family == 'logistic':
-            iw = param_names.index('w')
+            # For multi-input logistic, the psychometric x-axis is the
+            # contrast input. Identify its weight (or fall back to the
+            # first weight if no `c` channel is present); other inputs
+            # are treated as 0 for the analytic curve.
             ib = param_names.index('b')
+            if 'w' in param_names:
+                iw = param_names.index('w')
+            elif 'w_c' in param_names:
+                iw = param_names.index('w_c')
+            else:
+                iw = 0  # first weight column
             psych = 1.0 / (1.0 + np.exp(-(params_vec[iw] * c_grid + params_vec[ib])))
         elif model_family == 'mlp':
             psych = _mlp_psychometric(params_vec, param_names, c_grid)
@@ -717,7 +739,7 @@ columns to the required fields.
     model_choice = st.selectbox(
         'Built-in model',
         ['Race model (inverse-Gaussian)', 'DDM — exact (Navarro & Fuss 2009)',
-         'DDM — approx (inverse-Gaussian)', 'Logistic regression'],
+         'Logistic regression'],
         key='fit_model',
     )
 
@@ -754,38 +776,23 @@ separation). The starting point is fixed at `a/2` (unbiased); bias is
 captured exclusively by `b`, which removes the well-known b/z degeneracy.
 """)
         _race_fixed_sig_i = False
-    elif model_choice == 'DDM — approx (inverse-Gaussian)':
-        from psytrax.models.ddm_approx import (
-            log_lik_trial as _llt,
-            N_PARAMS as _K,
-            PARAM_NAMES as _pnames,
-            default_hyper as _dhyper,
-            DATA_SPEC as _data_spec,
-        )
-        st.markdown("""
-**DDM (approx)** — single-accumulator inverse-Gaussian approximation (one absorbing
-barrier). Faster than the exact DDM; accurate when error rates are low.
-3 parameters: `w` (contrast weight), `b` (bias), `z` (threshold).
-""")
-        _race_fixed_sig_i = False
     else:
-        import jax, jax.numpy as jnp
-
-        def _llt(params, dat_trial):
-            w, b = params
-            p = jax.nn.sigmoid(w * dat_trial['inputs']['c'] + b)
-            p = jnp.clip(p, 1e-7, 1 - 1e-7)
-            return dat_trial['r'] * jnp.log(p) + (1 - dat_trial['r']) * jnp.log(1 - p)
-
-        _K = 2
-        _pnames = ['w', 'b']
-
-        def _dhyper():
-            return {'sigma': np.full(2, 2**-3), 'sigInit': np.full(2, 2**4), 'sigDay': None}
-
-        from psytrax.models.logistic import DATA_SPEC as _data_spec
-        st.markdown("""
-**Logistic regression** — 2 parameters per trial: `w` (weight) and `b` (bias).
+        from psytrax.models.logistic import make_model as _logistic_make_model
+        _logistic_keys_str = st.text_input(
+            'Logistic input regressors (comma-separated)',
+            value='c',
+            key='fit_logistic_inputs',
+            help='Each name must correspond to a column under `data["inputs"]` '
+                 '(or a CSV column you map below). Each input gets its own '
+                 'trial-varying weight, fit jointly under the random-walk prior.',
+        )
+        _logistic_keys = [k.strip() for k in _logistic_keys_str.split(',') if k.strip()] or ['c']
+        (_llt, _, _K, _pnames, _dhyper, _, _, _data_spec) = _logistic_make_model(_logistic_keys)
+        _weight_summary = ', '.join(f'`{k}`' for k in _logistic_keys)
+        st.markdown(f"""
+**Logistic regression** — `P(right) = σ(w · x + b)`. {_K} parameters per trial:
+weights for {_weight_summary}, plus a bias `b`. Each weight evolves under the
+Gaussian random-walk prior.
 """)
         _race_fixed_sig_i = False
 
@@ -1079,8 +1086,16 @@ def learning_rule(params, dat_trial):
         )
         subject_name = st.text_input('Subject name (used for filename)', value='subject',
                                      key='fit_subject')
-        hess_calc = st.selectbox('Credible intervals', ['weights', 'None', 'hyper', 'All'],
-                                 index=0, key='fit_hess')
+        hess_calc = st.selectbox(
+            'Credible intervals',
+            ['All', 'weights', 'hyper', 'None'],
+            index=0, key='fit_hess',
+            help='`All` computes credible intervals for both the trial-varying '
+                 'parameters and the optimised hyperparameters.  The hyper part '
+                 'requires a small numerical Hessian (≈2n² extra likelihood '
+                 'evaluations, where n is the number of hyperparameters) — '
+                 'typically tens of seconds for a race fit.',
+        )
         hess_calc = None if hess_calc == 'None' else hess_calc
         precision = 'float64'
 
@@ -1794,7 +1809,7 @@ elif page == 'IBL Explorer':
     _ibl_model = st.selectbox(
         'Built-in model',
         ['Race model (inverse-Gaussian)', 'DDM — exact (Navarro & Fuss 2009)',
-         'DDM — approx (inverse-Gaussian)', 'Logistic regression'],
+         'Logistic regression'],
         key='ibl_model',
     )
 
@@ -1814,25 +1829,20 @@ elif page == 'IBL Explorer':
             DATA_SPEC as _ibl_data_spec,
         )
         _ibl_race_fixed = False
-    elif _ibl_model == 'DDM — approx (inverse-Gaussian)':
-        from psytrax.models.ddm_approx import (
-            log_lik_trial as _ibl_llt, N_PARAMS as _ibl_K,
-            PARAM_NAMES as _ibl_pnames, default_hyper as _ibl_dhyper,
-            DATA_SPEC as _ibl_data_spec,
-        )
-        _ibl_race_fixed = False
     else:
-        import jax, jax.numpy as jnp
-        def _ibl_llt(params, dat_trial):
-            w, b = params
-            p = jax.nn.sigmoid(w * dat_trial['inputs']['c'] + b)
-            p = jnp.clip(p, 1e-7, 1 - 1e-7)
-            return dat_trial['r'] * jnp.log(p) + (1 - dat_trial['r']) * jnp.log(1 - p)
-        _ibl_K = 2
-        _ibl_pnames = ['w', 'b']
-        def _ibl_dhyper():
-            return {'sigma': np.full(2, 2**-3), 'sigInit': np.full(2, 2**4), 'sigDay': None}
-        from psytrax.models.logistic import DATA_SPEC as _ibl_data_spec
+        from psytrax.models.logistic import make_model as _ibl_logistic_make
+        _ibl_keys_str = st.text_input(
+            'Logistic input regressors (comma-separated)',
+            value='c',
+            key='ibl_logistic_inputs',
+            help='Each name must be present under `data["inputs"]`. IBL data '
+                 'includes `c` (signed contrast); add e.g. `reward, p_left` to '
+                 'fit additional regressors with their own learnt weights.',
+        )
+        _ibl_keys = [k.strip() for k in _ibl_keys_str.split(',') if k.strip()] or ['c']
+        (_ibl_llt, _, _ibl_K, _ibl_pnames, _ibl_dhyper, _, _, _ibl_data_spec) = (
+            _ibl_logistic_make(_ibl_keys)
+        )
         _ibl_race_fixed = False
 
     # --- Learning rule ---
@@ -1887,8 +1897,13 @@ elif page == 'IBL Explorer':
             'MAP tolerance', options=[1e-3, 1e-4, 1e-5, 1e-6], value=1e-4,
             format_func=lambda x: f'{x:.0e}', key='ibl_map_tol')
         _ibl_hess = st.selectbox(
-            'Credible intervals', ['weights', 'None', 'hyper', 'All'],
-            index=0, key='ibl_hess')
+            'Credible intervals',
+            ['All', 'weights', 'hyper', 'None'],
+            index=0, key='ibl_hess',
+            help='`All` computes credible intervals for both the trial-varying '
+                 'parameters and the optimised hyperparameters; the hyper part '
+                 'requires a small numerical Hessian.',
+        )
         _ibl_hess = None if _ibl_hess == 'None' else _ibl_hess
         _ibl_precision = 'float64'
 
@@ -2441,6 +2456,60 @@ elif page == 'Visualise Results':
     if hyper_rows:
         st.dataframe(pd.DataFrame(hyper_rows).set_index('hyperparameter'), use_container_width=True)
 
+    # --- Hyperparameter credible intervals (Laplace, log₂ scale) ---
+    _hyp_std = (result.get('hess_info') or {}).get('hyp_std')
+    if _hyp_std is not None:
+        # The hyp_std vector is laid out the same way as _pack_optvals: hyper
+        # entries first (each contributing 1 if scalar or K if vector), then
+        # one entry per optimised model_hyper key.
+        _hyp_optList = (result.get('hess_info') or {}).get('hyp_optList') or []
+        _hyp_mh_optList = (result.get('hess_info') or {}).get('hyp_model_hyper_optList') or []
+        K = len(param_names)
+        _ci_rows = []
+        _idx = 0
+        _hyp_arr = np.asarray(_hyp_std)
+        for key in _hyp_optList:
+            val = hyper.get(key)
+            if val is None:
+                continue
+            arr = np.atleast_1d(val)
+            row = {'hyperparameter': key}
+            if len(arr) == 1:
+                std = float(_hyp_arr[_idx]) if _idx < len(_hyp_arr) else float('nan')
+                row['shared (±1σ)'] = '—' if not np.isfinite(std) else f'±{std:.3f}'
+                _idx += 1
+            else:
+                for i, name in enumerate(param_names):
+                    if i >= len(arr):
+                        break
+                    std = float(_hyp_arr[_idx]) if _idx < len(_hyp_arr) else float('nan')
+                    row[name] = '—' if not np.isfinite(std) else f'±{std:.3f}'
+                    _idx += 1
+            _ci_rows.append(row)
+        for key in _hyp_mh_optList:
+            std = float(_hyp_arr[_idx]) if _idx < len(_hyp_arr) else float('nan')
+            _ci_rows.append({
+                'hyperparameter': f'model_hyper[{key}]',
+                'shared (±1σ)': '—' if not np.isfinite(std) else f'±{std:.3f}',
+            })
+            _idx += 1
+        if _ci_rows:
+            st.caption(
+                'Credible intervals for the optimised hyperparameters '
+                '(±1 SD, log₂ scale, from the Laplace approximation). '
+                'A value of `—` means the numerical Hessian was degenerate '
+                'in that direction (typically because the hyperparameter '
+                'sat at a bound or was confounded with another).'
+            )
+            st.dataframe(pd.DataFrame(_ci_rows).set_index('hyperparameter'),
+                         use_container_width=True)
+    elif (result.get('hess_info') or {}).get('hyp_std_error'):
+        st.caption(
+            f'Hyperparameter credible intervals could not be computed: '
+            f'`{result["hess_info"]["hyp_std_error"]}`. The fit itself is fine — '
+            'this just means the numerical Hessian was singular at the optimum.'
+        )
+
     # --- Model-level hyperparameters (linear scale, one scalar per entry) ---
     _model_hyper = result.get('model_hyper') or {}
     if _model_hyper:
@@ -2731,13 +2800,12 @@ elif page == 'Model Recovery':
         'Model',
         ['Race model (inverse-Gaussian)',
          'DDM — exact (Navarro & Fuss 2009)',
-         'DDM — approx (inverse-Gaussian)',
          'Logistic regression',
          'Upload custom (.py)'],
         key='rec_model_choice',
     )
 
-    def _load_builtin_model(name):
+    def _load_builtin_model(name, **kwargs):
         if name == 'Race model (inverse-Gaussian)':
             from psytrax.models import race as _m
             return {
@@ -2767,42 +2835,46 @@ model-level scalar estimated by Empirical Bayes alongside the random-walk noise
                 'desc': """
 **DDM (exact)** — Wiener process between two absorbing barriers, with a fully
 analytic likelihood (Navarro & Fuss 2009). Three parameters: `w` (contrast
-weight), `b` (drift bias), `a` (boundary separation, > 0). The starting point
-is fixed at `a/2` (unbiased) — see `psytrax.models.ddm` for the rationale
-(eliminates the b/z redundancy where both shift response probability the same
-way and EB swaps weight between them). Sampling integrates a Wiener process
-with `dt = 1 ms`, so the simulator runs slower than the inverse-Gaussian
-models. Inputs: `c`.
-""",
-            }
-        if name == 'DDM — approx (inverse-Gaussian)':
-            from psytrax.models import ddm_approx as _m
-            return {
-                'log_lik_trial': _m.log_lik_trial, 'sample_trial': _m.sample_trial,
-                'N_PARAMS': _m.N_PARAMS, 'PARAM_NAMES': list(_m.PARAM_NAMES),
-                'default_hyper': _m.default_hyper, 'default_E0': _m.default_E0,
-                'default_model_hyper': lambda: {},
-                'DATA_SPEC': _m.DATA_SPEC, 'family': 'ddm_approx',
-                'desc': """
-**DDM (approx)** — single-accumulator inverse-Gaussian approximation with one
-absorbing barrier. Three parameters: `w`, `b`, `z`. Faster than the exact DDM
-and accurate when error rates are low. Inputs: `c`.
+weight), `b` (drift bias), `a` (boundary separation, > 0). Sampling integrates
+a Wiener process with `dt = 1 ms`, so the simulator runs slower than the
+inverse-Gaussian models. Inputs: `c`. Outputs: choice + RT.
 """,
             }
         if name == 'Logistic regression':
-            from psytrax.models import logistic as _m
+            from psytrax.models.logistic import make_model as _logistic_make
+            input_keys = list(kwargs.get('logistic_keys') or ['c'])
+            (llt, samp, K, pnames, dh, dE0, _dlr, dspec) = _logistic_make(input_keys)
+            weight_summary = ', '.join(f'`{k}`' for k in input_keys)
             return {
-                'log_lik_trial': _m.log_lik_trial, 'sample_trial': _m.sample_trial,
-                'N_PARAMS': _m.N_PARAMS, 'PARAM_NAMES': list(_m.PARAM_NAMES),
-                'default_hyper': _m.default_hyper, 'default_E0': _m.default_E0,
+                'log_lik_trial': llt, 'sample_trial': samp,
+                'N_PARAMS': K, 'PARAM_NAMES': list(pnames),
+                'default_hyper': dh, 'default_E0': dE0,
                 'default_model_hyper': lambda: {},
-                'DATA_SPEC': _m.DATA_SPEC, 'family': 'logistic',
-                'desc': """
-**Logistic regression** — `P(right) = σ(w · c + b)`. Two trial-varying parameters:
-contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
+                'DATA_SPEC': dspec, 'family': 'logistic',
+                'desc': f"""
+**Logistic regression** — `P(right) = σ(w · x + b)`. {K} trial-varying parameters:
+weights for {weight_summary}, plus a bias `b`. No reaction times — only choice
+is modelled.
 """,
             }
         return None
+
+    # Logistic gets a comma-separated list of input regressors so the user
+    # can fit additional features beyond the default contrast `c`.
+    _logistic_keys_for_recovery = ['c']
+    if _rec_model_choice == 'Logistic regression':
+        _rec_logistic_keys_str = st.text_input(
+            'Input regressors (comma-separated)',
+            value='c',
+            key='rec_logistic_inputs',
+            help='Each name becomes a key under `data["inputs"][k]` and gets '
+                 'its own trial-varying weight. The recovery page will ask '
+                 'for a value pool for each one in the trial setup section.',
+        )
+        _logistic_keys_for_recovery = (
+            [k.strip() for k in _rec_logistic_keys_str.split(',') if k.strip()]
+            or ['c']
+        )
 
     _rec_bundle = None
     if _rec_model_choice == 'Upload custom (.py)':
@@ -2856,7 +2928,10 @@ contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
         else:
             st.info('Upload a Python file to continue.')
     else:
-        _rec_bundle = _load_builtin_model(_rec_model_choice)
+        _rec_bundle = _load_builtin_model(
+            _rec_model_choice,
+            logistic_keys=_logistic_keys_for_recovery,
+        )
 
     if _rec_bundle is None:
         st.stop()
@@ -2959,10 +3034,6 @@ contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
             'w': (-3.0, 5.0), 'b': (-2.0, 2.0),
             'a': (0.20, 4.0),         # boundary separation must be > 0
         },
-        'ddm_approx': {
-            'w': (-3.0, 5.0), 'b': (-2.0, 2.0),
-            'z': (0.10, 5.0),         # threshold must be > 0
-        },
         'logistic': {
             'w': (-5.0, 10.0), 'b': (-3.0, 3.0),
         },
@@ -2970,7 +3041,14 @@ contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
 
     def _bounds_for(name):
         """(lo, hi) for the named parameter, or generous defaults for custom models."""
-        return _PARAM_BOUNDS.get(_rec_bundle['family'], {}).get(name, (-5.0, 5.0))
+        family_bounds = _PARAM_BOUNDS.get(_rec_bundle['family'], {})
+        if name in family_bounds:
+            return family_bounds[name]
+        # Generic logistic-style weight: any param named 'w' or 'w_<feature>'
+        # uses the same bounds as the canonical weight in this family.
+        if _rec_bundle['family'] == 'logistic' and (name == 'w' or name.startswith('w_')):
+            return family_bounds.get('w', (-5.0, 10.0))
+        return (-5.0, 5.0)
 
     def _default_traj(k, name):
         if _rec_bundle['family'] == 'race' and name in _RACE_TRAJ_DEFAULTS:
@@ -3182,6 +3260,7 @@ contrast weight `w` and bias `b`. No reaction times — only choice is modelled.
                     log_lik_trial=_bundle_local['log_lik_trial'],
                     n_params=_bundle_local['N_PARAMS'],
                     param_names=_bundle_local['PARAM_NAMES'],
+                    hess_calc='All',   # weights + hyperparameter CIs
                     verbose=True,
                     status_callback=_rec_status_cb,
                 )
