@@ -29,6 +29,22 @@ _DDM_EXACT_PARAMS = {'w', 'b', 'a'}
 _DDM_APPROX_PARAMS = {'w', 'b', 'z'}
 _RT_CURVE_FAMILIES = {'race', 'ddm_exact', 'ddm_approx'}
 
+# ---------------------------------------------------------------------------
+# Race-model dopamine sigmoid defaults — pulled from the model module so the
+# plotted analytic curves match whatever β / offset the model was fitted
+# with.  Wrapped in try/except so app.py can still load against an older
+# psytrax.models.race that pre-dates the dopamine code (e.g. a stale
+# cached install on a hosted deployment); in that case we fall back to the
+# documented defaults and the dopamine plots still render.
+# ---------------------------------------------------------------------------
+try:
+    from psytrax.models.race import (
+        DEFAULT_DA_BETA   as _DA_BETA_DEFAULT,
+        DEFAULT_DA_OFFSET as _DA_OFFSET_DEFAULT,
+    )
+except ImportError:
+    _DA_BETA_DEFAULT, _DA_OFFSET_DEFAULT = 6.0, 0.5
+
 
 def _is_logistic(param_names):
     """Detect a logistic model from its parameter names.
@@ -2549,11 +2565,8 @@ elif page == 'Visualise Results':
                     # Analytic curve: average σ(β·(w_eff · c / z − offset))
                     # over the window. β and offset come from the recovered
                     # model_hyper (EB-fitted alongside sig_DA) when present,
-                    # otherwise fall back to the model defaults.
-                    from psytrax.models.race import (
-                        DEFAULT_DA_BETA   as _DA_BETA_DEFAULT,
-                        DEFAULT_DA_OFFSET as _DA_OFFSET_DEFAULT,
-                    )
+                    # otherwise fall back to the model defaults imported at
+                    # module top.
                     _DA_BETA   = float(_model_mh.get('da_beta',   _DA_BETA_DEFAULT))
                     _DA_OFFSET = float(_model_mh.get('da_offset', _DA_OFFSET_DEFAULT))
                     wr_win = params[_wr_idx, t0:t1]
@@ -4085,12 +4098,8 @@ is modelled.
 
                             # Pull β and offset from each side's model_hyper
                             # (true_mh for the truth curve, rec_mh for the
-                            # recovered curve), falling back to model defaults
-                            # when missing.
-                            from psytrax.models.race import (
-                                DEFAULT_DA_BETA   as _DA_BETA_DEFAULT,
-                                DEFAULT_DA_OFFSET as _DA_OFFSET_DEFAULT,
-                            )
+                            # recovered curve), falling back to module-top
+                            # defaults when missing.
                             _DA_BETA_T   = float(true_mh.get('da_beta',   _DA_BETA_DEFAULT))
                             _DA_OFFSET_T = float(true_mh.get('da_offset', _DA_OFFSET_DEFAULT))
                             _DA_BETA_R   = float(rec_mh.get('da_beta',    _DA_BETA_DEFAULT))
