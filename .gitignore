@@ -5,7 +5,10 @@ dist/
 build/
 .eggs/
 *.npy
-!data/*.npy
+# Whitelist per-mouse data files at any depth under data/ (e.g. data/*.npy
+# AND data/with_dopamine/*.npy) so they ship with the Streamlit app on
+# GitHub-hosted deployments.
+!data/**/*.npy
 !example_fits/*.npy
 fits/
 *.ipynb_checkpoints/
@@ -13,6 +16,5 @@ fits/
 .venv/
 
 # Large raw CSVs — keep out of the repo (multi-GB, distributed separately).
-# The per-mouse .npy files derived from them are the actual checked-in assets.
+# The per-mouse .npy files derived from them ARE checked in.
 data/*.csv
-data/with_dopamine/

@@ -26,6 +26,9 @@ Filtering, mirroring `dls_dopamine.ipynb`:
   * 0.05s < RT < 1.5s
   * choice ∈ {'Left', 'Right'} (NoGo trials dropped)
   * trial must have a valid (non-NaN) dopamine peak in [0.2, 0.35]s
+  * recording region ∈ {'Left DLS', 'Right DLS'} by default — pass
+    ``--regions all`` to keep aDMS, pDMS, NAc, etc. as well, or
+    ``--regions "Left DLS"`` to narrow further.
 
 Run from the repo root:
 
@@ -68,6 +71,11 @@ DA_TMAX  = 0.35
 ROLL_WIN = 10
 T_ND     = 0.05    # mirrors the existing per-mouse files
 
+# Default region whitelist — DLS only.  aDMS, pDMS, NAc and any other
+# regions in the CSV are skipped unless the user passes ``--regions``
+# explicitly.  Pass ``--regions all`` to disable region filtering.
+DEFAULT_REGIONS = ['Left DLS', 'Right DLS']
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__,
@@ -79,9 +87,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument('--mice', type=str, nargs='*', default=None,
                         help='Optional whitelist of mouse IDs (e.g. DAP022 DAP039). '
                              'If omitted, every mouse with ≥1 valid trial is exported.')
-    parser.add_argument('--regions', type=str, nargs='*', default=None,
-                        help='Optional whitelist of regions (e.g. "Left DLS"). '
-                             'Pass quoted strings if they contain spaces.')
+    parser.add_argument('--regions', type=str, nargs='*',
+                        default=DEFAULT_REGIONS,
+                        help=(
+                            'Region whitelist; defaults to DLS only '
+                            f'({DEFAULT_REGIONS}). Pass --regions all to '
+                            'keep every region in the CSV (aDMS, pDMS, NAc, …). '
+                            'Quote strings containing spaces.'
+                        ))
     return parser.parse_args()
 
 
@@ -276,9 +289,21 @@ def main() -> int:
     if args.mice:
         merged = merged[merged['mouse'].isin(args.mice)]
         print(f'[filter] mouse whitelist applied: {len(merged):,} rows kept')
-    if args.regions:
+
+    # ``--regions all`` (case-insensitive) disables region filtering entirely.
+    region_all = (
+        args.regions is not None
+        and len(args.regions) == 1
+        and args.regions[0].lower() == 'all'
+    )
+    if args.regions and not region_all:
         merged = merged[merged['region'].isin(args.regions)]
-        print(f'[filter] region whitelist applied: {len(merged):,} rows kept')
+        print(f'[filter] region whitelist {args.regions} applied: '
+              f'{len(merged):,} rows kept')
+    elif region_all:
+        print(f'[filter] --regions all → keeping every region '
+              f'({merged["region"].nunique()} unique values, '
+              f'{len(merged):,} rows)')
 
     if merged.empty:
         print('No rows match — nothing written.')

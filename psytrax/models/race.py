@@ -67,14 +67,16 @@ DEFAULT_SIG_I = 0.1
 # fitting the optional dopamine likelihood term).
 DEFAULT_SIG_DA = 0.2
 
-# Sigmoid response function for the dopamine prediction.  The mean of the
-# Gaussian dopamine likelihood is
-#     pred = σ(DA_BETA * (w_eff · c / z − DA_OFFSET))
-# i.e. a sigmoid with inverse temperature ``DA_BETA`` centred on
-# ``DA_OFFSET``.  The defaults (β = 6, centre = 0.5) place the steep part of
-# the curve around the natural midpoint of a 0–1 normalised dopamine signal.
-DA_BETA   = 6.0
-DA_OFFSET = 0.5
+# Default starting values for the dopamine sigmoid response function:
+#     pred = σ(da_beta * (w_eff · c / z − da_offset))
+# Both `da_beta` (inverse temperature) and `da_offset` (centre on the
+# linear-prediction axis) live in ``model_hyper`` and are optimised
+# jointly with ``sig_DA`` and ``sig_i`` by the EB outer loop.  The defaults
+# (β = 6, centre = 0.5) place the steep part of the curve around the
+# midpoint of a 0–1 normalised dopamine signal, but EB will move them as
+# needed to match the data.
+DEFAULT_DA_BETA   = 6.0
+DEFAULT_DA_OFFSET = 0.5
 
 
 def default_model_hyper():
@@ -90,16 +92,24 @@ def default_model_hyper():
 def default_model_hyper_with_dopamine():
     """Model-level hyperparameters when the dopamine term is enabled.
 
-    Returns the standard ``sig_i`` plus a ``sig_DA`` (Gaussian std on the
-    per-trial dopamine peak around the analytic prediction
-    ``σ(DA_BETA · (w_eff · c / z − DA_OFFSET))``, where ``w_eff`` is ``wr``
-    when ``c >= 0`` and ``wl`` otherwise).  Pass this dict explicitly to
-    ``psytrax.fit(..., model_hyper=...)`` when fitting the joint choice +
-    RT + dopamine likelihood.
+    The dopamine peak is modelled as
+        ``N(σ(da_beta · (w_eff · c / z − da_offset)), sig_DA²)``
+    where ``w_eff = wr`` if ``c >= 0`` else ``wl``.  All four scalars are
+    optimised jointly by Empirical Bayes:
+
+      * ``sig_i``     — within-trial accumulator noise (existing race scalar)
+      * ``sig_DA``    — Gaussian std on the dopamine peak
+      * ``da_beta``   — sigmoid inverse temperature (slope)
+      * ``da_offset`` — sigmoid centre on the linear-prediction axis
+
+    Pass this dict explicitly to ``psytrax.fit(..., model_hyper=...)`` when
+    fitting the joint choice + RT + dopamine likelihood.
     """
     return {
-        'sig_i':  float(DEFAULT_SIG_I),
-        'sig_DA': float(DEFAULT_SIG_DA),
+        'sig_i':     float(DEFAULT_SIG_I),
+        'sig_DA':    float(DEFAULT_SIG_DA),
+        'da_beta':   float(DEFAULT_DA_BETA),
+        'da_offset': float(DEFAULT_DA_OFFSET),
     }
 
 
@@ -113,8 +123,10 @@ def log_lik_trial(params, dat_trial, model_hyper):
     When ``dat_trial`` contains a ``'dopamine'`` field and ``model_hyper``
     contains a ``'sig_DA'`` scalar, an extra Gaussian likelihood term is
     added:  the per-trial dopamine peak is modelled as
-    ``N(σ(DA_BETA · (w_eff · c / z − DA_OFFSET)), sig_DA²)`` where
-    ``w_eff = wr if c >= 0 else wl``.
+    ``N(σ(da_beta · (w_eff · c / z − da_offset)), sig_DA²)`` where
+    ``w_eff = wr if c >= 0 else wl``.  ``da_beta`` and ``da_offset`` are
+    also pulled from ``model_hyper`` (see
+    :func:`default_model_hyper_with_dopamine`).
     Trials whose dopamine value is NaN contribute zero to this term, so
     per-trial missing data is allowed.
 
@@ -172,10 +184,12 @@ def _log_lik_dopamine(params, dat_trial, model_hyper):
     wr, wl, br, bl, z = params
     c   = dat_trial['inputs']['c']
     da  = dat_trial['dopamine']
-    sig_DA = model_hyper['sig_DA']
+    sig_DA    = model_hyper['sig_DA']
+    da_beta   = model_hyper.get('da_beta',   DEFAULT_DA_BETA)
+    da_offset = model_hyper.get('da_offset', DEFAULT_DA_OFFSET)
     w_eff = jnp.where(c >= 0.0, wr, wl)
     z_safe = jnp.where(z > 0.0, z, 1.0)
-    pred = jax.nn.sigmoid(DA_BETA * (w_eff * c / z_safe - DA_OFFSET))
+    pred = jax.nn.sigmoid(da_beta * (w_eff * c / z_safe - da_offset))
     valid = (
         jnp.isfinite(da)
         & jnp.isfinite(sig_DA)
@@ -294,8 +308,10 @@ def sample_trial(params, dat_trial, rng, model_hyper):
     if 'sig_DA' in model_hyper:
         sig_DA = float(model_hyper['sig_DA'])
         if z > 0.0 and sig_DA > 0.0:
+            da_beta   = float(model_hyper.get('da_beta',   DEFAULT_DA_BETA))
+            da_offset = float(model_hyper.get('da_offset', DEFAULT_DA_OFFSET))
             w_eff = wr if c >= 0.0 else wl
-            pred = 1.0 / (1.0 + np.exp(-DA_BETA * (w_eff * c / z - DA_OFFSET)))
+            pred = 1.0 / (1.0 + np.exp(-da_beta * (w_eff * c / z - da_offset)))
             out['dopamine'] = float(rng.normal(pred, sig_DA))
         else:
             out['dopamine'] = float('nan')
