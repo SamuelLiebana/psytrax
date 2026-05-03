@@ -2449,7 +2449,8 @@ elif page == 'Visualise Results':
             st.caption(
                 'Black dots: empirical mean dopamine peak per signed contrast '
                 '(within each quartile of trials). Blue line: analytic '
-                'prediction `σ(w_eff · c / z)` averaged over each window\'s '
+                'prediction `σ(β · (w_eff · c / z − 0.5))` (β = 6) averaged '
+                'over each window\'s '
                 'recovered trajectory, where `w_eff = wr` for `c ≥ 0` and '
                 '`w_eff = wl` otherwise.'
             )
@@ -2484,14 +2485,20 @@ elif page == 'Visualise Results':
                     ]) if c_uniq_win.size else np.array([])
                     n_w = np.array([np.sum(c_win_f == cv) for cv in c_uniq_win])
 
-                    # Analytic curve: average σ(w_eff · c / z) over the window
+                    # Analytic curve: average σ(β·(w_eff · c / z − offset))
+                    # over the window (β = race.DA_BETA, offset = race.DA_OFFSET).
+                    from psytrax.models.race import DA_BETA as _DA_BETA, \
+                                                  DA_OFFSET as _DA_OFFSET
                     wr_win = params[_wr_idx, t0:t1]
                     wl_win = params[_wl_idx, t0:t1]
                     z_win  = params[_z_idx,  t0:t1]
                     z_safe = np.where(z_win > 0, z_win, 1.0)
                     da_curve = np.array([
                         np.mean(1.0 / (1.0 + np.exp(
-                            -(np.where(cv >= 0, wr_win, wl_win) * cv / z_safe)
+                            -_DA_BETA * (
+                                np.where(cv >= 0, wr_win, wl_win) * cv / z_safe
+                                - _DA_OFFSET
+                            )
                         )))
                         for cv in c_grid
                     ])
@@ -2916,7 +2923,8 @@ elif page == 'Model Recovery':
             )
             _da_blurb = (
                 ' Joint dopamine fit is enabled: each trial also emits a '
-                '`dopamine` value drawn from `N(σ(w_eff · c / z), sig_DA²)` '
+                '`dopamine` value drawn from '
+                '`N(σ(β · (w_eff · c / z − 0.5)), sig_DA²)` (β = 6) '
                 '(`w_eff = wr` if `c ≥ 0` else `wl`), and the fit estimates '
                 '`sig_DA` jointly with `sig_i`.'
                 if kwargs.get('race_with_dopamine') else ''
@@ -2991,7 +2999,7 @@ is modelled.
         )
 
     # Race model can additionally fit a per-trial dopamine peak, modelled as
-    # N(σ(w_eff·c/z), sig_DA²) with sig_DA estimated by EB.
+    # N(σ(β·(w_eff·c/z − 0.5)), sig_DA²) with sig_DA estimated by EB.
     _rec_race_with_dopamine = False
     if _rec_model_choice == 'Race model (inverse-Gaussian)':
         _rec_race_with_dopamine = st.checkbox(
@@ -3000,7 +3008,8 @@ is modelled.
             key='rec_race_with_dopamine',
             help='Add a per-trial dopamine peak to the simulated data and '
                  'fit it with a Gaussian likelihood whose mean is '
-                 'σ(w_eff · c / z) (w_eff = wr if c ≥ 0 else wl) and whose '
+                 'σ(β · (w_eff · c / z − 0.5)) (β = 6, w_eff = wr if c ≥ 0 '
+                 'else wl) and whose '
                  'variance (sig_DA²) is estimated jointly with sig_i.',
         )
 
@@ -4002,6 +4011,9 @@ is modelled.
                             ])
                             n_w = np.array([np.sum(c_win == cv) for cv in c_uniq])
 
+                            from psytrax.models.race import (
+                                DA_BETA as _DA_BETA, DA_OFFSET as _DA_OFFSET,
+                            )
                             wr_t = true_params_r[_wr_idx, t0:t1]
                             wl_t = true_params_r[_wl_idx, t0:t1]
                             z_t  = np.where(true_params_r[_z_idx, t0:t1] > 0,
@@ -4012,13 +4024,19 @@ is modelled.
                                             recovered[_z_idx, t0:t1], 1.0)
                             curve_t = np.array([
                                 np.mean(1.0 / (1.0 + np.exp(
-                                    -(np.where(cv >= 0, wr_t, wl_t) * cv / z_t)
+                                    -_DA_BETA * (
+                                        np.where(cv >= 0, wr_t, wl_t) * cv / z_t
+                                        - _DA_OFFSET
+                                    )
                                 )))
                                 for cv in c_grid
                             ])
                             curve_r = np.array([
                                 np.mean(1.0 / (1.0 + np.exp(
-                                    -(np.where(cv >= 0, wr_r, wl_r) * cv / z_r)
+                                    -_DA_BETA * (
+                                        np.where(cv >= 0, wr_r, wl_r) * cv / z_r
+                                        - _DA_OFFSET
+                                    )
                                 )))
                                 for cv in c_grid
                             ])
