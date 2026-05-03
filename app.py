@@ -3526,6 +3526,22 @@ is modelled.
             st.session_state['rec_error']  = payload
             st.error(f'Recovery failed:\n```\n{payload}\n```')
 
+    # --- Download button (visible as soon as a fit has finished) -------
+    _rec_result_for_dl = st.session_state.get('rec_result')
+    if _rec_result_for_dl is not None:
+        _dl_buf = io.BytesIO()
+        np.save(_dl_buf, _rec_result_for_dl, allow_pickle=True)
+        _dl_buf.seek(0)
+        st.download_button(
+            'Download recovery result (.npy)',
+            data=_dl_buf.getvalue(),
+            file_name=f'{_rec_bundle["family"]}_model_recovery.npy',
+            mime='application/octet-stream',
+            help='Pickled dict containing the recovered fit, the truth '
+                 'trajectories, and the simulated data used for the fit.',
+            key='rec_download_top',
+        )
+
     # ------------------------------------------------------------------
     # 6. Results
     # ------------------------------------------------------------------
@@ -3656,8 +3672,32 @@ is modelled.
             )
 
         if _show_behavioural:
+            # Resample button — each click bumps a counter that's mixed into
+            # the RNG seed, so the empirical "recovered (sim)" markers shift
+            # while the analytic curves and truth markers stay put. Useful
+            # for eyeballing simulator-noise variability around the analytic
+            # recovered curve.
+            if 'rec_resample_count' not in st.session_state:
+                st.session_state['rec_resample_count'] = 0
+            _resample_col1, _resample_col2 = st.columns([1, 3])
+            with _resample_col1:
+                if st.button('Resample recovered',
+                             key='rec_resample_button',
+                             help='Draw a new simulation from the recovered '
+                                  'trajectory to see how the blue crosses '
+                                  'shift due to simulator noise alone.'):
+                    st.session_state['rec_resample_count'] += 1
+            with _resample_col2:
+                _rcount = int(st.session_state['rec_resample_count'])
+                st.caption(
+                    f'Resample #{_rcount} '
+                    f'(seed = {int(seed_rec) + 1 + _rcount}).'
+                )
             try:
-                rng_recover = np.random.default_rng(int(seed_rec) + 1)
+                _resample_seed = int(seed_rec) + 1 + int(
+                    st.session_state['rec_resample_count']
+                )
+                rng_recover = np.random.default_rng(_resample_seed)
                 data_rec_sim = psytrax.simulate(
                     _rec_bundle['sample_trial'],
                     recovered,
@@ -3797,14 +3837,3 @@ is modelled.
                 st.warning(f'Could not compute behavioural curves: {exc}')
         else:
             st.info(_skip_reason)
-
-        # --- Download button ------------------------------------------
-        buf = io.BytesIO()
-        np.save(buf, result_rec, allow_pickle=True)
-        buf.seek(0)
-        st.download_button(
-            'Download recovery result (.npy)',
-            data=buf.getvalue(),
-            file_name=f'{_rec_bundle["family"]}_model_recovery.npy',
-            mime='application/octet-stream',
-        )
