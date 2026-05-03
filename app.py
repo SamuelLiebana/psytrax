@@ -3069,8 +3069,9 @@ is modelled.
     # ------------------------------------------------------------------
     st.subheader('3. True parameter trajectories')
     st.caption(
-        'Each trajectory is `offset + slope · (t / N) + amplitude · sin(2π t / period)`. '
-        'Set amplitude = 0 for a flat-or-linear evolution. The mini-plot in each '
+        'Each trajectory is `offset + slope · (t / N) + amplitude · sin(2π t / period + phase)`. '
+        'Set amplitude = 0 for a flat-or-linear evolution; sweep the phase '
+        'slider to shift where the oscillation starts. The mini-plot in each '
         'expander updates live as you move the sliders.'
     )
 
@@ -3134,23 +3135,30 @@ is modelled.
         return (-5.0, 5.0)
 
     def _default_traj(k, name):
+        # Returns (offset, amplitude, period, slope, phase). Phase is always 0
+        # so the existing defaults reproduce the previous trajectories.
         if _rec_bundle['family'] == 'race' and name in _RACE_TRAJ_DEFAULTS:
             d = _RACE_TRAJ_DEFAULTS[name]
-            return d['offset'], d['amplitude'], int(d['period_frac'] * N_rec), d['slope']
+            return (d['offset'], d['amplitude'],
+                    int(d['period_frac'] * N_rec), d['slope'], 0.0)
         if _default_E0_arr is not None and k < _default_E0_arr.shape[0]:
             row = _default_E0_arr[k]
-            return float(row[0]), 0.0, max(20, N_rec // 4), float(row[-1] - row[0])
-        return 0.0, 0.0, max(20, N_rec // 4), 0.0
+            return (float(row[0]), 0.0, max(20, N_rec // 4),
+                    float(row[-1] - row[0]), 0.0)
+        return 0.0, 0.0, max(20, N_rec // 4), 0.0, 0.0
 
-    def _make_traj(offset, amplitude, period, slope, N, bounds=None):
+    def _make_traj(offset, amplitude, period, slope, phase, N, bounds=None):
         """Build the slider-driven trajectory and clip to (lo, hi) if bounds are set.
 
         The clip means amplitude/slope can be set freely without the resulting
         trajectory ever leaving the model's valid parameter region — useful
         when the user wants to explore extreme values without crashing the fit.
+
+        ``phase`` is in radians and shifts the sinusoid: ``sin(2π t / period + phase)``.
         """
         t = np.arange(N)
-        traj = offset + slope * (t / N) + amplitude * np.sin(2 * np.pi * t / max(period, 1))
+        traj = (offset + slope * (t / N)
+                + amplitude * np.sin(2 * np.pi * t / max(period, 1) + phase))
         if bounds is not None:
             lo, hi = bounds
             traj = np.clip(traj, lo, hi)
@@ -3190,7 +3198,7 @@ is modelled.
             else:
                 lo, hi = float(_default_lo), float(_default_hi)
 
-            d_offset, d_amp, d_period, d_slope = _default_traj(k, name)
+            d_offset, d_amp, d_period, d_slope, d_phase = _default_traj(k, name)
             d_offset = float(np.clip(d_offset, lo, hi))
             range_span = hi - lo
 
@@ -3236,16 +3244,24 @@ is modelled.
                     float(np.clip(d_slope, -range_span, range_span)), step_slope,
                     key=f'rec_{_rec_bundle["family"]}_{name}_slope',
                 )
+                phase = st.slider(
+                    f'{name}: phase (radians)',
+                    -float(np.pi), float(np.pi),
+                    float(d_phase), float(np.pi / 60),
+                    key=f'rec_{_rec_bundle["family"]}_{name}_phase',
+                    help='Shifts the sinusoid: 0 starts at the offset, '
+                         'π/2 starts at the peak, π flips the cycle.',
+                )
             _traj_bounds = (lo, hi) if _CLIP_TRAJECTORY else None
             _rec_traj_specs[name] = (
                 float(offset), float(amplitude), int(period), float(slope),
-                _traj_bounds,
+                float(phase), _traj_bounds,
             )
 
             # Live preview of this trajectory (post-clip if applicable, so
             # the user sees exactly what the simulator will get).
-            _traj_k = _make_traj(offset, amplitude, period, slope, N_rec,
-                                 bounds=_traj_bounds)
+            _traj_k = _make_traj(offset, amplitude, period, slope, phase,
+                                 N_rec, bounds=_traj_bounds)
             _mini_fig, _mini_ax = plt.subplots(figsize=(5.5, 1.6))
             _style_fig(_mini_fig)
             _style_ax(_mini_ax, xlabel='Trial', title=f'{name} preview')
@@ -3259,7 +3275,8 @@ is modelled.
     # Build the truth trajectory matrix.  Bounds are applied per parameter
     # (clipped for race / DDM, left free for logistic / unbounded params).
     true_params = np.stack([
-        _make_traj(*_rec_traj_specs[name][:4], N_rec, bounds=_rec_traj_specs[name][4])
+        _make_traj(*_rec_traj_specs[name][:5], N_rec,
+                   bounds=_rec_traj_specs[name][5])
         for name in _rec_bundle['PARAM_NAMES']
     ])
 
@@ -3427,6 +3444,10 @@ is modelled.
                 result['simulate_time']    = t_sim
                 result['fit_time']         = t_fit
                 result['model_family']     = _bundle_local['family']
+                result['input_modes']      = {
+                    k: spec.get('mode', 'discrete')
+                    for k, spec in _value_pools_local.items()
+                }
 
                 _rec_q.put(('done', result))
             except Exception:
@@ -3609,7 +3630,32 @@ is modelled.
         truth_fixed_params = dict(true_mh)   # e.g. {'sig_i': true value}
         rec_fixed_params   = dict(rec_mh)    # e.g. {'sig_i': recovered value}
 
-        if 'c' in inputs_truth:
+        # The behavioural plots assume signed contrast `c` is the (only) thing
+        # driving choice — empirical psychometric bins use it as the x-axis,
+        # and the logistic analytic curve treats every other regressor as 0.
+        # For race / DDM that's always true; for logistic it's only meaningful
+        # when the user fits a single discrete `c` regressor.
+        _input_modes = result_rec.get('input_modes') or {}
+        _input_keys_truth = list(inputs_truth.keys())
+        if model_family == 'logistic':
+            _show_behavioural = (
+                _input_keys_truth == ['c']
+                and _input_modes.get('c', 'discrete') == 'discrete'
+            )
+            _skip_reason = (
+                'Behavioural curves are only shown for logistic models with a '
+                'single discrete `c` regressor — multi-regressor or continuous '
+                'inputs make the psychometric x-axis ambiguous, so the section '
+                'is omitted.'
+            )
+        else:
+            _show_behavioural = 'c' in inputs_truth
+            _skip_reason = (
+                'Behavioural curves require a `c` input. The selected model '
+                'doesn\'t expose one — skipping psychometric/chronometric plots.'
+            )
+
+        if _show_behavioural:
             try:
                 rng_recover = np.random.default_rng(int(seed_rec) + 1)
                 data_rec_sim = psytrax.simulate(
@@ -3750,10 +3796,7 @@ is modelled.
             except Exception as exc:
                 st.warning(f'Could not compute behavioural curves: {exc}')
         else:
-            st.info(
-                'Behavioural curves require a `c` input. The selected model '
-                'doesn\'t expose one — skipping psychometric/chronometric plots.'
-            )
+            st.info(_skip_reason)
 
         # --- Download button ------------------------------------------
         buf = io.BytesIO()
