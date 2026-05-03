@@ -2952,13 +2952,22 @@ is modelled.
         seed_rec = st.number_input('Random seed', min_value=0, max_value=2**31 - 1,
                                    value=42, step=1, key='rec_seed')
 
-    st.markdown(
-        '**Trial inputs.** Every trial needs values for each of the model\'s '
-        'inputs — for the race / DDM models this is the signed stimulus contrast '
-        '`c` that the accumulators integrate. List the values you want to expose '
-        'the model to below; one is sampled uniformly per trial. Choosing a '
-        'wide range gives the EB fit more leverage for parameter identification.'
-    )
+    _is_logistic = _rec_bundle['family'] == 'logistic'
+    if _is_logistic:
+        st.markdown(
+            '**Trial inputs.** Every trial needs values for each input '
+            'regressor. For each one, choose whether to draw values from a '
+            'discrete pool or uniformly from a continuous range. A wide '
+            'spread gives the EB fit more leverage for parameter identification.'
+        )
+    else:
+        st.markdown(
+            '**Trial inputs.** Every trial needs values for each of the model\'s '
+            'inputs — for the race / DDM models this is the signed stimulus contrast '
+            '`c` that the accumulators integrate. List the values you want to expose '
+            'the model to below; one is sampled uniformly per trial. Choosing a '
+            'wide range gives the EB fit more leverage for parameter identification.'
+        )
 
     _spec = _rec_bundle.get('DATA_SPEC') or {}
     _rec_input_keys = list((_spec.get('inputs') or {}).keys()) or ['c']
@@ -2966,29 +2975,92 @@ is modelled.
         'c':      '-1, -0.5, -0.25, 0, 0.25, 0.5, 1',
         'reward': '0, 1',
     }
-    _rec_value_pools = {}
-    for _key in _rec_input_keys:
-        _info = (_spec.get('inputs') or {}).get(_key, {})
-        _label = (
-            f'`{_key}` — {_info.get("description", "trial input")}'
-            if _info else f'`{_key}` values'
-        )
-        _vals_str = st.text_input(
-            _label,
-            value=_DEFAULT_VALUE_POOLS.get(_key, '0, 1'),
-            key=f'rec_input_{_rec_bundle["family"]}_{_key}',
-            help='Comma-separated list of values; sampled uniformly per trial.',
-        )
+    _DEFAULT_RANGES = {
+        'c':      '-1, 1',
+        'reward': '0, 1',
+    }
+
+    def _parse_discrete(_key, _vals_str):
         try:
-            _vals = np.asarray([float(x) for x in _vals_str.split(',') if x.strip()],
-                               dtype=float)
-            if _vals.size == 0:
+            _v = np.asarray([float(x) for x in _vals_str.split(',') if x.strip()],
+                            dtype=float)
+            if _v.size == 0:
                 raise ValueError
+            return _v
         except Exception:
             _fallback = _DEFAULT_VALUE_POOLS.get(_key, '0, 1')
             st.warning(f'Could not parse `{_key}`; using default `{_fallback}`')
-            _vals = np.asarray([float(x) for x in _fallback.split(',')])
-        _rec_value_pools[_key] = _vals
+            return np.asarray([float(x) for x in _fallback.split(',')])
+
+    def _parse_range(_key, _range_str):
+        try:
+            _parts = [float(x) for x in _range_str.split(',') if x.strip()]
+            if len(_parts) != 2:
+                raise ValueError
+            _lo, _hi = sorted(_parts)
+            if _lo == _hi:
+                raise ValueError
+            return _lo, _hi
+        except Exception:
+            _fallback = _DEFAULT_RANGES.get(_key, '-1, 1')
+            st.warning(f'Could not parse `{_key}` range; using default `{_fallback}`')
+            _parts = [float(x) for x in _fallback.split(',')]
+            return sorted(_parts)
+
+    _rec_value_pools = {}
+    for _key in _rec_input_keys:
+        _info = (_spec.get('inputs') or {}).get(_key, {})
+        _descr = _info.get('description', 'trial input regressor') if _info else None
+
+        if _is_logistic:
+            col_mode, col_vals = st.columns([1, 2])
+            with col_mode:
+                _mode_choice = st.radio(
+                    f'`{_key}` sampling',
+                    ['Discrete', 'Continuous'],
+                    key=f'rec_input_mode_{_rec_bundle["family"]}_{_key}',
+                    help=('Discrete: sample uniformly from a list of values. '
+                          'Continuous: sample uniformly from a range.'),
+                )
+            with col_vals:
+                if _mode_choice == 'Continuous':
+                    _range_str = st.text_input(
+                        f'`{_key}` range (min, max)',
+                        value=_DEFAULT_RANGES.get(_key, '-1, 1'),
+                        key=f'rec_input_{_rec_bundle["family"]}_{_key}_range',
+                        help='Two comma-separated numbers: lower and upper bound.',
+                    )
+                    _lo, _hi = _parse_range(_key, _range_str)
+                    _rec_value_pools[_key] = {
+                        'mode': 'continuous',
+                        'range': (float(_lo), float(_hi)),
+                    }
+                else:
+                    _vals_str = st.text_input(
+                        f'`{_key}` values',
+                        value=_DEFAULT_VALUE_POOLS.get(_key, '0, 1'),
+                        key=f'rec_input_{_rec_bundle["family"]}_{_key}',
+                        help='Comma-separated list of values; sampled uniformly per trial.',
+                    )
+                    _rec_value_pools[_key] = {
+                        'mode': 'discrete',
+                        'values': _parse_discrete(_key, _vals_str),
+                    }
+        else:
+            _label = (
+                f'`{_key}` — {_descr}'
+                if _info else f'`{_key}` values'
+            )
+            _vals_str = st.text_input(
+                _label,
+                value=_DEFAULT_VALUE_POOLS.get(_key, '0, 1'),
+                key=f'rec_input_{_rec_bundle["family"]}_{_key}',
+                help='Comma-separated list of values; sampled uniformly per trial.',
+            )
+            _rec_value_pools[_key] = {
+                'mode': 'discrete',
+                'values': _parse_discrete(_key, _vals_str),
+            }
 
     st.divider()
 
@@ -3019,11 +3091,14 @@ is modelled.
         'z':  dict(offset=1.0, amplitude=0.05, period_frac=0.40, slope=-0.2),
     }
 
-    # Per-family parameter bounds.  These are set to the model's mathematical
-    # domain (e.g. DDM `a > 0`, DDM `z in (0, 1)`) so sliders can't produce
-    # invalid parameter values that would crash the simulator or fit.  The
-    # generated trajectory is also clipped to these bounds after building, so
-    # extreme amplitude/slope combinations stay within the valid region.
+    # Per-family parameter bounds.  For race / DDM these are hard mathematical
+    # constraints (e.g. DDM `a > 0`, race accumulator drifts > 0) — the slider
+    # range and trajectory clipping both enforce them so the simulator/fit
+    # never sees an invalid parameter.
+    #
+    # For logistic regression, weights and bias are mathematically unbounded;
+    # the entries below are only the *default* slider range and the user can
+    # widen them per parameter in section 3 (no clipping is applied).
     _PARAM_BOUNDS = {
         'race': {
             'wr': (0.05, 5.0), 'wl': (0.05, 5.0),
@@ -3039,13 +3114,21 @@ is modelled.
         },
     }
 
+    # Logistic weights have no mathematical constraints, so we don't clip the
+    # trajectory and we let the user widen the slider range freely.
+    _CLIP_TRAJECTORY = _rec_bundle['family'] != 'logistic'
+
     def _bounds_for(name):
-        """(lo, hi) for the named parameter, or generous defaults for custom models."""
+        """Default (lo, hi) slider range for the named parameter.
+
+        For race / DDM these are also the trajectory-clipping bounds; for
+        logistic they are only a UI default that the user can override.
+        """
         family_bounds = _PARAM_BOUNDS.get(_rec_bundle['family'], {})
         if name in family_bounds:
             return family_bounds[name]
         # Generic logistic-style weight: any param named 'w' or 'w_<feature>'
-        # uses the same bounds as the canonical weight in this family.
+        # uses the same default range as the canonical weight in this family.
         if _rec_bundle['family'] == 'logistic' and (name == 'w' or name.startswith('w_')):
             return family_bounds.get('w', (-5.0, 10.0))
         return (-5.0, 5.0)
@@ -3076,7 +3159,37 @@ is modelled.
     _rec_traj_specs = {}
     for k, name in enumerate(_rec_bundle['PARAM_NAMES']):
         with st.expander(f'`{name}` trajectory shape', expanded=(k == 0)):
-            lo, hi = _bounds_for(name)
+            _default_lo, _default_hi = _bounds_for(name)
+
+            # For logistic, expose the slider range as user-defined since the
+            # parameters are mathematically unbounded.
+            if not _CLIP_TRAJECTORY:
+                rcol1, rcol2 = st.columns(2)
+                with rcol1:
+                    lo = float(st.number_input(
+                        f'{name}: slider min',
+                        value=float(_default_lo),
+                        step=0.5,
+                        key=f'rec_{_rec_bundle["family"]}_{name}_lo',
+                        help='Lower end of the slider range. Widen freely — '
+                             'logistic weights/bias are unbounded.',
+                    ))
+                with rcol2:
+                    hi = float(st.number_input(
+                        f'{name}: slider max',
+                        value=float(_default_hi),
+                        step=0.5,
+                        key=f'rec_{_rec_bundle["family"]}_{name}_hi',
+                        help='Upper end of the slider range.',
+                    ))
+                if hi <= lo:
+                    st.warning(
+                        f'`{name}`: slider max must exceed min — using defaults.'
+                    )
+                    lo, hi = float(_default_lo), float(_default_hi)
+            else:
+                lo, hi = float(_default_lo), float(_default_hi)
+
             d_offset, d_amp, d_period, d_slope = _default_traj(k, name)
             d_offset = float(np.clip(d_offset, lo, hi))
             range_span = hi - lo
@@ -3086,11 +3199,18 @@ is modelled.
             step_amp    = max(range_span / 200.0, 0.001)
             step_slope  = max(range_span / 200.0, 0.001)
 
-            st.caption(
-                f'Valid range: **[{lo:g}, {hi:g}]**.  The trajectory is clipped to '
-                f'this range — sweep amplitude or slope past the bound to see '
-                f'the parameter saturate.'
-            )
+            if _CLIP_TRAJECTORY:
+                st.caption(
+                    f'Valid range: **[{lo:g}, {hi:g}]**.  The trajectory is clipped to '
+                    f'this range — sweep amplitude or slope past the bound to see '
+                    f'the parameter saturate.'
+                )
+            else:
+                st.caption(
+                    f'Slider range: **[{lo:g}, {hi:g}]** — widen above if you want '
+                    f'larger values. The trajectory is **not** clipped, so amplitude '
+                    f'and slope can push it past these bounds.'
+                )
             c1, c2 = st.columns(2)
             with c1:
                 offset = st.slider(
@@ -3116,13 +3236,16 @@ is modelled.
                     float(np.clip(d_slope, -range_span, range_span)), step_slope,
                     key=f'rec_{_rec_bundle["family"]}_{name}_slope',
                 )
+            _traj_bounds = (lo, hi) if _CLIP_TRAJECTORY else None
             _rec_traj_specs[name] = (
-                float(offset), float(amplitude), int(period), float(slope), (lo, hi)
+                float(offset), float(amplitude), int(period), float(slope),
+                _traj_bounds,
             )
 
-            # Live preview of this trajectory (post-clip, so the user sees
-            # exactly what the simulator will get).
-            _traj_k = _make_traj(offset, amplitude, period, slope, N_rec, bounds=(lo, hi))
+            # Live preview of this trajectory (post-clip if applicable, so
+            # the user sees exactly what the simulator will get).
+            _traj_k = _make_traj(offset, amplitude, period, slope, N_rec,
+                                 bounds=_traj_bounds)
             _mini_fig, _mini_ax = plt.subplots(figsize=(5.5, 1.6))
             _style_fig(_mini_fig)
             _style_ax(_mini_ax, xlabel='Trial', title=f'{name} preview')
@@ -3133,7 +3256,8 @@ is modelled.
             st.pyplot(_mini_fig, use_container_width=True)
             plt.close(_mini_fig)
 
-    # Build the truth trajectory matrix (already clipped per parameter)
+    # Build the truth trajectory matrix.  Bounds are applied per parameter
+    # (clipped for race / DDM, left free for logistic / unbounded params).
     true_params = np.stack([
         _make_traj(*_rec_traj_specs[name][:4], N_rec, bounds=_rec_traj_specs[name][4])
         for name in _rec_bundle['PARAM_NAMES']
@@ -3232,15 +3356,28 @@ is modelled.
         _N_local             = int(N_rec)
         _seed_local          = int(seed_rec)
         _true_params_local   = np.array(true_params, copy=True)
-        _value_pools_local   = {k: np.array(v, copy=True) for k, v in _rec_value_pools.items()}
+        _value_pools_local   = {
+            k: (
+                {'mode': 'continuous', 'range': tuple(spec['range'])}
+                if spec.get('mode') == 'continuous'
+                else {'mode': 'discrete',
+                      'values': np.array(spec['values'], copy=True)}
+            )
+            for k, spec in _rec_value_pools.items()
+        }
         _true_mh_local       = dict(_rec_true_mh)
         _init_mh_local       = dict(_rec_init_mh)
 
         def _run_recovery():
             try:
                 rng = np.random.default_rng(_seed_local)
-                inputs = {k: rng.choice(pool, size=_N_local)
-                          for k, pool in _value_pools_local.items()}
+                inputs = {}
+                for k, spec in _value_pools_local.items():
+                    if spec.get('mode') == 'continuous':
+                        lo, hi = spec['range']
+                        inputs[k] = rng.uniform(lo, hi, size=_N_local)
+                    else:
+                        inputs[k] = rng.choice(spec['values'], size=_N_local)
                 _rec_status_cb({'message': f'Simulating {_N_local} trials…',
                                 'stage': 'simulate'})
                 t0 = _rec_time.time()

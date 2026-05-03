@@ -102,11 +102,7 @@ def make_model(input_keys=None):
     DATA_SPEC = {
         'inputs': {
             k: {
-                'description': (
-                    'Signed stimulus strength (e.g. contrast)'
-                    if k == 'c'
-                    else f'Input feature "{k}"'
-                ),
+                'description': f'Input regressor "{k}"',
                 'required': True,
             }
             for k in input_keys
