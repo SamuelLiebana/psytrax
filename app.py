@@ -2436,6 +2436,107 @@ elif page == 'Visualise Results':
                 fig_cevo.tight_layout()
                 _show_fig(fig_cevo, 'chronometric_evolution.png')
 
+        # --- Dopamine evolution (race only, when data has dopamine) ----
+        _da_data = dat.get('dopamine') if isinstance(dat, dict) else None
+        _model_mh = result.get('model_hyper') or {}
+        _has_dopamine = (
+            model_family == 'race'
+            and _da_data is not None
+            and np.asarray(_da_data).shape[0] == N
+        )
+        if _has_dopamine:
+            st.subheader('Dopamine: empirical vs predicted, by quartile')
+            st.caption(
+                'Black dots: empirical mean dopamine peak per signed contrast '
+                '(within each quartile of trials). Blue line: analytic '
+                'prediction `σ(w_eff · c / z)` averaged over each window\'s '
+                'recovered trajectory, where `w_eff = wr` for `c ≥ 0` and '
+                '`w_eff = wl` otherwise.'
+            )
+            da_data = np.asarray(_da_data, dtype=float)
+            try:
+                _wr_idx = list(param_names).index('wr')
+                _wl_idx = list(param_names).index('wl')
+                _z_idx  = list(param_names).index('z')
+            except ValueError:
+                _wr_idx = _wl_idx = _z_idx = None
+
+            if _wr_idx is not None:
+                fig_da, axes_da = plt.subplots(2, 2, figsize=(11, 8))
+                _tc = _style_fig(fig_da)
+                panel_da = []
+                y_da = []
+                for wi in range(N_WIN):
+                    t0, t1 = int(edges[wi]), int(edges[wi + 1])
+                    c_win   = c_data[t0:t1]
+                    da_win  = da_data[t0:t1]
+                    finite  = np.isfinite(da_win)
+                    c_win_f = c_win[finite]
+                    da_win_f = da_win[finite]
+                    c_uniq_win = np.unique(c_win_f) if c_win_f.size else np.array([])
+                    da_mean = np.array([
+                        da_win_f[c_win_f == cv].mean() for cv in c_uniq_win
+                    ]) if c_uniq_win.size else np.array([])
+                    da_sem = np.array([
+                        (da_win_f[c_win_f == cv].std() /
+                         max(np.sqrt(np.sum(c_win_f == cv)), 1.0))
+                        for cv in c_uniq_win
+                    ]) if c_uniq_win.size else np.array([])
+                    n_w = np.array([np.sum(c_win_f == cv) for cv in c_uniq_win])
+
+                    # Analytic curve: average σ(w_eff · c / z) over the window
+                    wr_win = params[_wr_idx, t0:t1]
+                    wl_win = params[_wl_idx, t0:t1]
+                    z_win  = params[_z_idx,  t0:t1]
+                    z_safe = np.where(z_win > 0, z_win, 1.0)
+                    da_curve = np.array([
+                        np.mean(1.0 / (1.0 + np.exp(
+                            -(np.where(cv >= 0, wr_win, wl_win) * cv / z_safe)
+                        )))
+                        for cv in c_grid
+                    ])
+                    panel_da.append((t0, t1, c_uniq_win, da_mean, da_sem,
+                                     n_w, da_curve))
+                    y_da.extend([da_mean, da_curve])
+
+                shared_ylim_da = _shared_ylim(y_da)
+                for ax, (t0, t1, c_uniq_win, da_mean, da_sem,
+                         n_w, da_curve) in zip(axes_da.flat, panel_da):
+                    _style_ax(ax, xlabel='Signed contrast',
+                              ylabel='Dopamine peak (a.u.)',
+                              title=f'Trials {t0 + 1}–{t1}')
+                    if c_uniq_win.size:
+                        ax.errorbar(
+                            c_uniq_win, da_mean, yerr=da_sem,
+                            fmt='o', color=_tc['text'], ecolor=_tc['text'],
+                            elinewidth=0.8, capsize=2, markersize=5,
+                            zorder=3,
+                        )
+                    ax.plot(c_grid, da_curve, color='#4e9af1', lw=2)
+                    ax.axvline(0, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+                    if shared_ylim_da is not None:
+                        ax.set_ylim(*shared_ylim_da)
+
+                if _model_mh.get('sig_DA') is not None:
+                    fig_da.suptitle(
+                        f'Dopamine: empirical vs predicted '
+                        f'(σ_DA = {_model_mh["sig_DA"]:.3f})',
+                        color=_tc['text'], fontsize=13,
+                    )
+                else:
+                    fig_da.suptitle(
+                        'Dopamine: empirical vs predicted',
+                        color=_tc['text'], fontsize=13,
+                    )
+                fig_da.tight_layout()
+                _show_fig(fig_da, 'dopamine_evolution.png')
+            else:
+                st.info(
+                    'Dopamine field detected but the fit\'s parameter names '
+                    'don\'t include `wr`, `wl`, `z` — skipping the dopamine '
+                    'plot.'
+                )
+
     # --- Hyperparameter table ---
     st.subheader('Optimised hyperparameters (log₂ scale)')
     import pandas as pd
@@ -2808,20 +2909,33 @@ elif page == 'Model Recovery':
     def _load_builtin_model(name, **kwargs):
         if name == 'Race model (inverse-Gaussian)':
             from psytrax.models import race as _m
+            _race_dh = (
+                _m.default_model_hyper_with_dopamine
+                if kwargs.get('race_with_dopamine')
+                else _m.default_model_hyper
+            )
+            _da_blurb = (
+                ' Joint dopamine fit is enabled: each trial also emits a '
+                '`dopamine` value drawn from `N(σ(w_eff · c / z), sig_DA²)` '
+                '(`w_eff = wr` if `c ≥ 0` else `wl`), and the fit estimates '
+                '`sig_DA` jointly with `sig_i`.'
+                if kwargs.get('race_with_dopamine') else ''
+            )
             return {
                 'log_lik_trial': _m.log_lik_trial, 'sample_trial': _m.sample_trial,
                 'N_PARAMS': _m.N_PARAMS, 'PARAM_NAMES': list(_m.PARAM_NAMES),
                 'default_hyper': _m.default_hyper, 'default_E0': _m.default_E0,
-                'default_model_hyper': _m.default_model_hyper,
-                'DATA_SPEC': _m.DATA_SPEC, 'family': 'race',
-                'desc': """
+                'default_model_hyper': _race_dh,
+                'DATA_SPEC': _m.DATA_SPEC,
+                'family': 'race',
+                'desc': f"""
 **Race model** — two independent inverse-Gaussian accumulators racing to a shared
 threshold *z*. The first accumulator to hit threshold determines the choice; its
 first-passage time is the reaction time. The five trial-varying parameters are
 right/left drift weights (`wr`, `wl`), right/left baseline drifts (`br`, `bl`),
 and the shared threshold `z`. The within-trial accumulator noise `sig_i` is a
 model-level scalar estimated by Empirical Bayes alongside the random-walk noise
-`sigma`. Inputs: signed contrast `c`. Outputs: choice + RT.
+`sigma`. Inputs: signed contrast `c`. Outputs: choice + RT.{_da_blurb}
 """,
             }
         if name == 'DDM — exact (Navarro & Fuss 2009)':
@@ -2874,6 +2988,20 @@ is modelled.
         _logistic_keys_for_recovery = (
             [k.strip() for k in _rec_logistic_keys_str.split(',') if k.strip()]
             or ['c']
+        )
+
+    # Race model can additionally fit a per-trial dopamine peak, modelled as
+    # N(σ(w_eff·c/z), sig_DA²) with sig_DA estimated by EB.
+    _rec_race_with_dopamine = False
+    if _rec_model_choice == 'Race model (inverse-Gaussian)':
+        _rec_race_with_dopamine = st.checkbox(
+            'Include dopamine signal (joint choice + RT + dopamine fit)',
+            value=False,
+            key='rec_race_with_dopamine',
+            help='Add a per-trial dopamine peak to the simulated data and '
+                 'fit it with a Gaussian likelihood whose mean is '
+                 'σ(w_eff · c / z) (w_eff = wr if c ≥ 0 else wl) and whose '
+                 'variance (sig_DA²) is estimated jointly with sig_i.',
         )
 
     _rec_bundle = None
@@ -2931,6 +3059,7 @@ is modelled.
         _rec_bundle = _load_builtin_model(
             _rec_model_choice,
             logistic_keys=_logistic_keys_for_recovery,
+            race_with_dopamine=_rec_race_with_dopamine,
         )
 
     if _rec_bundle is None:
@@ -3833,6 +3962,93 @@ is modelled.
                                        color=_tc['text'], fontsize=12)
                         fig_c.tight_layout()
                         _show_fig(fig_c, 'recovery_chronometric_quartiles.png')
+
+                # --- Dopamine quartiles (race + sig_DA only) ----------------
+                _da_truth = sim_data_truth.get('dopamine')
+                _da_rec   = data_rec_sim.get('dopamine') if data_rec_sim else None
+                if (model_family == 'race'
+                        and _da_truth is not None
+                        and _da_rec is not None):
+                    fig_d, axes_d = plt.subplots(2, 2, figsize=(11, 8))
+                    _tc = _style_fig(fig_d)
+                    da_truth = np.asarray(_da_truth, dtype=float)
+                    da_rec   = np.asarray(_da_rec,   dtype=float)
+                    try:
+                        _wr_idx = list(param_names_r).index('wr')
+                        _wl_idx = list(param_names_r).index('wl')
+                        _z_idx  = list(param_names_r).index('z')
+                    except ValueError:
+                        _wr_idx = None
+
+                    if _wr_idx is not None:
+                        for wi, ax in enumerate(axes_d.flat):
+                            t0, t1 = int(edges[wi]), int(edges[wi + 1])
+                            c_win  = c_data[t0:t1]
+                            da_t_w = da_truth[t0:t1]
+                            da_r_w = da_rec[t0:t1]
+                            mask_t = np.isfinite(da_t_w)
+                            mask_r = np.isfinite(da_r_w)
+                            c_uniq = np.unique(c_win)
+
+                            da_t_emp = np.array([
+                                da_t_w[mask_t & (c_win == cv)].mean()
+                                if np.any(mask_t & (c_win == cv)) else np.nan
+                                for cv in c_uniq
+                            ])
+                            da_r_emp = np.array([
+                                da_r_w[mask_r & (c_win == cv)].mean()
+                                if np.any(mask_r & (c_win == cv)) else np.nan
+                                for cv in c_uniq
+                            ])
+                            n_w = np.array([np.sum(c_win == cv) for cv in c_uniq])
+
+                            wr_t = true_params_r[_wr_idx, t0:t1]
+                            wl_t = true_params_r[_wl_idx, t0:t1]
+                            z_t  = np.where(true_params_r[_z_idx, t0:t1] > 0,
+                                            true_params_r[_z_idx, t0:t1], 1.0)
+                            wr_r = recovered[_wr_idx, t0:t1]
+                            wl_r = recovered[_wl_idx, t0:t1]
+                            z_r  = np.where(recovered[_z_idx, t0:t1] > 0,
+                                            recovered[_z_idx, t0:t1], 1.0)
+                            curve_t = np.array([
+                                np.mean(1.0 / (1.0 + np.exp(
+                                    -(np.where(cv >= 0, wr_t, wl_t) * cv / z_t)
+                                )))
+                                for cv in c_grid
+                            ])
+                            curve_r = np.array([
+                                np.mean(1.0 / (1.0 + np.exp(
+                                    -(np.where(cv >= 0, wr_r, wl_r) * cv / z_r)
+                                )))
+                                for cv in c_grid
+                            ])
+
+                            _style_ax(ax, xlabel='Signed contrast',
+                                      ylabel='Dopamine peak (a.u.)',
+                                      title=f'Trials {t0 + 1}–{t1}')
+                            sizes = [max(10, n / 4) for n in n_w]
+                            ax.scatter(c_uniq, da_t_emp, s=sizes,
+                                       color=_tc['text'], alpha=0.85,
+                                       label='truth (sim)')
+                            ax.scatter(c_uniq, da_r_emp, s=sizes,
+                                       color='#4e9af1', alpha=0.85, marker='x',
+                                       label='recovered (sim)')
+                            ax.plot(c_grid, curve_t, color='#000000', lw=1.5,
+                                    label='truth (analytic)')
+                            ax.plot(c_grid, curve_r, color='#4e9af1', lw=1.5,
+                                    ls='--', label='recovered (analytic)')
+                            ax.axvline(0, color=_tc['text'], lw=0.5,
+                                       ls='--', alpha=0.4)
+                            if wi == 0:
+                                _style_legend(ax, fontsize=8, loc='best')
+
+                        fig_d.suptitle(
+                            'Dopamine quartiles: truth vs recovered',
+                            color=_tc['text'], fontsize=12)
+                        fig_d.tight_layout()
+                        _show_fig(fig_d, 'recovery_dopamine_quartiles.png')
+                    else:
+                        plt.close(fig_d)
             except Exception as exc:
                 st.warning(f'Could not compute behavioural curves: {exc}')
         else:

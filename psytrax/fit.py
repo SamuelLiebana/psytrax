@@ -397,6 +397,12 @@ def _normalise_dat(raw):
     elif 'dayLength' in raw:
         dat['dayLength'] = np.asarray(raw['dayLength'])
 
+    # dopamine signal (optional, per-trial scalar — used by the race model
+    # when a sig_DA hyperparameter is provided). NaN entries mark missing
+    # trials and are masked out inside log_lik_trial.
+    if 'dopamine' in raw:
+        dat['dopamine'] = np.asarray(raw['dopamine'], dtype=float)
+
     return dat
 
 
@@ -438,6 +444,22 @@ def _validate_dat(dat):
         if np.any(T <= 0):
             raise ValueError("times must be strictly positive")
         dat['T'] = T
+
+    if 'dopamine' in dat:
+        da = np.asarray(dat['dopamine'], dtype=float)
+        if da.ndim != 1:
+            raise ValueError(
+                f"dopamine must be one-dimensional, got shape {da.shape}"
+            )
+        if da.shape[0] != N:
+            raise ValueError(
+                f"dopamine has {da.shape[0]} trials but responses have {N}"
+            )
+        # NaN is allowed and treated as 'missing' by log_lik_trial; only
+        # ±inf or non-numeric values are rejected here.
+        if np.any(np.isinf(da)):
+            raise ValueError("dopamine must not contain ±inf")
+        dat['dopamine'] = da
 
     if 'dayLength' in dat:
         day_length = np.asarray(dat['dayLength'])

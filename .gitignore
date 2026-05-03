@@ -11,3 +11,8 @@ fits/
 *.ipynb_checkpoints/
 .DS_Store
 .venv/
+
+# Large raw CSVs — keep out of the repo (multi-GB, distributed separately).
+# The per-mouse .npy files derived from them are the actual checked-in assets.
+data/*.csv
+data/with_dopamine/

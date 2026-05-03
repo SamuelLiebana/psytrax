@@ -17,6 +17,7 @@ model-level scalar (``sig_i`` — within-trial accumulator noise).
 See psytrax/_likelihood.py for JAX porting tips.
 """
 
+import jax
 import jax.numpy as jnp
 from jax import jit, lax
 from jax.scipy.stats.norm import logcdf as jax_logcdf
@@ -44,6 +45,15 @@ DATA_SPEC = {
         'description': 'Reaction time in seconds',
         'required': True,
     },
+    'dopamine': {
+        'key': 'dopamine',
+        'description': (
+            'Per-trial peak dopamine response (e.g. peak of MA(window=10) of '
+            'the stimulus-aligned signal in 0.2-0.35s). Optional. NaN marks a '
+            'missing trial. Activated by setting model_hyper["sig_DA"].'
+        ),
+        'required': False,
+    },
 }
 
 # Fixed observation noise (not fitted)
@@ -53,6 +63,9 @@ _INVALID_LOG_LIK = -1e12
 # Default initial value for the within-trial accumulator noise (used as the
 # starting point for the EB outer loop unless the caller overrides it).
 DEFAULT_SIG_I = 0.1
+# Default initial value for the dopamine observation noise (only used when
+# fitting the optional dopamine likelihood term).
+DEFAULT_SIG_DA = 0.2
 
 
 def default_model_hyper():
@@ -65,6 +78,22 @@ def default_model_hyper():
     return {'sig_i': float(DEFAULT_SIG_I)}
 
 
+def default_model_hyper_with_dopamine():
+    """Model-level hyperparameters when the dopamine term is enabled.
+
+    Returns the standard ``sig_i`` plus a ``sig_DA`` (Gaussian std on the
+    per-trial dopamine peak around the analytic prediction
+    ``σ(w_eff · c / z)``, where ``w_eff`` is ``wr`` when ``c >= 0`` and
+    ``wl`` otherwise).  Pass this dict explicitly to ``psytrax.fit(...,
+    model_hyper=...)`` when fitting the joint choice + RT + dopamine
+    likelihood.
+    """
+    return {
+        'sig_i':  float(DEFAULT_SIG_I),
+        'sig_DA': float(DEFAULT_SIG_DA),
+    }
+
+
 def log_lik_trial(params, dat_trial, model_hyper):
     """Per-trial log-likelihood of the race model.
 
@@ -72,13 +101,22 @@ def log_lik_trial(params, dat_trial, model_hyper):
     first-passage-time distributions.  The chosen option's accumulator hits
     threshold z first; the unchosen accumulator has not yet hit threshold.
 
+    When ``dat_trial`` contains a ``'dopamine'`` field and ``model_hyper``
+    contains a ``'sig_DA'`` scalar, an extra Gaussian likelihood term is
+    added:  the per-trial dopamine peak is modelled as
+    ``N(σ(w_eff · c / z), sig_DA²)`` where ``w_eff = wr if c >= 0 else wl``.
+    Trials whose dopamine value is NaN contribute zero to this term, so
+    per-trial missing data is allowed.
+
     Args:
         params      : (5,) array [wr, wl, br, bl, z]
         dat_trial   : dict with scalar fields
                       - inputs['c'] : signed contrast (positive = rightward)
                       - r           : response (1 = right, 0 = left)
                       - T           : reaction time
+                      - dopamine    : optional per-trial scalar (NaN allowed)
         model_hyper : dict with key 'sig_i' (within-trial accumulator noise)
+                      and optional 'sig_DA' (Gaussian std on dopamine peak).
 
     Returns:
         scalar log-likelihood for this trial
@@ -94,12 +132,52 @@ def log_lik_trial(params, dat_trial, model_hyper):
         (sig_i >= 0.0) &
         (T > 0.0)
     )
-    return lax.cond(
+    base = lax.cond(
         valid,
         lambda _: _log_lik_trial_valid(params, dat_trial, sig_i),
         lambda _: jnp.array(_INVALID_LOG_LIK, dtype=params.dtype),
         operand=None,
     )
+
+    # Dopamine term — Python-level conditional on dat_trial / model_hyper
+    # structure, evaluated once at trace time, so this stays JAX-safe under
+    # vmap.
+    if 'dopamine' in dat_trial and 'sig_DA' in model_hyper:
+        base = base + _log_lik_dopamine(params, dat_trial, model_hyper)
+    return base
+
+
+def _log_lik_dopamine(params, dat_trial, model_hyper):
+    """Gaussian log-likelihood of the per-trial dopamine peak.
+
+    NaN dopamine values are masked out (they contribute 0).  When ``z`` is
+    non-positive the prediction is undefined, so the term collapses to 0
+    rather than producing -inf — the choice/RT branch already imposes the
+    ``z > 0`` validity check on the rest of the trial likelihood.
+
+    The NaN dopamine value is replaced with a finite dummy *before* the
+    squared-error computation so that JAX's grad-through-``jnp.where``
+    doesn't propagate NaN gradients on missing trials.
+    """
+    wr, wl, br, bl, z = params
+    c   = dat_trial['inputs']['c']
+    da  = dat_trial['dopamine']
+    sig_DA = model_hyper['sig_DA']
+    w_eff = jnp.where(c >= 0.0, wr, wl)
+    z_safe = jnp.where(z > 0.0, z, 1.0)
+    pred = jax.nn.sigmoid(w_eff * c / z_safe)
+    valid = (
+        jnp.isfinite(da)
+        & jnp.isfinite(sig_DA)
+        & (sig_DA > 0.0)
+        & (z > 0.0)
+    )
+    # Mask NaN/inf dopamine to a finite dummy so neither value nor gradient
+    # picks up a NaN from the masked-out branch.
+    da_safe = jnp.where(jnp.isfinite(da), da, 0.0)
+    log_norm = -jnp.log(sig_DA) - 0.5 * jnp.log(2.0 * jnp.pi)
+    sq       = -0.5 * ((da_safe - pred) / sig_DA) ** 2
+    return jnp.where(valid, log_norm + sq, jnp.array(0.0, dtype=params.dtype))
 
 
 def _log_lik_trial_valid(params, dat_trial, sig_i):
@@ -197,8 +275,21 @@ def sample_trial(params, dat_trial, rng, model_hyper):
     t_l = _sample_inv_gauss_fpt(z, drift_l, v_l, rng)
 
     if t_r < t_l:
-        return {'r': 1.0, 'T': float(t_r)}
-    return {'r': 0.0, 'T': float(t_l)}
+        out = {'r': 1.0, 'T': float(t_r)}
+    else:
+        out = {'r': 0.0, 'T': float(t_l)}
+
+    # Optional dopamine sample — emitted only when sig_DA is in model_hyper
+    # so existing simulations keep their (r, T)-only output.
+    if 'sig_DA' in model_hyper:
+        sig_DA = float(model_hyper['sig_DA'])
+        if z > 0.0 and sig_DA > 0.0:
+            w_eff = wr if c >= 0.0 else wl
+            pred = 1.0 / (1.0 + np.exp(-(w_eff * c / z)))
+            out['dopamine'] = float(rng.normal(pred, sig_DA))
+        else:
+            out['dopamine'] = float('nan')
+    return out
 
 
 def _sample_inv_gauss_fpt(threshold, drift, variance, rng):
