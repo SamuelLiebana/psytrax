@@ -225,18 +225,20 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         # model_hyper entries (positivity is enforced via the log2 mapping).
         n_hyper_vals = len(optVals)
         bounds = [(-15, 5)] * n_hyper_vals
-        result = minimize(
-            _hyperOpt_lossfun,
+        result = _minimize_hyperparameters(
             optVals,
-            args=opt_keywords,
-            method='L-BFGS-B',
-            bounds=bounds,
-            options=opts,
+            opt_keywords,
+            bounds,
+            opts,
             callback=callback,
+            showOpt=showOpt,
+            status_callback=status_callback,
         )
 
         diff = np.linalg.norm((optVals - np.array(result.x)) / np.maximum(np.abs(optVals), 1e-8))
         if showOpt:
+            method_used = getattr(result, 'psytrax_method', result.get('method', 'unknown'))
+            print(f'Hyper optimiser: {method_used}')
             print(f'Recovered hypers: {np.array(result.x)}')
             print(f'Log-evidence:     {np.round(-result.fun, 5)}')
             print(f'Hyper change:     {np.round(diff, 4)}')
@@ -288,6 +290,99 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             hess_info['hyp_std_error'] = str(exc)
 
     return best_hyper, best_logEvd, best_eMode, hess_info, best_model_hyper
+
+
+def _minimize_hyperparameters(optVals, opt_keywords, bounds, opts, callback=None,
+                              showOpt=0, status_callback=None):
+    """Run the outer hyperparameter minimiser with a derivative-free fallback.
+
+    ``L-BFGS-B`` is fast when its line search can find a sensible local step.
+    On some full choice+RT+dopamine fits the decoupled evidence surface is very
+    high-curvature at the user-supplied starting point: finite differences show
+    a large gradient, but L-BFGS-B returns success with ``x`` unchanged.  In
+    that specific case we retry the same bounded objective with Powell, which
+    is slower but much harder to trap at the exact starting point.
+    """
+    optVals = np.array(optVals, dtype=float)
+    result = minimize(
+        _hyperOpt_lossfun,
+        optVals,
+        args=opt_keywords,
+        method='L-BFGS-B',
+        bounds=bounds,
+        options=opts,
+        callback=callback,
+    )
+    result.psytrax_method = 'L-BFGS-B'
+
+    if not _should_retry_hyper_minimize(result, optVals, bounds):
+        return result
+
+    _emit_status(
+        status_callback,
+        "L-BFGS-B did not move despite a non-zero hyperparameter gradient; retrying with Powell…",
+        stage="hyper",
+    )
+    if showOpt:
+        print("L-BFGS-B hyper step stalled; retrying with Powell...")
+
+    n_vals = len(optVals)
+    powell_options = {
+        'disp': False,
+        'maxiter': max(20, 4 * n_vals),
+        'maxfev': max(300, 45 * n_vals),
+        'xtol': 1e-3,
+        'ftol': 1e-3,
+    }
+    powell_result = minimize(
+        _hyperOpt_lossfun,
+        optVals,
+        args=opt_keywords,
+        method='Powell',
+        bounds=bounds,
+        options=powell_options,
+    )
+    powell_result.psytrax_method = 'Powell'
+
+    # Keep the original L-BFGS-B answer if Powell failed to improve the same
+    # raw objective; this preserves the fast path on genuinely flat surfaces.
+    improvement_tol = max(1e-8, 1e-8 * abs(float(result.fun)))
+    if (np.isfinite(powell_result.fun) and
+            float(powell_result.fun) < float(result.fun) - improvement_tol):
+        return powell_result
+    return result
+
+
+def _should_retry_hyper_minimize(result, optVals, bounds,
+                                 step_tol=1e-4, grad_tol=1e-2):
+    """Return True when L-BFGS-B appears to have stalled at a nonstationary point."""
+    x = np.asarray(result.x, dtype=float)
+    optVals = np.asarray(optVals, dtype=float)
+    rel_step = np.linalg.norm((x - optVals) / np.maximum(np.abs(optVals), 1e-8))
+    if rel_step > step_tol:
+        return False
+
+    jac = getattr(result, 'jac', None)
+    if jac is None:
+        return False
+    jac = np.asarray(jac, dtype=float)
+    if jac.shape != optVals.shape or not np.any(np.isfinite(jac)):
+        return False
+
+    free = np.ones_like(optVals, dtype=bool)
+    if bounds is not None:
+        for i, bound in enumerate(bounds):
+            if bound is None:
+                continue
+            lo, hi = bound
+            if lo is not None and optVals[i] <= lo + 1e-8 and jac[i] > 0:
+                free[i] = False
+            if hi is not None and optVals[i] >= hi - 1e-8 and jac[i] < 0:
+                free[i] = False
+
+    if not np.any(free):
+        return False
+    return np.nanmax(np.abs(jac[free])) > grad_tol
 
 
 def _emit_status(callback, message, stage=None, **extra):

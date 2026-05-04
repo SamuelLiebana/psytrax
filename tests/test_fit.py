@@ -3,10 +3,12 @@ from importlib.metadata import metadata
 import numpy as np
 import pytest
 from scipy.sparse import csc_matrix
+from scipy.optimize import OptimizeResult
 
 import psytrax
 import psytrax._execution as execution_mod
 from psytrax._helper.helperFunctions import sparse_logdet
+from psytrax._hyper_opt import _should_retry_hyper_minimize
 from psytrax._jax_map import _raise_if_invalid_solution
 from psytrax.fit import _is_retryable_fit_error, _model_default_E0
 from psytrax.models.logistic import N_PARAMS, default_E0, log_lik_trial
@@ -124,6 +126,22 @@ def test_sparse_logdet_regularizes_singular_matrix():
     mat = csc_matrix(np.array([[1.0, 0.0], [0.0, 0.0]]))
     value = sparse_logdet(mat)
     assert np.isfinite(value)
+
+
+def test_hyper_minimize_retry_detects_nonstationary_stall():
+    x0 = np.array([-1.0, -2.0])
+    result = OptimizeResult(x=x0.copy(), jac=np.array([12.0, 0.0]), fun=10.0)
+
+    assert _should_retry_hyper_minimize(result, x0, [(-15, 5), (-15, 5)])
+
+
+def test_hyper_minimize_retry_ignores_real_step_or_tiny_gradient():
+    x0 = np.array([-1.0, -2.0])
+    moved = OptimizeResult(x=np.array([-1.2, -2.0]), jac=np.array([12.0, 0.0]), fun=9.0)
+    stationary = OptimizeResult(x=x0.copy(), jac=np.array([1e-4, 0.0]), fun=10.0)
+
+    assert not _should_retry_hyper_minimize(moved, x0, [(-15, 5), (-15, 5)])
+    assert not _should_retry_hyper_minimize(stationary, x0, [(-15, 5), (-15, 5)])
 
 
 def test_model_default_e0_is_discovered_for_builtin_model():

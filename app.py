@@ -3779,12 +3779,38 @@ is modelled.
     # 3. Trajectory shape sliders + live mini-plot per parameter
     # ------------------------------------------------------------------
     st.subheader('3. True parameter trajectories')
-    st.caption(
-        'Each trajectory is `offset + slope · (t / N) + amplitude · sin(2π t / period + phase)`. '
-        'Set amplitude = 0 for a flat-or-linear evolution; sweep the phase '
-        'slider to shift where the oscillation starts. The mini-plot in each '
-        'expander updates live as you move the sliders.'
+
+    _rec_traj_method = st.radio(
+        'Trajectory generation method',
+        ['Slider-driven sinusoid', 'REINFORCE forward simulation'],
+        horizontal=True,
+        key='rec_traj_method',
+        help=(
+            '**Slider-driven** — each trajectory is a closed-form sinusoid '
+            'set by offset, slope, amplitude, period, and phase sliders. '
+            '**REINFORCE** — start from a fixed point and let each trajectory '
+            'evolve under the policy-gradient learning rule (Williams 1992) '
+            'plus Gaussian random walk. Gives a realistic "true" trajectory '
+            'for testing whether the EB fit recovers it both with and '
+            'without the matching learning-rule prior.'
+        ),
     )
+    _rec_use_reinforce = (_rec_traj_method == 'REINFORCE forward simulation')
+
+    if _rec_use_reinforce:
+        st.caption(
+            'Trial *t*: sample a response, compute reward (1 if choice '
+            'matches `sign(c)`, else 0; tie-broken at random when `c = 0`), '
+            'update each parameter by `α · ∇_θ log p(y | x, θ)` × reward, '
+            'then add `𝒩(0, σ²_walk)` noise.'
+        )
+    else:
+        st.caption(
+            'Each trajectory is `offset + slope · (t / N) + amplitude · sin(2π t / period + phase)`. '
+            'Set amplitude = 0 for a flat-or-linear evolution; sweep the phase '
+            'slider to shift where the oscillation starts. The mini-plot in each '
+            'expander updates live as you move the sliders.'
+        )
 
     _default_E0_fn = _rec_bundle.get('default_E0')
     if callable(_default_E0_fn):
@@ -3876,7 +3902,73 @@ is modelled.
         return traj
 
     _rec_traj_specs = {}
-    for k, name in enumerate(_rec_bundle['PARAM_NAMES']):
+    # REINFORCE settings (only filled when _rec_use_reinforce is True);
+    # populated below the slider block.
+    _rec_reinforce_cfg = None
+
+    if _rec_use_reinforce:
+        st.markdown(
+            '**Initial parameter values, learning rates, and random-walk '
+            'noise** — one row per parameter.  Defaults reflect the model\'s '
+            '`default_E0`/`default_hyper` where available.'
+        )
+        _re_cfg = {'params_0': {}, 'alpha': {}, 'sigma_walk': {}}
+        # Reasonable per-family alpha defaults: weights learn ~10× faster
+        # than baselines for the race model; threshold is mostly stable.
+        _ALPHA_DEFAULTS = {
+            'race': {'wr': 0.05, 'wl': 0.05, 'br': 0.02, 'bl': 0.02, 'z': 0.0},
+            'ddm_exact': {'w': 0.05, 'b': 0.02, 'a': 0.0},
+            'logistic': None,  # all params get 0.05
+        }
+        family_alphas = _ALPHA_DEFAULTS.get(_rec_bundle['family'], None)
+        for k, name in enumerate(_rec_bundle['PARAM_NAMES']):
+            # Default initial value: first column of default_E0 if available,
+            # else 0 (logistic) or 0.5 (other).
+            if _default_E0_arr is not None and k < _default_E0_arr.shape[0]:
+                d_init = float(_default_E0_arr[k, 0])
+            else:
+                d_init = 0.0
+            d_alpha = (family_alphas or {}).get(name, 0.05)
+            d_sigma = 0.02
+
+            cols = st.columns(3)
+            with cols[0]:
+                _re_cfg['params_0'][name] = st.number_input(
+                    f'`{name}` initial value',
+                    value=float(d_init),
+                    step=0.05,
+                    format='%.4f',
+                    key=f'rec_re_init_{_rec_bundle["family"]}_{name}',
+                )
+            with cols[1]:
+                _re_cfg['alpha'][name] = st.number_input(
+                    f'`{name}` learning rate α',
+                    value=float(d_alpha),
+                    min_value=0.0,
+                    step=0.005,
+                    format='%.4f',
+                    key=f'rec_re_alpha_{_rec_bundle["family"]}_{name}',
+                    help='Set to 0 to freeze this parameter at its initial '
+                         'value (only the random walk will move it).',
+                )
+            with cols[2]:
+                _re_cfg['sigma_walk'][name] = st.number_input(
+                    f'`{name}` σ_walk',
+                    value=float(d_sigma),
+                    min_value=0.0,
+                    step=0.005,
+                    format='%.4f',
+                    key=f'rec_re_sigma_{_rec_bundle["family"]}_{name}',
+                    help='Per-parameter Gaussian random-walk std added on '
+                         'top of the REINFORCE update each trial.',
+                )
+        _rec_reinforce_cfg = _re_cfg
+
+    # The big per-parameter slider expanders only run in slider-driven mode;
+    # in REINFORCE mode the trajectories come from the forward simulator.
+    _slider_loop = (enumerate(_rec_bundle['PARAM_NAMES'])
+                    if not _rec_use_reinforce else iter([]))
+    for k, name in _slider_loop:
         with st.expander(f'`{name}` trajectory shape', expanded=(k == 0)):
             _default_lo, _default_hi = _bounds_for(name)
 
@@ -3983,13 +4075,18 @@ is modelled.
             st.pyplot(_mini_fig, use_container_width=True)
             plt.close(_mini_fig)
 
-    # Build the truth trajectory matrix.  Bounds are applied per parameter
-    # (clipped for race / DDM, left free for logistic / unbounded params).
-    true_params = np.stack([
-        _make_traj(*_rec_traj_specs[name][:5], N_rec,
-                   bounds=_rec_traj_specs[name][5])
-        for name in _rec_bundle['PARAM_NAMES']
-    ])
+    # Build the truth trajectory matrix when in slider-driven mode.  In
+    # REINFORCE mode the trajectory is produced by the forward simulator
+    # inside the worker thread (it depends on the random seed and reward
+    # outcomes), so true_params is built there instead.
+    if _rec_use_reinforce:
+        true_params = None
+    else:
+        true_params = np.stack([
+            _make_traj(*_rec_traj_specs[name][:5], N_rec,
+                       bounds=_rec_traj_specs[name][5])
+            for name in _rec_bundle['PARAM_NAMES']
+        ])
 
     st.divider()
 
@@ -4044,6 +4141,26 @@ is modelled.
     if 'rec_error' not in st.session_state:
         st.session_state['rec_error'] = None
 
+    # Dual-fit comparison: only meaningful when truth came from REINFORCE.
+    if _rec_use_reinforce:
+        _rec_compare_fits = st.checkbox(
+            'Also fit with zero-centered prior (compare log evidence)',
+            value=True,
+            key='rec_compare_fits',
+            help=(
+                'Runs two fits on the same simulated data: '
+                '(a) **REINFORCE prior** — random-walk transition mean is '
+                'the policy-gradient score function (matches the truth-'
+                'generating process), and '
+                '(b) **zero-centred prior** — vanilla random walk with '
+                'mean 0 (no learning rule). '
+                'Compares log_evidence to quantify how much the matched '
+                'prior helps.'
+            ),
+        )
+    else:
+        _rec_compare_fits = False
+
     run_rec = st.button(
         'Simulate + fit', key='rec_run_btn', type='primary',
         disabled=st.session_state['rec_running'],
@@ -4083,7 +4200,8 @@ is modelled.
         _bundle_local        = _rec_bundle
         _N_local             = int(N_rec)
         _seed_local          = int(seed_rec)
-        _true_params_local   = np.array(true_params, copy=True)
+        _true_params_local   = (np.array(true_params, copy=True)
+                                if true_params is not None else None)
         _value_pools_local   = {
             k: (
                 {'mode': 'continuous', 'range': tuple(spec['range'])}
@@ -4095,6 +4213,21 @@ is modelled.
         }
         _true_mh_local       = dict(_rec_true_mh)
         _init_mh_local       = dict(_rec_init_mh)
+        _use_reinforce_local = bool(_rec_use_reinforce)
+        _compare_fits_local  = bool(_rec_compare_fits)
+        _reinforce_cfg_local = (
+            None if not _use_reinforce_local else {
+                'params_0':   np.array(
+                    [_rec_reinforce_cfg['params_0'][n]
+                     for n in _rec_bundle['PARAM_NAMES']], dtype=float),
+                'alpha':      np.array(
+                    [_rec_reinforce_cfg['alpha'][n]
+                     for n in _rec_bundle['PARAM_NAMES']], dtype=float),
+                'sigma_walk': np.array(
+                    [_rec_reinforce_cfg['sigma_walk'][n]
+                     for n in _rec_bundle['PARAM_NAMES']], dtype=float),
+            }
+        )
 
         def _run_recovery():
             try:
@@ -4106,16 +4239,36 @@ is modelled.
                         inputs[k] = rng.uniform(lo, hi, size=_N_local)
                     else:
                         inputs[k] = rng.choice(spec['values'], size=_N_local)
-                _rec_status_cb({'message': f'Simulating {_N_local} trials…',
-                                'stage': 'simulate'})
+
                 t0 = _rec_time.time()
-                data = psytrax.simulate(
-                    _bundle_local['sample_trial'],
-                    _true_params_local,
-                    inputs,
-                    rng=rng,
-                    model_hyper=_true_mh_local,
-                )
+                if _use_reinforce_local:
+                    _rec_status_cb({
+                        'message': f'Forward-simulating {_N_local} REINFORCE trials…',
+                        'stage':   'simulate',
+                    })
+                    from psytrax.learning_rules import (
+                        make_reinforce, simulate_with_learning_rule,
+                    )
+                    _lr = make_reinforce(_bundle_local['log_lik_trial'])
+                    _true_params_run, data = simulate_with_learning_rule(
+                        _bundle_local['sample_trial'], _lr,
+                        params_0=_reinforce_cfg_local['params_0'],
+                        inputs=inputs,
+                        alpha=_reinforce_cfg_local['alpha'],
+                        sigma_walk=_reinforce_cfg_local['sigma_walk'],
+                        rng=rng, model_hyper=_true_mh_local,
+                    )
+                else:
+                    _rec_status_cb({'message': f'Simulating {_N_local} trials…',
+                                    'stage': 'simulate'})
+                    data = psytrax.simulate(
+                        _bundle_local['sample_trial'],
+                        _true_params_local,
+                        inputs,
+                        rng=rng,
+                        model_hyper=_true_mh_local,
+                    )
+                    _true_params_run = _true_params_local
                 t_sim = _rec_time.time() - t0
                 _rec_status_cb({'message': f'Simulated in {t_sim:.1f}s — running EB fit…',
                                 'stage': 'fit_start'})
@@ -4144,17 +4297,56 @@ is modelled.
                 if _init_mh_local:
                     fit_kwargs['model_hyper'] = _init_mh_local
 
+                # The "primary" fit always uses the same prior the truth
+                # was generated under: REINFORCE in REINFORCE mode, zero-
+                # centred otherwise.  When the user has asked for the
+                # comparison, we run a SECOND fit afterwards with the
+                # opposite prior (zero-centred) on the same data.
+                primary_kwargs = dict(fit_kwargs)
+                if _use_reinforce_local:
+                    from psytrax.learning_rules import make_reinforce
+                    primary_kwargs['learning_rule'] = make_reinforce(
+                        _bundle_local['log_lik_trial']
+                    )
+                    primary_label = 'REINFORCE prior'
+                else:
+                    primary_label = 'zero-centred prior'
+
                 t0 = _rec_time.time()
-                result = psytrax.fit(**fit_kwargs)
+                result = psytrax.fit(**primary_kwargs)
                 t_fit = _rec_time.time() - t0
+                result['fit_label']        = primary_label
+
+                # Optional companion fit with the opposite prior.
+                companion = None
+                if _compare_fits_local and _use_reinforce_local:
+                    _rec_status_cb({
+                        'message': ('Comparison fit with zero-centred prior '
+                                    '(no learning rule)…'),
+                        'stage':   'fit_compare',
+                    })
+                    comp_kwargs = dict(fit_kwargs)
+                    comp_kwargs.pop('learning_rule', None)
+                    t0c = _rec_time.time()
+                    companion = psytrax.fit(**comp_kwargs)
+                    companion['fit_label']    = 'zero-centred prior'
+                    companion['fit_time']     = _rec_time.time() - t0c
+                    companion['true_params']  = _true_params_run
+                    companion['true_model_hyper'] = _true_mh_local
 
                 # Augment the result with truth so it's self-contained
-                result['true_params']      = _true_params_local
+                result['true_params']      = _true_params_run
                 result['true_model_hyper'] = _true_mh_local
                 result['simulated_data']   = data
                 result['simulate_time']    = t_sim
                 result['fit_time']         = t_fit
                 result['model_family']     = _bundle_local['family']
+                result['traj_method']      = (
+                    'reinforce' if _use_reinforce_local else 'slider')
+                if _use_reinforce_local:
+                    result['reinforce_cfg'] = _reinforce_cfg_local
+                if companion is not None:
+                    result['companion_fit'] = companion
                 result['input_modes']      = {
                     k: spec.get('mode', 'discrete')
                     for k, spec in _value_pools_local.items()
@@ -4289,6 +4481,7 @@ is modelled.
         param_names_r = result_rec['param_names']
         K_r, N_r      = recovered.shape
         W_std_rec     = (result_rec.get('hess_info') or {}).get('W_std')
+        companion_fit = result_rec.get('companion_fit')
 
         n_cols = min(K_r, 3)
         n_rows = int(np.ceil(K_r / n_cols))
@@ -4298,11 +4491,19 @@ is modelled.
         _tc = _style_fig(fig_rec)
         trials_rec = np.arange(N_r)
 
+        primary_label   = result_rec.get('fit_label',   'recovered')
+        companion_label = (companion_fit.get('fit_label', 'recovered (alt prior)')
+                           if companion_fit else None)
+        recovered_alt   = companion_fit['params'] if companion_fit else None
+        W_std_alt       = ((companion_fit.get('hess_info') or {}).get('W_std')
+                           if companion_fit else None)
+
         per_param_summary = []
         for k, (ax, name) in enumerate(zip(axes_rec.flat, param_names_r)):
             _style_ax(ax, xlabel='Trial', title=name)
             ax.plot(trials_rec, true_params_r[k], color='#000000', lw=1.5, label='true')
-            ax.plot(trials_rec, recovered[k], color='#4e9af1', lw=1.0, label='recovered')
+            ax.plot(trials_rec, recovered[k], color='#4e9af1', lw=1.0,
+                    label=primary_label)
             if W_std_rec is not None:
                 ax.fill_between(
                     trials_rec,
@@ -4310,6 +4511,16 @@ is modelled.
                     recovered[k] + W_std_rec[k],
                     color='#4e9af1', alpha=0.15,
                 )
+            if recovered_alt is not None:
+                ax.plot(trials_rec, recovered_alt[k], color='#f1a44e', lw=1.0,
+                        ls='--', label=companion_label)
+                if W_std_alt is not None:
+                    ax.fill_between(
+                        trials_rec,
+                        recovered_alt[k] - W_std_alt[k],
+                        recovered_alt[k] + W_std_alt[k],
+                        color='#f1a44e', alpha=0.10,
+                    )
             if k == 0:
                 _style_legend(ax)
             mae = float(np.mean(np.abs(recovered[k] - true_params_r[k])))
@@ -4317,7 +4528,18 @@ is modelled.
                 corr = float(np.corrcoef(recovered[k], true_params_r[k])[0, 1])
             else:
                 corr = float('nan')
-            per_param_summary.append({'parameter': name, 'MAE': mae, 'corr': corr})
+            row = {'parameter': name,
+                   f'MAE ({primary_label})': mae,
+                   f'corr ({primary_label})': corr}
+            if recovered_alt is not None:
+                mae_a = float(np.mean(np.abs(recovered_alt[k] - true_params_r[k])))
+                if np.std(true_params_r[k]) > 0 and np.std(recovered_alt[k]) > 0:
+                    corr_a = float(np.corrcoef(recovered_alt[k], true_params_r[k])[0, 1])
+                else:
+                    corr_a = float('nan')
+                row[f'MAE ({companion_label})']  = mae_a
+                row[f'corr ({companion_label})'] = corr_a
+            per_param_summary.append(row)
 
         for ax in axes_rec.flat[K_r:]:
             ax.set_visible(False)
@@ -4325,6 +4547,21 @@ is modelled.
                          color=_tc['text'], fontsize=12)
         fig_rec.tight_layout()
         _show_fig(fig_rec, 'recovery_overlay.png')
+
+        # Log-evidence comparison block (only when both fits ran).
+        if companion_fit is not None:
+            le_p = float(result_rec.get('log_evidence', float('nan')))
+            le_c = float(companion_fit.get('log_evidence', float('nan')))
+            d    = le_p - le_c
+            st.markdown('**Log-evidence comparison**')
+            cmp_cols = st.columns(3)
+            cmp_cols[0].metric(primary_label,   f'{le_p:.2f}')
+            cmp_cols[1].metric(companion_label, f'{le_c:.2f}')
+            cmp_cols[2].metric('Δ (primary − alt)', f'{d:+.2f}',
+                               help=('Positive Δ means the matched-prior '
+                                     '(REINFORCE) fit assigns higher marginal '
+                                     'likelihood to the simulated data than '
+                                     'the zero-centred prior.'))
 
         st.subheader('Per-parameter recovery quality')
         st.dataframe(

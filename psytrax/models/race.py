@@ -115,7 +115,7 @@ def default_model_hyper_with_dopamine():
     }
 
 
-def log_lik_trial(params, dat_trial, model_hyper):
+def log_lik_trial(params, dat_trial, model_hyper=None):
     """Per-trial log-likelihood of the race model.
 
     The model assumes two accumulators (right / left) with inverse-Gaussian
@@ -147,6 +147,15 @@ def log_lik_trial(params, dat_trial, model_hyper):
     Returns:
         scalar log-likelihood for this trial
     """
+    # Backwards compatibility: older examples/tests treated sig_i as a sixth
+    # trial-varying parameter and called log_lik_trial without model_hyper.
+    if model_hyper is None:
+        if params.shape[0] == N_PARAMS + 1:
+            model_hyper = {'sig_i': params[-1]}
+            params = params[:N_PARAMS]
+        else:
+            model_hyper = default_model_hyper()
+
     wr, wl, br, bl, z = params
     sig_i = model_hyper['sig_i']
     T = dat_trial['T']
