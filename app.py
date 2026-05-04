@@ -1660,6 +1660,11 @@ def learning_rule(params, dat_trial):
                     param_names=_pnames,
                 )
 
+                # Defensive: force-enable model_hyper optimisation explicitly
+                # so even an older deployed psytrax (where the default may
+                # differ) still EB-optimises every model_hyper key.
+                fit_kwargs['optimise_model_hyper'] = True
+
                 # Joint dopamine fit (race only, opt-in via UI checkbox).
                 if _race_with_dopamine:
                     _mh_init = _race_module.default_model_hyper_with_dopamine()
@@ -1839,6 +1844,26 @@ def learning_rule(params, dat_trial):
             st.markdown('**Optimised model-level hyperparameters**')
             st.dataframe(pd.DataFrame(mh_rows).set_index('hyperparameter'),
                          use_container_width=True)
+
+            # Diagnostic: show exactly which model_hyper keys EB actually
+            # optimised on this run.  If this list is empty (or missing
+            # da_beta / da_offset) while the table above shows initial ==
+            # recovered for those keys, the deployed psytrax wheel is
+            # stale — Reboot the app on Streamlit Cloud, and if that
+            # doesn't help, switch the trailing `.` in `requirements.txt`
+            # to `-e .` so the source is always live.
+            _hess = res.get('hess_info') or {}
+            _mh_optlist = _hess.get('hyp_model_hyper_optList') or []
+            _hyp_optlist = _hess.get('hyp_optList') or []
+            st.caption(
+                f':grey[EB optimised: '
+                f'`hyper={_hyp_optlist}`, '
+                f'`model_hyper={_mh_optlist}`. '
+                'Any model_hyper key listed here was passed through to the '
+                'outer L-BFGS-B loop; an empty list (or one missing '
+                '`da_beta` / `da_offset`) on a `with_dopamine` fit indicates '
+                'a stale psytrax install on the deployment.]'
+            )
 
         with open(path, 'rb') as f:
             st.download_button(
