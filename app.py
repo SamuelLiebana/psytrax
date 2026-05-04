@@ -426,7 +426,56 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
         key=f'fit_traj_mode{key_suffix}',
     )
 
-    if traj_mode == 'Separate':
+    # Race-family layout: pair the symmetric weights so the eye can compare
+    # left vs right.  Built on a 4-row × 3-column gridspec where every panel
+    # spans 2 grid-rows, so all five sub-axes end up the same size.
+    #
+    #   wr | wl |       ← rows 0–1, shared y-axis (drift weights)
+    #   br | bl |  z    ← z spans rows 1–2 (vertically centred between the
+    #                    upper and lower pairs) — same size as the others
+    #
+    is_race = set(param_names) >= {'wr', 'wl', 'br', 'bl', 'z'}
+
+    if traj_mode == 'Separate' and is_race:
+        idx = {n: i for i, n in enumerate(param_names)}
+        fig = plt.figure(figsize=(13, 7))
+        _tc = _style_fig(fig)
+        gs = fig.add_gridspec(4, 3, hspace=0.55, wspace=0.18)
+        # wr / wl on rows 0–1 (top half), shared y.
+        ax_wr = fig.add_subplot(gs[0:2, 0])
+        ax_wl = fig.add_subplot(gs[0:2, 1], sharey=ax_wr)
+        # br / bl on rows 2–3 (bottom half), shared y.
+        ax_br = fig.add_subplot(gs[2:4, 0])
+        ax_bl = fig.add_subplot(gs[2:4, 1], sharey=ax_br)
+        # z spans rows 1–2 in the right column → same panel size as the
+        # left-column ones, vertically centred between the wr/wl and br/bl
+        # rows.
+        ax_z  = fig.add_subplot(gs[1:3, 2])
+
+        def _draw(ax, name, idx_in_palette, hide_y=False):
+            col = _TRAJ_COLORS[idx_in_palette % len(_TRAJ_COLORS)]
+            _style_ax(ax, xlabel='Trial', title=name)
+            i = idx[name]
+            ax.plot(trials, params[i], color=col, lw=0.8, alpha=0.9)
+            if W_std is not None:
+                ax.fill_between(trials,
+                                params[i] - W_std[i], params[i] + W_std[i],
+                                color=col, alpha=0.2)
+            for b in boundaries[:-1]:
+                ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
+            if hide_y:
+                # Right-column panels share y with the left; drop their
+                # tick labels so the shared axis reads cleanly.
+                plt.setp(ax.get_yticklabels(), visible=False)
+
+        _draw(ax_wr, 'wr', 0)
+        _draw(ax_wl, 'wl', 1, hide_y=True)
+        _draw(ax_br, 'br', 2)
+        _draw(ax_bl, 'bl', 3, hide_y=True)
+        _draw(ax_z,  'z',  4)
+        _show_fig(fig, 'param_trajectories.png')
+
+    elif traj_mode == 'Separate':
         n_cols = min(K, 3)
         n_rows = int(np.ceil(K / n_cols))
         fig, axes = plt.subplots(n_rows, n_cols,
@@ -1035,6 +1084,28 @@ columns to the required fields.
             ':grey[Dopamine fit disabled — the loaded dataset does not '
             'contain a `dopamine` field.]'
         )
+
+    # Diagnostic: show exactly what the *deployed* psytrax exposes for the
+    # joint dopamine fit.  If this only lists `sig_i, sig_DA` (or omits
+    # `da_beta` / `da_offset`), the Streamlit Cloud build is using a stale
+    # psytrax wheel — `Reboot app` again, or set `requirements.txt` to use
+    # `-e .` instead of `.` so the source is always live.
+    if _race_with_dopamine:
+        try:
+            from psytrax.models import race as _race_diag
+            _diag_mh = (_race_diag.default_model_hyper_with_dopamine()
+                        if hasattr(_race_diag, 'default_model_hyper_with_dopamine')
+                        else _race_diag.default_model_hyper())
+            st.caption(
+                f':grey[Deployed `default_model_hyper_with_dopamine()` returns '
+                f'`{_diag_mh}` — should contain all of '
+                '`sig_i`, `sig_DA`, `da_beta`, `da_offset`. Anything missing '
+                'means a stale psytrax install.]'
+            )
+        except Exception as _diag_exc:
+            st.caption(
+                f':red[Could not inspect deployed psytrax: `{_diag_exc}`]'
+            )
 
     st.divider()
 
