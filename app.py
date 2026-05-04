@@ -391,6 +391,80 @@ def _shared_ylim(series_list, pad_frac=0.05, min_pad=0.05):
     return ymin - pad, ymax + pad
 
 
+_TRAJ_COLORS = ['#4e9af1', '#f1a44e', '#4ef17a', '#f14e7a', '#c44ef1', '#f1f14e']
+
+
+def _render_parameter_trajectories(result, *, key_suffix=''):
+    """Inline plot of the K trial-by-trial parameter trajectories.
+
+    Mirrors the corresponding block in Visualise Results so the Fit Model
+    summary and the dedicated visualisation page render identical figures.
+
+    Args:
+        result      : dict — output of ``psytrax.fit`` (or the saved npy).
+        key_suffix  : appended to widget keys so this helper can be called
+                      multiple times on the same page without colliding
+                      with itself.
+    """
+    params      = result['params']
+    param_names = list(result['param_names'])
+    K, N        = params.shape
+    W_std       = (result.get('hess_info') or {}).get('W_std')
+    dat         = result.get('data') or {}
+
+    day_lengths = dat.get('dayLength') if dat.get('dayLength') is not None else np.array([])
+    boundaries  = (
+        np.cumsum(day_lengths).astype(int) if len(day_lengths) else np.array([], dtype=int)
+    )
+    trials = np.arange(N)
+
+    traj_mode = st.radio(
+        'Display mode',
+        ['Separate', 'Combined'],
+        horizontal=True,
+        label_visibility='collapsed',
+        key=f'fit_traj_mode{key_suffix}',
+    )
+
+    if traj_mode == 'Separate':
+        n_cols = min(K, 3)
+        n_rows = int(np.ceil(K / n_cols))
+        fig, axes = plt.subplots(n_rows, n_cols,
+                                 figsize=(5 * n_cols, 3 * n_rows),
+                                 squeeze=False)
+        _tc = _style_fig(fig)
+        for k, (ax, name) in enumerate(zip(axes.flat, param_names)):
+            col = _TRAJ_COLORS[k % len(_TRAJ_COLORS)]
+            _style_ax(ax, xlabel='Trial', title=name)
+            ax.plot(trials, params[k], color=col, lw=0.8, alpha=0.9)
+            if W_std is not None:
+                ax.fill_between(trials,
+                                params[k] - W_std[k], params[k] + W_std[k],
+                                color=col, alpha=0.2)
+            for b in boundaries[:-1]:
+                ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
+        for ax in axes.flat[K:]:
+            ax.set_visible(False)
+        fig.tight_layout()
+        _show_fig(fig, 'param_trajectories.png')
+    else:
+        fig, ax = plt.subplots(figsize=(12, 4))
+        _tc = _style_fig(fig)
+        _style_ax(ax, xlabel='Trial', ylabel='Parameter value')
+        for k, name in enumerate(param_names):
+            col = _TRAJ_COLORS[k % len(_TRAJ_COLORS)]
+            ax.plot(trials, params[k], color=col, lw=0.9, alpha=0.9, label=name)
+            if W_std is not None:
+                ax.fill_between(trials,
+                                params[k] - W_std[k], params[k] + W_std[k],
+                                color=col, alpha=0.15)
+        for b in boundaries[:-1]:
+            ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
+        _style_legend(ax)
+        fig.tight_layout()
+        _show_fig(fig, 'param_trajectories.png')
+
+
 def _render_quartile_plots(result, *, n_win=4):
     """Inline psychometric / chronometric / dopamine quartile plots.
 
@@ -1704,19 +1778,29 @@ def learning_rule(params, dat_trial):
                 key='fit_download',
             )
 
-        # Inline summary plots: psychometric, chronometric (where
-        # applicable), and dopamine (when present in data + race fit).
+        # Inline summary plots: parameter trajectories, then psychometric,
+        # chronometric (where applicable), and dopamine (when present in
+        # data + race fit).
         st.divider()
-        st.subheader('Quick summary plots')
+        st.subheader('Inferred parameter trajectories')
+        try:
+            _render_parameter_trajectories(res, key_suffix='_fit_post')
+        except Exception as exc:
+            st.warning(f'Could not render trajectories: {exc}')
+
+        st.divider()
+        st.subheader('Behavioural & dopamine validation plots')
         st.caption(
-            'Auto-rendered from the just-saved fit. For the full '
-            'visualisation (parameter trajectories, hyperparameter table, '
-            'credible intervals, …) open the file in **Visualise Results**.'
+            'Empirical bins (black) vs analytic curves from the recovered '
+            'trajectory (blue), broken down into four equally-sized trial '
+            'windows (early → late).  For the full breakdown '
+            '(hyperparameter table, credible intervals, …) open the saved '
+            'file in **Visualise Results**.'
         )
         try:
             _render_quartile_plots(res)
         except Exception as exc:
-            st.warning(f'Could not render inline plots: {exc}')
+            st.warning(f'Could not render quartile plots: {exc}')
 
         st.info('Load this file in **Visualise Results** or **Compare Models** for the full breakdown.')
 
