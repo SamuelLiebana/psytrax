@@ -297,12 +297,13 @@ def _minimize_hyperparameters(optVals, opt_keywords, bounds, opts, callback=None
                               showOpt=0, status_callback=None):
     """Run the outer hyperparameter minimiser.
 
-    An experimental JAX/Optax L-BFGS path is available behind
-    ``PSYTRAX_EXPERIMENTAL_JAX_HYPER=1``; it uses a custom block-tridiagonal
-    solve/logdet for the Laplace evidence.  The default remains the mature
-    SciPy objective.  ``L-BFGS-B`` can occasionally report success with ``x``
-    unchanged on that finite-difference objective, so the default path has a
-    bounded Powell escape hatch for nonstationary stalls.
+    The default path first tries a JAX/Optax L-BFGS hyperparameter update for
+    the standard trial-wise EB case.  It uses a cached, jitted block-tridiagonal
+    solve/logdet runner so repeated EB cycles do not rebuild the compiled
+    optimiser.  Unsupported cases fall through to the mature SciPy objective.
+    ``L-BFGS-B`` can occasionally report success with ``x`` unchanged on that
+    finite-difference objective, so the SciPy path has a bounded Powell escape
+    hatch for nonstationary stalls.
     """
     optVals = np.array(optVals, dtype=float)
 
@@ -365,8 +366,8 @@ def _minimize_hyperparameters(optVals, opt_keywords, bounds, opts, callback=None
 def _minimize_hyperparameters_jax(optVals, opt_keywords, bounds, opts,
                                   showOpt=0, status_callback=None):
     """JAX-native hyperparameter update for the standard trial-wise EB case."""
-    enabled = os.environ.get('PSYTRAX_EXPERIMENTAL_JAX_HYPER', '').lower()
-    if enabled not in {'1', 'true', 'yes'}:
+    disabled = os.environ.get('PSYTRAX_DISABLE_JAX_HYPER', '').lower()
+    if disabled in {'1', 'true', 'yes'}:
         return None
     if opt_keywords.get('method') is not None:
         return None
@@ -383,8 +384,6 @@ def _minimize_hyperparameters_jax(optVals, opt_keywords, bounds, opts,
         return None
 
     dat = opt_keywords['dat']
-    log_lik_fns = opt_keywords['log_lik_fns']
-    likelihood_terms_fn = log_lik_fns[1]
     hyper = opt_keywords['hyper']
     model_hyper = dict(opt_keywords.get('model_hyper') or {})
     optList = list(opt_keywords['optList'])
@@ -400,16 +399,76 @@ def _minimize_hyperparameters_jax(optVals, opt_keywords, bounds, opts,
     H_prev_blocks = _sparse_trial_blocks(H_sparse, K, N)
     LL_v_time = np.asarray(opt_keywords['LL_v'], dtype=float).reshape(K, N).T
 
-    dat_jax = _to_jax_for_hyper(dat, jnp, dtype)
-    H_prev_blocks_jax = jnp.asarray(H_prev_blocks, dtype=dtype)
-    LL_v_time_jax = jnp.asarray(LL_v_time, dtype=dtype)
-    optVals_jax = jnp.asarray(optVals, dtype=dtype)
-    lo = jnp.asarray([b[0] for b in bounds], dtype=dtype)
-    hi = jnp.asarray([b[1] for b in bounds], dtype=dtype)
+    try:
+        runner = _get_jax_hyper_runner(
+            opt_keywords, bounds, opts, jax, jnp, optax, dtype,
+            showOpt=showOpt, status_callback=status_callback,
+        )
+        if runner is None:
+            return None
+        model_hyper_jax = {
+            k: jnp.asarray(v, dtype=dtype)
+            for k, v in model_hyper.items()
+        }
+        x_final, f0, f_final, grad_norm, n_iter = runner(
+            jnp.asarray(optVals, dtype=dtype),
+            jnp.asarray(H_prev_blocks, dtype=dtype),
+            jnp.asarray(LL_v_time, dtype=dtype),
+            model_hyper_jax,
+        )
+        x_final = np.asarray(x_final, dtype=float)
+        f0 = float(f0)
+        f_final = float(f_final)
+        grad_norm = float(grad_norm)
+        n_iter = int(n_iter)
+    except Exception as exc:
+        if showOpt:
+            print(f'JAX hyper optimiser unavailable ({exc}); falling back to SciPy.')
+        return None
+
+    improvement_tol = max(1e-8, 1e-8 * abs(f0))
+    if not np.isfinite(f_final) or f_final >= f0 - improvement_tol:
+        if showOpt:
+            print(f'JAX hyper optimiser did not improve objective '
+                  f'({f0:.6g} -> {f_final:.6g}); falling back to SciPy.')
+        return None
+
+    result = OptimizeResult(
+        x=x_final,
+        fun=f_final,
+        success=True,
+        status=0,
+        message='JAX L-BFGS hyperparameter update',
+        nit=n_iter,
+        nfev=n_iter,
+        jac=None,
+    )
+    result.psytrax_method = 'JAX L-BFGS'
+    if showOpt:
+        print(f'JAX hyper grad norm: {grad_norm:.3e}')
+    return result
+
+
+def _get_jax_hyper_runner(opt_keywords, bounds, opts, jax, jnp, optax, dtype,
+                          showOpt=0, status_callback=None):
+    """Return a cached compiled JAX hyperparameter optimisation runner."""
+    dat = opt_keywords['dat']
+    hyper = opt_keywords['hyper']
+    optList = list(opt_keywords['optList'])
+    model_hyper = dict(opt_keywords.get('model_hyper') or {})
+    model_hyper_optList = list(opt_keywords.get('model_hyper_optList') or [])
+    likelihood_terms_fn = opt_keywords['log_lik_fns'][1]
+    ll_terms = opt_keywords['LL_terms']
+    K = int(ll_terms['K'])
+    N = int(dat['r'].shape[0])
+    max_iter = max(10, int((opts or {}).get('maxiter', 15)))
+    grad_tol = float((opts or {}).get('gtol', 1e-3))
 
     hyper_specs = []
     count = 0
     for key in optList:
+        if key not in hyper or hyper[key] is None:
+            return None
         n = 1 if np.isscalar(hyper[key]) else K
         hyper_specs.append((key, count, n))
         count += n
@@ -417,29 +476,53 @@ def _minimize_hyperparameters_jax(optVals, opt_keywords, bounds, opts,
     for key in model_hyper_optList:
         model_specs.append((key, count))
         count += 1
-    if count != len(optVals):
+    if count != len(bounds):
         return None
+
+    dat_signature = _jax_tree_signature(dat)
+    hyper_signature = tuple(
+        (key, 1 if np.isscalar(hyper[key]) else K)
+        for key in optList
+    )
+    model_signature = tuple(model_hyper.keys())
+    cache_key = (
+        id(likelihood_terms_fn),
+        K,
+        N,
+        tuple(optList),
+        hyper_signature,
+        tuple(model_hyper_optList),
+        model_signature,
+        tuple(tuple(bound) for bound in bounds),
+        max_iter,
+        grad_tol,
+        dat_signature,
+    )
+    cache = opt_keywords.setdefault('_jax_hyper_cache', {})
+    if cache_key in cache:
+        return cache[cache_key]
+
+    _emit_status(status_callback, "Compiling JAX hyperparameter optimiser…", stage="hyper")
+
+    dat_jax = _to_jax_for_hyper(dat, jnp, dtype)
+    lo = jnp.asarray([b[0] for b in bounds], dtype=dtype)
+    hi = jnp.asarray([b[1] for b in bounds], dtype=dtype)
 
     day_lengths = np.asarray(dat.get('dayLength', np.array([], dtype=int)), dtype=int)
     days = np.cumsum(day_lengths, dtype=int)[:-1] if day_lengths.size else np.array([], dtype=int)
     days_jax = jnp.asarray(days, dtype=jnp.int32)
     missing = dat.get('missing_trials')
     missing_jax = None if missing is None else jnp.asarray(missing, dtype=dtype)
-
-    base_model_hyper = {
+    fixed_hyper = {
         k: jnp.asarray(v, dtype=dtype)
-        for k, v in model_hyper.items()
+        for k, v in hyper.items()
+        if k not in optList and v is not None
     }
 
-    def bounded_to_unbounded(x):
-        p = (x - lo) / (hi - lo)
-        p = jnp.clip(p, 1e-6, 1.0 - 1e-6)
-        return jnp.log(p) - jnp.log1p(-p)
+    def clip_x(x):
+        return jnp.clip(x, lo, hi)
 
-    def unbounded_to_bounded(y):
-        return lo + (hi - lo) * jax.nn.sigmoid(y)
-
-    def unpack_x(x):
+    def unpack_x(x, base_model_hyper):
         values = {}
         for key, start, n in hyper_specs:
             raw = 2.0 ** x[start:start + n]
@@ -452,8 +535,8 @@ def _minimize_hyperparameters_jax(optVals, opt_keywords, bounds, opts,
     def hyper_value(values, key, default=None):
         if key in values:
             return values[key]
-        if key in hyper and hyper[key] is not None:
-            return jnp.asarray(hyper[key], dtype=dtype)
+        if key in fixed_hyper:
+            return fixed_hyper[key]
         if default is not None:
             return default
         return None
@@ -496,12 +579,12 @@ def _minimize_hyperparameters_jax(optVals, opt_keywords, bounds, opts,
         logdet_inv = jnp.sum(jnp.log(inv_var))
         return 0.5 * (logdet_inv - quad)
 
-    def loss_x(x):
-        values, mh = unpack_x(x)
+    def loss_x(x, H_prev_blocks, LL_v_time, base_model_hyper):
+        values, mh = unpack_x(x, base_model_hyper)
         inv_var = inv_var_from_values(values)
         q_diag, q_off = precision_parts(inv_var)
-        A_prev = _blocks_from_prior_and_likelihood(jnp, q_diag, H_prev_blocks_jax)
-        E_time, _ = _block_tridiag_solve_logdet_jax(jnp, A_prev, q_off, LL_v_time_jax)
+        A_prev = _blocks_from_prior_and_likelihood(jnp, q_diag, H_prev_blocks)
+        E_time, _ = _block_tridiag_solve_logdet_jax(jnp, A_prev, q_off, LL_v_time)
         E = E_time.T
 
         logli, _, H_new = likelihood_terms_fn(E, dat_jax, mh)
@@ -513,70 +596,67 @@ def _minimize_hyperparameters_jax(optVals, opt_keywords, bounds, opts,
         evd = logli + prior_logprob(E_time, inv_var) - 0.5 * logdet_center
         return jnp.nan_to_num(-evd, nan=1e20, posinf=1e20, neginf=1e20)
 
-    def loss_y(y):
-        return loss_x(unbounded_to_bounded(y))
-
-    try:
-        loss_y = jax.jit(loss_y)
-        value_and_grad = optax.value_and_grad_from_state(loss_y)
-        y0 = bounded_to_unbounded(optVals_jax)
-        f0 = float(loss_x(optVals_jax))
-    except Exception as exc:
-        if showOpt:
-            print(f'JAX hyper optimiser unavailable ({exc}); falling back to SciPy.')
-        return None
-
-    _emit_status(status_callback, "Updating hyperparameters with JAX L-BFGS…", stage="hyper")
+    def bounded_loss_x(x, H_prev_blocks, LL_v_time, base_model_hyper):
+        return loss_x(clip_x(x), H_prev_blocks, LL_v_time, base_model_hyper)
 
     solver = optax.lbfgs(memory_size=10, scale_init_precond=True)
-    state = solver.init(y0)
-    y_cur = y0
+    value_and_grad = optax.value_and_grad_from_state(bounded_loss_x)
 
     @jax.jit
-    def step(y, opt_state):
-        value, grad = value_and_grad(y, state=opt_state)
-        updates, new_state = solver.update(
-            grad, opt_state, y, value=value, grad=grad, value_fn=loss_y,
+    def run(opt_vals, H_prev_blocks, LL_v_time, base_model_hyper):
+        x0 = clip_x(opt_vals)
+        state0 = solver.init(x0)
+        f0 = bounded_loss_x(x0, H_prev_blocks, LL_v_time, base_model_hyper)
+        init = (jnp.asarray(0, dtype=jnp.int32),
+                x0,
+                state0,
+                f0,
+                jnp.asarray(jnp.inf, dtype=dtype),
+                jnp.asarray(False))
+
+        def do_step(carry):
+            n_iter, x, opt_state, _value, _grad_norm, _done = carry
+            value, grad = value_and_grad(
+                x, H_prev_blocks, LL_v_time, base_model_hyper,
+                state=opt_state,
+            )
+            updates, new_state = solver.update(
+                grad, opt_state, x,
+                value=value,
+                grad=grad,
+                value_fn=bounded_loss_x,
+                H_prev_blocks=H_prev_blocks,
+                LL_v_time=LL_v_time,
+                base_model_hyper=base_model_hyper,
+            )
+            x_new = clip_x(optax.apply_updates(x, updates))
+            grad_norm = jnp.max(jnp.abs(grad))
+            done = grad_norm < grad_tol
+            return n_iter + 1, x_new, new_state, value, grad_norm, done
+
+        def body(_, carry):
+            return jax.lax.cond(carry[-1], lambda c: c, do_step, carry)
+
+        n_iter, x_final, _state, _value, grad_norm, _done = jax.lax.fori_loop(
+            0, max_iter, body, init,
         )
-        return optax.apply_updates(y, updates), new_state, value, grad
+        f_final = bounded_loss_x(x_final, H_prev_blocks, LL_v_time, base_model_hyper)
+        return x_final, f0, f_final, grad_norm, n_iter
 
-    max_iter = max(10, int((opts or {}).get('maxiter', 15)))
-    grad_norm = np.inf
-    n_iter = 0
-    try:
-        for n_iter in range(max_iter):
-            y_cur, state, val, grad = step(y_cur, state)
-            grad_norm = float(jnp.max(jnp.abs(grad)))
-            if grad_norm < 1e-3:
-                break
-        x_final = np.asarray(unbounded_to_bounded(y_cur), dtype=float)
-        f_final = float(loss_x(jnp.asarray(x_final, dtype=dtype)))
-    except Exception as exc:
-        if showOpt:
-            print(f'JAX hyper optimiser failed ({exc}); falling back to SciPy.')
+    cache[cache_key] = run
+    return run
+
+
+def _jax_tree_signature(x):
+    if isinstance(x, dict):
+        return tuple((k, _jax_tree_signature(v)) for k, v in sorted(x.items()))
+    if isinstance(x, np.ndarray):
+        return (x.shape, str(x.dtype))
+    if np.isscalar(x):
+        return ('scalar', type(x).__name__)
+    if x is None:
         return None
-
-    improvement_tol = max(1e-8, 1e-8 * abs(f0))
-    if not np.isfinite(f_final) or f_final >= f0 - improvement_tol:
-        if showOpt:
-            print(f'JAX hyper optimiser did not improve objective '
-                  f'({f0:.6g} -> {f_final:.6g}); falling back to SciPy.')
-        return None
-
-    result = OptimizeResult(
-        x=x_final,
-        fun=f_final,
-        success=True,
-        status=0,
-        message='JAX L-BFGS hyperparameter update',
-        nit=n_iter + 1,
-        nfev=n_iter + 1,
-        jac=None,
-    )
-    result.psytrax_method = 'JAX L-BFGS'
-    if showOpt:
-        print(f'JAX hyper grad norm: {grad_norm:.3e}')
-    return result
+    return type(x).__name__
 
 
 def _to_jax_for_hyper(dat, jnp, dtype):
