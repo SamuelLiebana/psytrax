@@ -93,9 +93,11 @@ def default_model_hyper_with_dopamine():
     """Model-level hyperparameters when the dopamine term is enabled.
 
     The dopamine peak is modelled as
-        ``N(σ(da_beta · (w_eff · c / z − da_offset)), sig_DA²)``
-    where ``w_eff = wr`` if ``c >= 0`` else ``wl``.  All four scalars are
-    optimised jointly by Empirical Bayes:
+        ``N(σ(da_beta · (w_eff · |c| / z − da_offset)), sig_DA²)``
+    where ``w_eff = wr`` if ``c >= 0`` else ``wl``.  Using ``|c|`` makes
+    the prediction symmetric in stimulus strength so left and right strong
+    stimuli both push the predicted dopamine peak upward.  All four
+    scalars are optimised jointly by Empirical Bayes:
 
       * ``sig_i``     — within-trial accumulator noise (existing race scalar)
       * ``sig_DA``    — Gaussian std on the dopamine peak
@@ -123,10 +125,12 @@ def log_lik_trial(params, dat_trial, model_hyper):
     When ``dat_trial`` contains a ``'dopamine'`` field and ``model_hyper``
     contains a ``'sig_DA'`` scalar, an extra Gaussian likelihood term is
     added:  the per-trial dopamine peak is modelled as
-    ``N(σ(da_beta · (w_eff · c / z − da_offset)), sig_DA²)`` where
-    ``w_eff = wr if c >= 0 else wl``.  ``da_beta`` and ``da_offset`` are
-    also pulled from ``model_hyper`` (see
-    :func:`default_model_hyper_with_dopamine`).
+    ``N(σ(da_beta · (w_eff · |c| / z − da_offset)), sig_DA²)`` where
+    ``w_eff = wr if c >= 0 else wl``.  Using ``|c|`` makes the prediction
+    symmetric in stimulus strength so left and right strong stimuli both
+    push the predicted peak upward (no need for ``wl`` to flip sign).
+    ``da_beta`` and ``da_offset`` are also pulled from ``model_hyper``
+    (see :func:`default_model_hyper_with_dopamine`).
     Trials whose dopamine value is NaN contribute zero to this term, so
     per-trial missing data is allowed.
 
@@ -187,9 +191,15 @@ def _log_lik_dopamine(params, dat_trial, model_hyper):
     sig_DA    = model_hyper['sig_DA']
     da_beta   = model_hyper.get('da_beta',   DEFAULT_DA_BETA)
     da_offset = model_hyper.get('da_offset', DEFAULT_DA_OFFSET)
-    w_eff = jnp.where(c >= 0.0, wr, wl)
+    # Use |c| with the side-appropriate weight so the prediction is
+    # symmetric in stimulus strength: strong left stimuli (negative c) and
+    # strong right stimuli (positive c) both push the predicted dopamine
+    # response upward, scaled by wl and wr respectively.
+    w_eff  = jnp.where(c >= 0.0, wr, wl)
     z_safe = jnp.where(z > 0.0, z, 1.0)
-    pred = jax.nn.sigmoid(da_beta * (w_eff * c / z_safe - da_offset))
+    pred = jax.nn.sigmoid(
+        da_beta * (w_eff * jnp.abs(c) / z_safe - da_offset)
+    )
     valid = (
         jnp.isfinite(da)
         & jnp.isfinite(sig_DA)
@@ -311,7 +321,10 @@ def sample_trial(params, dat_trial, rng, model_hyper):
             da_beta   = float(model_hyper.get('da_beta',   DEFAULT_DA_BETA))
             da_offset = float(model_hyper.get('da_offset', DEFAULT_DA_OFFSET))
             w_eff = wr if c >= 0.0 else wl
-            pred = 1.0 / (1.0 + np.exp(-da_beta * (w_eff * c / z - da_offset)))
+            # Mirror the |c| convention used in log_lik_trial.
+            pred = 1.0 / (1.0 + np.exp(
+                -da_beta * (w_eff * abs(c) / z - da_offset)
+            ))
             out['dopamine'] = float(rng.normal(pred, sig_DA))
         else:
             out['dopamine'] = float('nan')

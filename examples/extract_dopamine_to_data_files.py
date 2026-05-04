@@ -4,10 +4,13 @@ Reads:
     data/long_term_learning_dataset_preprocessed_behaviour_all.csv         (RT, choice, …)
     data/long_term_learning_dataset_preprocessed_photometry_zscore_…_all.csv (fStimulusOnset_*)
 
-Produces, for every (mouse, region) pair that has both behavioural and
-photometry rows:
+Produces, for every mouse that has at least one DLS recording:
 
-    data/with_dopamine/<mouse>__<region>_data.npy
+    data/<mouse>_data.npy
+
+When a mouse has both Left DLS and Right DLS recordings, the per-trial
+peak dopamine is averaged across the two hemispheres (per `nanmean`, so
+single-hemisphere trials still contribute).
 
 Each file has the standard psytrax dict layout:
 
@@ -26,17 +29,33 @@ Filtering, mirroring `dls_dopamine.ipynb`:
   * 0.05s < RT < 1.5s
   * choice ∈ {'Left', 'Right'} (NoGo trials dropped)
   * trial must have a valid (non-NaN) dopamine peak in [0.2, 0.35]s
-  * recording region ∈ {'Left DLS', 'Right DLS'} by default — pass
-    ``--regions all`` to keep aDMS, pDMS, NAc, etc. as well, or
-    ``--regions "Left DLS"`` to narrow further.
+  * recording region ∈ {'Left DLS', 'Right DLS'} by default; left and
+    right DLS are nan-mean averaged per trial.  Pass ``--regions all`` to
+    keep every region in the CSV (still averaged across all matching rows
+    per trial), or ``--regions "Left DLS"`` to restrict to one hemisphere.
+
+By default the per-trial dopamine peaks are normalised by the
+**per-session, per-region zero-contrast peak** (matching
+`zero_contrast_normalisation_aligned` in the reference notebook):
+
+    baseline_session = mean of fTimewarped[80..84] across 0-contrast
+                       rewarded trials in this (region, session)
+    peak_session     = mean of the top-3 fTimewarped values at
+                       timewarped_time ≥ 82 across the same trials
+    DA_normalised    = DA_raw / (peak_session − baseline_session)
+
+This rescales each session's stimulus-aligned peak by that session's
+free-reward outcome response amplitude, so the values are roughly
+comparable across mice and sessions.  Pass ``--norm-mode percentile`` to
+use a generic 5th/95th percentile min-max instead, or ``--norm-mode
+none`` to keep the raw z-scored values.
 
 Run from the repo root:
 
     python -m examples.extract_dopamine_to_data_files
 
-The script writes to a separate folder (``data/with_dopamine/``) so the
-existing per-mouse files in ``data/`` are untouched until you've eyeballed
-the new ones and decided to swap them in.
+Output files land directly in ``data/<mouse>_data.npy``, overwriting any
+previous per-mouse file for that mouse.
 """
 from __future__ import annotations
 
@@ -55,7 +74,9 @@ import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR  = REPO_ROOT / 'data'
-OUT_DIR   = DATA_DIR / 'with_dopamine'
+# All per-mouse files now live directly under data/ (the with_dopamine
+# subfolder was retired once every file gained a dopamine field).
+OUT_DIR   = DATA_DIR
 
 BEHAV_CSV = DATA_DIR / 'long_term_learning_dataset_preprocessed_behaviour_all.csv'
 PHOTOM_CSV = (
@@ -95,7 +116,107 @@ def _parse_args() -> argparse.Namespace:
                             'keep every region in the CSV (aDMS, pDMS, NAc, …). '
                             'Quote strings containing spaces.'
                         ))
+    parser.add_argument('--norm-mode', type=str, default='zero-contrast',
+                        choices=['zero-contrast', 'percentile', 'none'],
+                        help=('Normalisation strategy for the per-trial '
+                              'dopamine peak.  zero-contrast (default): per '
+                              '(session, region) divide by the peak free-reward '
+                              'response on 0-contrast rewarded trials, '
+                              'mirroring src/load_data.py:'
+                              'zero_contrast_normalisation_aligned.  '
+                              'percentile: per-mouse 5th/95th percentile '
+                              'min-max into [0, 1].  none: keep raw z-scored '
+                              'values.'))
+    parser.add_argument('--normalise-percentiles', type=float, nargs=2,
+                        default=(5.0, 95.0), metavar=('LO', 'HI'),
+                        help='Lower / upper percentiles for --norm-mode '
+                             'percentile.  Default: 5 95.')
     return parser.parse_args()
+
+
+# Time-warped indices used by the zero-contrast normalisation, mirroring
+# zero_contrast_normalisation_aligned.  Baseline = mean over 80..84
+# (notebook used a strict (>79, <85) filter).  Peak = top-3 mean over
+# 82..142 (notebook used >=82).
+ZC_BASELINE_TIMES = list(range(80, 85))           # 80, 81, 82, 83, 84
+ZC_MAX_TIMES      = list(range(82, 143))          # 82 .. 142
+ZC_TOPK           = 3
+
+
+def _normalise_per_mouse(da: np.ndarray, lo_pct: float, hi_pct: float) -> np.ndarray:
+    """Min-max normalise to [0, 1] using percentile cutoffs (clipped).
+
+    Robust to outliers: anything below the lo-percentile maps to 0, anything
+    above the hi-percentile maps to 1, and the rest is linearly scaled.
+    """
+    finite = da[np.isfinite(da)]
+    if finite.size < 2:
+        return da
+    lo, hi = np.percentile(finite, [lo_pct, hi_pct])
+    if hi <= lo:
+        return np.zeros_like(da)
+    out = (da - lo) / (hi - lo)
+    return np.clip(out, 0.0, 1.0)
+
+
+def _zero_contrast_normalise(photom: pd.DataFrame) -> pd.DataFrame:
+    """Apply per-(region, expRef) zero-contrast normalisation in-place.
+
+    Mirrors src/load_data.py:zero_contrast_normalisation_aligned —
+    rescales each trial's stimulus-aligned dopamine peak by that
+    session's free-reward outcome amplitude:
+
+        baseline = mean of fTimewarped[80..84] across 0-contrast
+                   rewarded trials in this (region, expRef)
+        peak     = mean of top-3 fTimewarped[82..142] over the same trials
+                   (top-3 done per trial, then averaged across trials)
+        DA_norm  = DA_raw / (peak − baseline)
+
+    Sessions whose denominator is non-positive or undefined are dropped
+    (their dopamine becomes NaN and is filtered out downstream).
+    """
+    print('[normalise] zero-contrast: estimating per-(region, expRef) factors')
+    rewarded_zero = (
+        (photom['contrast'].astype(float) == 0.0)
+        & (photom['feedback'].astype(str) == 'Rewarded')
+    )
+    factors = (
+        photom.loc[rewarded_zero]
+        .groupby(['region', 'expRef'], sort=False)
+        .agg(
+            baseline=('zc_baseline_mean', lambda v: float(np.nanmean(v))),
+            peak    =('zc_max_top3_mean',  lambda v: float(np.nanmean(v))),
+            n_zc    =('zc_baseline_mean', 'size'),
+        )
+        .reset_index()
+    )
+    factors['denom'] = factors['peak'] - factors['baseline']
+    n_factors = len(factors)
+    n_valid   = int(np.sum(factors['denom'] > 0))
+    print(f'[normalise]   {n_valid}/{n_factors} (region, session) pairs have '
+          f'a usable normaliser (denom > 0)')
+
+    photom = photom.merge(
+        factors[['region', 'expRef', 'denom', 'n_zc']],
+        on=['region', 'expRef'], how='left',
+    )
+    with np.errstate(divide='ignore', invalid='ignore'):
+        denom = photom['denom'].astype(float).to_numpy()
+        ok = (denom > 0) & np.isfinite(denom)
+        photom['dopamine'] = np.where(
+            ok, photom['dopamine'].astype(float) / np.where(ok, denom, 1.0),
+            np.nan,
+        )
+    n_dropped = int(np.sum(~ok))
+    if n_dropped:
+        print(f'[normalise]   dropped {n_dropped:,} trials whose '
+              f'(region, session) had no valid normaliser')
+    # Strip the helper columns before returning so they don't leak into
+    # downstream stages.
+    return photom.drop(columns=[
+        'zc_baseline_mean', 'zc_max_top3_mean',
+        'contrast', 'feedback', 'denom', 'n_zc',
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -187,8 +308,14 @@ def _peak_per_row(values: np.ndarray, window: int) -> np.ndarray:
     return np.nanmax(win_mean, axis=1)
 
 
-def _load_dopamine_peaks(photom_chunksize: int) -> pd.DataFrame:
-    """Return one row per (expRef, trialNumber, region) with the peak DA value."""
+def _load_dopamine_peaks(photom_chunksize: int,
+                         need_normalisation_cols: bool) -> pd.DataFrame:
+    """Return one row per (expRef, trialNumber, region) with:
+      * dopamine: peak of MA(window=10) of fStimulusOnset over [0.2, 0.35]s
+      * (when ``need_normalisation_cols``) zc_baseline_sum, zc_baseline_count,
+        zc_max_top1..top3, contrast, feedback — used to compute the
+        per-(region, expRef) zero-contrast normalisation factors.
+    """
     print(f'[photom] streaming {PHOTOM_CSV}')
     header = pd.read_csv(PHOTOM_CSV, nrows=0).columns.tolist()
     da_cols, da_times = _select_dopamine_columns(header)
@@ -197,22 +324,53 @@ def _load_dopamine_peaks(photom_chunksize: int) -> pd.DataFrame:
             f'[photom] no fStimulusOnset columns found in [{DA_TMIN}, {DA_TMAX}]s — '
             'check the CSV layout'
         )
-    print(f'[photom] using {len(da_cols)} timepoints '
+    print(f'[photom] using {len(da_cols)} stim-onset timepoints '
           f'(t = [{da_times.min():.3f}, {da_times.max():.3f}]s)')
 
     keep_cols = ['expRef', 'trialNumber', 'region', *da_cols]
+    base_cols = max_cols = []
+    if need_normalisation_cols:
+        keep_cols += ['contrast', 'feedback']
+        base_cols = [f'fTimewarped{t:.1f}' for t in ZC_BASELINE_TIMES]
+        max_cols  = [f'fTimewarped{t:.1f}' for t in ZC_MAX_TIMES]
+        missing = [c for c in base_cols + max_cols if c not in header]
+        if missing:
+            raise SystemExit(
+                f'[photom] zero-contrast normalisation requires fTimewarped '
+                f'columns {missing[:3]}{" …" if len(missing) > 3 else ""} '
+                f'which are missing from the CSV.  Use --norm-mode percentile '
+                'or --norm-mode none.'
+            )
+        keep_cols += base_cols + max_cols
+        print(f'[photom] also pulling {len(base_cols)} baseline + '
+              f'{len(max_cols)} peak fTimewarped columns for zero-contrast '
+              'normalisation')
+
     chunks = []
     for i, ch in enumerate(pd.read_csv(
             PHOTOM_CSV, usecols=keep_cols, chunksize=photom_chunksize,
             low_memory=False)):
         vals = ch[da_cols].to_numpy(dtype=float, copy=False)
         peak = _peak_per_row(vals, ROLL_WIN)
-        chunks.append(pd.DataFrame({
+        out = {
             'expRef':       ch['expRef'].to_numpy(),
             'trialNumber':  ch['trialNumber'].to_numpy(),
             'region':       ch['region'].to_numpy(),
             'dopamine':     peak,
-        }))
+        }
+        if need_normalisation_cols:
+            base_arr = ch[base_cols].to_numpy(dtype=float, copy=False)
+            max_arr  = ch[max_cols].to_numpy(dtype=float, copy=False)
+            out['zc_baseline_mean']  = np.nanmean(base_arr, axis=1)
+            # Per-trial top-3 mean of the post-event window so the
+            # downstream session aggregation can recompute the notebook's
+            # `top_k(3).mean()` exactly.
+            sorted_max = np.sort(max_arr, axis=1)
+            top3 = sorted_max[:, -ZC_TOPK:]
+            out['zc_max_top3_mean'] = np.nanmean(top3, axis=1)
+            out['contrast'] = ch['contrast'].to_numpy()
+            out['feedback'] = ch['feedback'].to_numpy()
+        chunks.append(pd.DataFrame(out))
         if (i + 1) % 5 == 0:
             print(f'[photom]   {(i + 1) * photom_chunksize:,} rows processed…')
     df = pd.concat(chunks, ignore_index=True)
@@ -230,14 +388,9 @@ def _mouse_id_from_expref(expref: str) -> str | None:
     return parts[-1] if parts else None
 
 
-def _safe_region_token(region: str) -> str:
-    """Filename-safe version of a region label."""
-    return re.sub(r'[^A-Za-z0-9]+', '_', str(region)).strip('_')
-
-
-def _write_one(out_dir: Path, mouse: str, region: str,
-               trials: pd.DataFrame) -> str:
-    """Write a single `<mouse>__<region>_data.npy` and return its filename."""
+def _write_one(out_dir: Path, mouse: str, trials: pd.DataFrame,
+               regions_used: list[str]) -> str:
+    """Write a single `<mouse>_data.npy` and return its filename."""
     # Per-session order — sort by expRef (date-encoded) then trialNumber.
     trials = trials.sort_values(['expRef', 'trialNumber']).reset_index(drop=True)
     session_lengths = (
@@ -251,15 +404,15 @@ def _write_one(out_dir: Path, mouse: str, region: str,
         'dopamine':        trials['dopamine'].to_numpy(dtype=float),
         't_nd':            np.float64(T_ND),
     }
-    fname = f'{mouse}__{_safe_region_token(region)}_data.npy'
-    path = out_dir / fname
+    path = out_dir / f'{mouse}_data.npy'
     np.save(path, data, allow_pickle=True)
     print(f'  → {path.name}: {len(trials)} trials, '
           f'{len(session_lengths)} sessions, '
+          f'regions averaged = {regions_used}, '
           f'DA mean={np.nanmean(data["dopamine"]):.3f} '
           f'(min={np.nanmin(data["dopamine"]):.3f}, '
           f'max={np.nanmax(data["dopamine"]):.3f})')
-    return fname
+    return path.name
 
 
 def main() -> int:
@@ -275,7 +428,18 @@ def main() -> int:
         return 1
 
     behav = _load_behaviour()
-    photom = _load_dopamine_peaks(args.photom_chunksize)
+    need_zc = (args.norm_mode == 'zero-contrast')
+    photom = _load_dopamine_peaks(args.photom_chunksize,
+                                  need_normalisation_cols=need_zc)
+
+    # Apply zero-contrast normalisation BEFORE region filtering so that
+    # mice with photometry from non-DLS regions can still contribute their
+    # 0-contrast trials if needed.  (Currently the function uses every
+    # available row in each (region, expRef) bucket, so post-filtering is
+    # equivalent — but doing it now keeps the order analogous to the
+    # notebook.)
+    if need_zc:
+        photom = _zero_contrast_normalise(photom)
 
     # Inner join: every retained trial must have both behaviour and DA.
     merged = photom.merge(behav, on=['expRef', 'trialNumber'], how='inner')
@@ -309,15 +473,57 @@ def main() -> int:
         print('No rows match — nothing written.')
         return 1
 
-    print(f'[write] writing per-(mouse, region) files into {out_dir}')
+    # Collapse multiple regions per (mouse, expRef, trialNumber) → a single
+    # row whose dopamine value is the nan-mean across regions.  Behavioural
+    # fields (c, r, rt) are constant across hemispheres so we just take the
+    # first.
+    print('[merge] averaging dopamine across regions per trial…')
+    grouped = (
+        merged
+        .groupby(['mouse', 'expRef', 'trialNumber'], sort=False)
+        .agg(
+            c=('c', 'first'),
+            r=('r', 'first'),
+            rt=('rt', 'first'),
+            dopamine=('dopamine', lambda v: float(np.nanmean(v))),
+        )
+        .reset_index()
+    )
+    grouped = grouped[np.isfinite(grouped['dopamine'])]
+    print(f'[merge] {len(grouped):,} trials after region averaging')
+
+    # Per-mouse list of regions actually present (for the log line).
+    regions_per_mouse = (
+        merged.groupby('mouse')['region'].unique().apply(sorted).to_dict()
+    )
+
+    if args.norm_mode == 'percentile':
+        lo_pct, hi_pct = args.normalise_percentiles
+        print(f'[normalise] per-mouse min-max to [0, 1] using '
+              f'{lo_pct}/{hi_pct} percentiles')
+        for mouse, idx in grouped.groupby('mouse').groups.items():
+            da = grouped.loc[idx, 'dopamine'].to_numpy(dtype=float)
+            grouped.loc[idx, 'dopamine'] = _normalise_per_mouse(
+                da, lo_pct, hi_pct,
+            )
+    elif args.norm_mode == 'none':
+        print('[normalise] skipped (raw z-scored values written).')
+    else:
+        # zero-contrast normalisation already applied per (region, expRef)
+        # before the region averaging, so nothing extra to do here.
+        print('[normalise] zero-contrast factors already applied per (region, expRef)')
+
+    print(f'[write] writing per-mouse files into {out_dir}')
     written = []
-    for (mouse, region), sub in merged.groupby(['mouse', 'region'], sort=True):
-        if not mouse or not region:
+    for mouse, sub in grouped.groupby('mouse', sort=True):
+        if not mouse:
             continue
         if len(sub) < 50:
             # 50 trials is a sane minimum for any psytrax fit.
             continue
-        written.append(_write_one(out_dir, mouse, region, sub))
+        written.append(_write_one(
+            out_dir, mouse, sub, regions_per_mouse.get(mouse, [])
+        ))
 
     print(f'\n[done] wrote {len(written)} files to {out_dir}')
     return 0

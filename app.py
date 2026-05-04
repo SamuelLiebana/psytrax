@@ -390,6 +390,182 @@ def _shared_ylim(series_list, pad_frac=0.05, min_pad=0.05):
         pad = max(min_pad, abs(ymin) * pad_frac, 0.01)
     return ymin - pad, ymax + pad
 
+
+def _render_quartile_plots(result, *, n_win=4):
+    """Inline psychometric / chronometric / dopamine quartile plots.
+
+    Shared by the Fit Model post-fit summary and (eventually) Visualise
+    Results.  Reads everything from ``result['data']`` plus the recovered
+    ``params`` and ``model_hyper``.  Silently skips panels that don't apply
+    (e.g. no RT for logistic fits, no dopamine for non-race fits).
+    """
+    params      = result['params']
+    param_names = list(result['param_names'])
+    K, N        = params.shape
+    dat         = result.get('data') or {}
+
+    if 'inputs' not in dat or 'c' not in dat['inputs'] or 'r' not in dat:
+        st.info('Inline quartile plots need `c` and `r` in the fit data.')
+        return
+
+    c_data = np.asarray(dat['inputs']['c'])
+    r_data = np.asarray(dat['r'])
+    model_family, fixed_params = _model_family_info(param_names, result=result)
+
+    _rt_key = next((k for k in ('T', 'times') if k in dat and dat[k] is not None), None)
+    has_rt  = (_rt_key is not None) and model_family in _RT_CURVE_FAMILIES
+
+    contrasts_unique = np.unique(c_data)
+    c_grid = np.linspace(contrasts_unique.min(), contrasts_unique.max(), 100)
+    edges = np.linspace(0, N, n_win + 1, dtype=int)
+
+    # --- Psychometric quartiles ---------------------------------------
+    st.subheader('Psychometric curve: evolution over learning')
+    fig_p, axes_p = plt.subplots(2, 2, figsize=(11, 8))
+    _tc = _style_fig(fig_p)
+    for wi, ax in enumerate(axes_p.flat):
+        t0, t1 = int(edges[wi]), int(edges[wi + 1])
+        c_win  = c_data[t0:t1]
+        r_win  = r_data[t0:t1]
+        c_uniq = np.unique(c_win)
+        p_emp  = np.array([r_win[c_win == cv].mean() for cv in c_uniq])
+        n_w    = np.array([np.sum(c_win == cv) for cv in c_uniq])
+        _style_ax(ax, xlabel='Signed contrast', ylabel='P(right)',
+                  title=f'Trials {t0 + 1}–{t1}')
+        ax.scatter(c_uniq, p_emp, s=[max(10, n / 5) for n in n_w],
+                   color=_tc['text'], zorder=3)
+        p_m, _ = _curve_predictions(
+            params[:, t0:t1], param_names, c_grid, model_family,
+            fixed_params=fixed_params,
+        )
+        if p_m is not None:
+            ax.plot(c_grid, p_m, color='#4e9af1', lw=2)
+        ax.axhline(0.5, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+        ax.axvline(0,   color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+        ax.set_ylim(0, 1)
+    fig_p.suptitle('Psychometric curve evolution',
+                   color=_tc['text'], fontsize=13)
+    fig_p.tight_layout()
+    _show_fig(fig_p, 'psychometric_evolution.png')
+
+    # --- Chronometric quartiles ---------------------------------------
+    if has_rt:
+        T_data = np.asarray(dat[_rt_key])
+        st.subheader('Chronometric curve: evolution over learning')
+        fig_c, axes_c = plt.subplots(2, 2, figsize=(11, 8))
+        _tc = _style_fig(fig_c)
+        panel_data = []
+        y_series = []
+        for wi in range(n_win):
+            t0, t1 = int(edges[wi]), int(edges[wi + 1])
+            c_win  = c_data[t0:t1]
+            T_win  = T_data[t0:t1]
+            c_uniq = np.unique(c_win)
+            rt_emp = np.array([T_win[c_win == cv].mean() for cv in c_uniq])
+            n_w    = np.array([np.sum(c_win == cv) for cv in c_uniq])
+            _, rt_m = _curve_predictions(
+                params[:, t0:t1], param_names, c_grid, model_family,
+                fixed_params=fixed_params,
+            )
+            panel_data.append((t0, t1, c_uniq, rt_emp, n_w, rt_m))
+            y_series.extend([rt_emp, rt_m])
+        shared_ylim = _shared_ylim(y_series)
+        for ax, (t0, t1, c_uniq, rt_emp, n_w, rt_m) in zip(
+                axes_c.flat, panel_data):
+            _style_ax(ax, xlabel='Signed contrast', ylabel='Mean RT (s)',
+                      title=f'Trials {t0 + 1}–{t1}')
+            ax.scatter(c_uniq, rt_emp, s=[max(10, n / 5) for n in n_w],
+                       color=_tc['text'], zorder=3)
+            if rt_m is not None:
+                ax.plot(c_grid, rt_m, color='#4e9af1', lw=2)
+            ax.axvline(0, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+            if shared_ylim is not None:
+                ax.set_ylim(*shared_ylim)
+        fig_c.suptitle('Chronometric curve evolution',
+                       color=_tc['text'], fontsize=13)
+        fig_c.tight_layout()
+        _show_fig(fig_c, 'chronometric_evolution.png')
+
+    # --- Dopamine quartiles (race + dopamine field) -------------------
+    da_data = dat.get('dopamine')
+    if model_family != 'race' or da_data is None:
+        return
+    da = np.asarray(da_data, dtype=float)
+    if da.shape[0] != N:
+        return
+    try:
+        wr_idx = param_names.index('wr')
+        wl_idx = param_names.index('wl')
+        z_idx  = param_names.index('z')
+    except ValueError:
+        return
+
+    _model_mh = result.get('model_hyper') or {}
+    _DA_BETA   = float(_model_mh.get('da_beta',   _DA_BETA_DEFAULT))
+    _DA_OFFSET = float(_model_mh.get('da_offset', _DA_OFFSET_DEFAULT))
+
+    st.subheader('Dopamine: empirical vs predicted, by quartile')
+    fig_d, axes_d = plt.subplots(2, 2, figsize=(11, 8))
+    _tc = _style_fig(fig_d)
+    panel_data = []
+    y_series = []
+    for wi in range(n_win):
+        t0, t1 = int(edges[wi]), int(edges[wi + 1])
+        c_win  = c_data[t0:t1]
+        da_win = da[t0:t1]
+        finite = np.isfinite(da_win)
+        c_f, da_f = c_win[finite], da_win[finite]
+        c_uniq = np.unique(c_f) if c_f.size else np.array([])
+        da_mean = np.array([
+            da_f[c_f == cv].mean() for cv in c_uniq
+        ]) if c_uniq.size else np.array([])
+        da_sem = np.array([
+            (da_f[c_f == cv].std()
+             / max(np.sqrt(np.sum(c_f == cv)), 1.0))
+            for cv in c_uniq
+        ]) if c_uniq.size else np.array([])
+        n_w = np.array([np.sum(c_f == cv) for cv in c_uniq])
+        wr_w = params[wr_idx, t0:t1]
+        wl_w = params[wl_idx, t0:t1]
+        z_w  = np.where(params[z_idx, t0:t1] > 0,
+                        params[z_idx, t0:t1], 1.0)
+        da_curve = np.array([
+            np.mean(1.0 / (1.0 + np.exp(
+                -_DA_BETA * (
+                    np.where(cv >= 0, wr_w, wl_w) * abs(cv) / z_w - _DA_OFFSET
+                )
+            )))
+            for cv in c_grid
+        ])
+        panel_data.append((t0, t1, c_uniq, da_mean, da_sem, n_w, da_curve))
+        y_series.extend([da_mean, da_curve])
+    shared_ylim = _shared_ylim(y_series)
+    for ax, (t0, t1, c_uniq, da_mean, da_sem, n_w, da_curve) in zip(
+            axes_d.flat, panel_data):
+        _style_ax(ax, xlabel='Signed contrast',
+                  ylabel='Dopamine peak (a.u.)',
+                  title=f'Trials {t0 + 1}–{t1}')
+        if c_uniq.size:
+            ax.errorbar(c_uniq, da_mean, yerr=da_sem,
+                        fmt='o', color=_tc['text'], ecolor=_tc['text'],
+                        elinewidth=0.8, capsize=2, markersize=5,
+                        zorder=3)
+        ax.plot(c_grid, da_curve, color='#4e9af1', lw=2)
+        ax.axvline(0, color=_tc['text'], lw=0.5, ls='--', alpha=0.4)
+        if shared_ylim is not None:
+            ax.set_ylim(*shared_ylim)
+    title_bits = []
+    if 'sig_DA' in _model_mh:
+        title_bits.append(f'σ_DA = {_model_mh["sig_DA"]:.3f}')
+    title_bits.append(f'β = {_DA_BETA:.2f}')
+    title_bits.append(f'centre = {_DA_OFFSET:.3f}')
+    fig_d.suptitle('Dopamine: empirical vs predicted   '
+                   '(' + ', '.join(title_bits) + ')',
+                   color=_tc['text'], fontsize=13)
+    fig_d.tight_layout()
+    _show_fig(fig_d, 'dopamine_evolution.png')
+
+
 st.set_page_config(page_title='psytrax', layout='wide')
 
 _APP_DIR = os.path.dirname(__file__)
@@ -681,38 +857,30 @@ elif page == 'Fit Model':
 
     data_source = st.radio(
         'Data source',
-        ['Example data (26 mice)', 'Upload my own file'],
+        ['Example data', 'Upload my own file'],
         horizontal=True,
         key='fit_data_source',
     )
 
     import pandas as pd
 
-    if data_source == 'Example data (26 mice)':
-        _data_root = os.path.join(os.path.dirname(__file__), 'data')
-        _data_dirs = [_data_root]
-        _da_dir = os.path.join(_data_root, 'with_dopamine')
-        if os.path.isdir(_da_dir):
-            _data_dirs.append(_da_dir)
-
-        # Map "<source-tag> :: <basename>" → absolute path so we can show
-        # both the original (choice + RT only) files and the with_dopamine
-        # variants in the same selectbox.
+    if data_source == 'Example data':
+        _data_dir = os.path.join(os.path.dirname(__file__), 'data')
         _available_paths = {}
-        for _dir in _data_dirs:
-            tag = 'with_dopamine' if _dir == _da_dir else 'original'
-            for f in sorted(os.listdir(_dir)):
+        if os.path.isdir(_data_dir):
+            for f in sorted(os.listdir(_data_dir)):
                 if not f.endswith('_data.npy'):
                     continue
-                label = f'{tag} :: {f.replace("_data.npy", "")}'
-                _available_paths[label] = os.path.join(_dir, f)
+                _available_paths[f.replace('_data.npy', '')] = (
+                    os.path.join(_data_dir, f)
+                )
 
         if not _available_paths:
             st.error('No example data found in `data/`. Run '
                      '`examples/extract_dopamine_to_data_files.py` first.')
             st.stop()
 
-        animal = st.selectbox('Select dataset',
+        animal = st.selectbox('Select mouse',
                               list(_available_paths.keys()),
                               key='fit_animal')
         raw = np.load(_available_paths[animal], allow_pickle=True).item()
@@ -766,14 +934,51 @@ columns to the required fields.
             f'sessions: {"yes" if _has_ses else "no"}'
         )
 
+    # --- Dopamine joint-fit checkbox (locks the model to the race family) ---
+    _data_has_dopamine = (
+        isinstance(raw, dict)
+        and raw.get('dopamine') is not None
+        and np.any(np.isfinite(np.asarray(raw['dopamine'], dtype=float)))
+    )
+    _race_with_dopamine = st.checkbox(
+        'Include dopamine signal in fit (locks model to Race)',
+        value=bool(_data_has_dopamine),
+        key='fit_data_with_dopamine',
+        disabled=not _data_has_dopamine,
+        help=(
+            'Adds a Gaussian likelihood term '
+            'N(σ(da_beta · (w_eff · |c| / z − da_offset)), sig_DA²) for the '
+            'per-trial dopamine peak. `sig_DA`, `da_beta`, and `da_offset` '
+            'are estimated jointly with `sig_i` by Empirical Bayes. '
+            'Available only when the loaded dataset contains a `dopamine` '
+            'field — use the `with_dopamine ::` files in the dropdown above.'
+        ),
+    )
+    if _race_with_dopamine and not _data_has_dopamine:
+        _race_with_dopamine = False
+    if not _data_has_dopamine:
+        st.caption(
+            ':grey[Dopamine fit disabled — the loaded dataset does not '
+            'contain a `dopamine` field.]'
+        )
+
     st.divider()
 
     # --- Model selection ---
     st.subheader('2. Choose model')
+    if _race_with_dopamine:
+        st.info('Model locked to **Race** because dopamine fitting is enabled. '
+                'Uncheck the dopamine box above to choose a different model.')
+        _model_options = ['Race model (inverse-Gaussian)']
+    else:
+        _model_options = [
+            'Race model (inverse-Gaussian)',
+            'DDM — exact (Navarro & Fuss 2009)',
+            'Logistic regression',
+        ]
     model_choice = st.selectbox(
         'Built-in model',
-        ['Race model (inverse-Gaussian)', 'DDM — exact (Navarro & Fuss 2009)',
-         'Logistic regression'],
+        _model_options,
         key='fit_model',
     )
 
@@ -788,42 +993,23 @@ columns to the required fields.
         )
         _race_fixed_sig_i = False  # legacy flag, kept for downstream branches
 
-        st.markdown("""
+        if _race_with_dopamine:
+            st.markdown("""
+**Race model + joint dopamine fit** — two independent inverse-Gaussian
+accumulators racing to threshold (`wr, wl, br, bl, z` evolve under the
+random-walk prior, `sig_i` is an EB scalar).  In addition the per-trial
+dopamine peak is modelled as `N(σ(da_beta · (w_eff · |c| / z − da_offset)),
+sig_DA²)` with `w_eff = wr` if `c ≥ 0` else `wl`.  EB jointly optimises
+`sig_i, sig_DA, da_beta, da_offset` with the random-walk variances.
+""")
+        else:
+            st.markdown("""
 **Race model** — two independent inverse-Gaussian accumulators racing to threshold.
 The 5 trial-varying parameters (`wr, wl, br, bl, z`) evolve under a Gaussian
 random-walk prior; the within-trial accumulator noise `sig_i` is a static
 model-level hyperparameter, estimated jointly with `sigma` by Empirical
 Bayes (you'll see the recovered value in the result).
 """)
-
-        # Optional joint dopamine fit (requires data['dopamine']).
-        _data_has_dopamine = (
-            isinstance(raw, dict)
-            and raw.get('dopamine') is not None
-            and np.any(np.isfinite(np.asarray(raw['dopamine'], dtype=float)))
-        )
-        _race_with_dopamine = st.checkbox(
-            'Include dopamine signal (joint choice + RT + dopamine fit)',
-            value=bool(_data_has_dopamine),
-            key='fit_race_with_dopamine',
-            disabled=not _data_has_dopamine,
-            help=(
-                'Adds a Gaussian likelihood term '
-                'N(σ(da_beta · (w_eff · c / z − da_offset)), sig_DA²) for the '
-                'per-trial dopamine peak. `sig_DA`, `da_beta`, and `da_offset` '
-                'are estimated jointly with `sig_i` by Empirical Bayes. '
-                'Requires the loaded dataset to expose a `dopamine` field — '
-                'use the `with_dopamine ::` files in the dropdown above '
-                '(generated by examples/extract_dopamine_to_data_files.py).'
-            ),
-        )
-        if _race_with_dopamine and not _data_has_dopamine:
-            _race_with_dopamine = False
-        if not _data_has_dopamine:
-            st.caption(
-                ':grey[Dopamine fitting disabled — the loaded dataset does '
-                'not contain a `dopamine` field.]'
-            )
     elif model_choice == 'DDM — exact (Navarro & Fuss 2009)':
         from psytrax.models.ddm import (
             log_lik_trial as _llt,
@@ -894,6 +1080,16 @@ Gaussian random-walk prior.
         _data_spec = augment_data_spec(_data_spec, make_reinforce(
             _llt, reward_key=_lr_reward_col))
         _learning_rule = make_reinforce(_llt, reward_key=_lr_reward_col)
+        if _race_with_dopamine:
+            st.info(
+                'REINFORCE update direction = '
+                '`∇_θ log p(choice, RT, dopamine | θ)` × reward.  Because '
+                'the dopamine likelihood term is part of `log_lik_trial` '
+                'when dopamine fitting is enabled, the score function '
+                'naturally includes its gradient — no extra wiring needed. '
+                'Per-parameter learning rates (α) are still EB-optimised '
+                'alongside σ, sig_DA, da_beta, da_offset, sig_i.'
+            )
 
     elif _lr_choice == 'Upload custom (.py)':
         st.markdown("""
@@ -1189,6 +1385,41 @@ def learning_rule(params, dat_trial):
             st.warning('Could not parse sigma — using model default.')
             custom_sigma = default_h['sigma']
 
+        # Dopamine model_hyper starting values (race only, dopamine on).
+        _custom_da_init = {}
+        if _race_with_dopamine:
+            st.markdown('---')
+            st.markdown('**Dopamine model_hyper starting values** *(linear scale)*. '
+                        'EB still optimises all four; these just set the initial '
+                        'point.')
+            from psytrax.models.race import (
+                DEFAULT_SIG_I    as _DEFAULT_SIG_I,
+                DEFAULT_SIG_DA   as _DEFAULT_SIG_DA,
+                DEFAULT_DA_BETA  as _DEF_BETA,
+                DEFAULT_DA_OFFSET as _DEF_OFFSET,
+            )
+            _da_init_specs = [
+                ('sig_i',     'within-trial accumulator noise',    _DEFAULT_SIG_I),
+                ('sig_DA',    'Gaussian std on dopamine peak',     _DEFAULT_SIG_DA),
+                ('da_beta',   'sigmoid inverse temperature',       _DEF_BETA),
+                ('da_offset', 'sigmoid centre on linear-pred axis', _DEF_OFFSET),
+            ]
+            _da_cols = st.columns(len(_da_init_specs))
+            for (key, descr, default_val), _col in zip(_da_init_specs, _da_cols):
+                with _col:
+                    _val = st.number_input(
+                        f'`{key}` init',
+                        value=float(default_val),
+                        min_value=1e-6,
+                        step=0.05,
+                        format='%.4f',
+                        key=f'fit_da_init_{key}',
+                        help=f'Initial {descr}. Must be > 0 (EB enforces '
+                             'positivity via log₂ reparameterisation).',
+                    )
+                    if _val > 0:
+                        _custom_da_init[key] = float(_val)
+
     # Build hyper dict
     hyper = _dhyper()
     # Respect the shared_sigma checkbox: collapse to a scalar if checked,
@@ -1286,13 +1517,33 @@ def learning_rule(params, dat_trial):
 
                 # Joint dopamine fit (race only, opt-in via UI checkbox).
                 if _race_with_dopamine:
-                    fit_kwargs['model_hyper'] = (
-                        _race_module.default_model_hyper_with_dopamine()
+                    _mh_init = _race_module.default_model_hyper_with_dopamine()
+                    # Defensive: older deployed psytrax versions returned
+                    # only {sig_i, sig_DA} from default_model_hyper_with_dopamine.
+                    # Force-include da_beta / da_offset so EB optimises them
+                    # regardless of which version is in site-packages.
+                    _mh_init.setdefault(
+                        'da_beta',
+                        float(getattr(_race_module, 'DEFAULT_DA_BETA', 6.0)),
                     )
+                    _mh_init.setdefault(
+                        'da_offset',
+                        float(getattr(_race_module, 'DEFAULT_DA_OFFSET', 0.5)),
+                    )
+                    # Apply user-defined starting values from the advanced
+                    # expander (any subset; missing keys keep the model
+                    # default).
+                    for k, v in (_custom_da_init or {}).items():
+                        if k in _mh_init and v is not None:
+                            _mh_init[k] = float(v)
+                    fit_kwargs['model_hyper'] = _mh_init
                     _status_cb({
                         'stage':   'setup',
-                        'message': ('Dopamine term enabled — sig_DA, da_beta '
-                                    'and da_offset will be EB-optimised.'),
+                        'message': (
+                            'Dopamine term enabled — sig_DA, da_beta and '
+                            'da_offset will be EB-optimised.  Initial '
+                            f'model_hyper = {_mh_init}.'
+                        ),
                     })
 
                 # Pass learning rule if one was selected
@@ -1402,6 +1653,48 @@ def learning_rule(params, dat_trial):
                 f"evidence {execution.get('evidence_precision', '?')})"
             )
 
+        # Initial → recovered model_hyper table (so it's immediately
+        # obvious whether each scalar moved during EB).
+        _res_mh = res.get('model_hyper') or {}
+        if _res_mh:
+            import pandas as pd
+            _init_mh = (
+                fit_kwargs.get('model_hyper') if 'fit_kwargs' in dir() else None
+            )
+            # fit_kwargs is local to _run_fit; recover the initial values
+            # we'd have used so the comparison still works.
+            if _init_mh is None:
+                if _race_with_dopamine:
+                    _init_mh = _race_module.default_model_hyper_with_dopamine()
+                    _init_mh.setdefault(
+                        'da_beta',
+                        float(getattr(_race_module, 'DEFAULT_DA_BETA', 6.0)),
+                    )
+                    _init_mh.setdefault(
+                        'da_offset',
+                        float(getattr(_race_module, 'DEFAULT_DA_OFFSET', 0.5)),
+                    )
+                    for k, v in (_custom_da_init or {}).items():
+                        if k in _init_mh and v is not None:
+                            _init_mh[k] = float(v)
+                else:
+                    _init_mh = {}
+            mh_rows = []
+            for k in sorted(_res_mh.keys()):
+                init_v = _init_mh.get(k)
+                rec_v  = float(_res_mh[k])
+                moved  = (init_v is not None
+                          and not np.isclose(init_v, rec_v, rtol=1e-3))
+                mh_rows.append({
+                    'hyperparameter': k,
+                    'initial': '—' if init_v is None else f'{init_v:.4f}',
+                    'recovered': f'{rec_v:.4f}',
+                    'moved by EB': '✓' if moved else '·',
+                })
+            st.markdown('**Optimised model-level hyperparameters**')
+            st.dataframe(pd.DataFrame(mh_rows).set_index('hyperparameter'),
+                         use_container_width=True)
+
         with open(path, 'rb') as f:
             st.download_button(
                 'Download fit file (.npy)',
@@ -1410,7 +1703,22 @@ def learning_rule(params, dat_trial):
                 mime='application/octet-stream',
                 key='fit_download',
             )
-        st.info('Load this file in **Visualise Results** or **Compare Models** to explore the fit.')
+
+        # Inline summary plots: psychometric, chronometric (where
+        # applicable), and dopamine (when present in data + race fit).
+        st.divider()
+        st.subheader('Quick summary plots')
+        st.caption(
+            'Auto-rendered from the just-saved fit. For the full '
+            'visualisation (parameter trajectories, hyperparameter table, '
+            'credible intervals, …) open the file in **Visualise Results**.'
+        )
+        try:
+            _render_quartile_plots(res)
+        except Exception as exc:
+            st.warning(f'Could not render inline plots: {exc}')
+
+        st.info('Load this file in **Visualise Results** or **Compare Models** for the full breakdown.')
 
 # ---------------------------------------------------------------------------
 # IBL Explorer
@@ -2526,7 +2834,7 @@ elif page == 'Visualise Results':
             st.caption(
                 'Black dots: empirical mean dopamine peak per signed contrast '
                 '(within each quartile of trials). Blue line: analytic '
-                'prediction `σ(β · (w_eff · c / z − 0.5))` (β = 6) averaged '
+                'prediction `σ(β · (w_eff · |c| / z − 0.5))` (β = 6) averaged '
                 'over each window\'s '
                 'recovered trajectory, where `w_eff = wr` for `c ≥ 0` and '
                 '`w_eff = wl` otherwise.'
@@ -2562,7 +2870,7 @@ elif page == 'Visualise Results':
                     ]) if c_uniq_win.size else np.array([])
                     n_w = np.array([np.sum(c_win_f == cv) for cv in c_uniq_win])
 
-                    # Analytic curve: average σ(β·(w_eff · c / z − offset))
+                    # Analytic curve: average σ(β·(w_eff · |c| / z − offset))
                     # over the window. β and offset come from the recovered
                     # model_hyper (EB-fitted alongside sig_DA) when present,
                     # otherwise fall back to the model defaults imported at
@@ -2576,7 +2884,7 @@ elif page == 'Visualise Results':
                     da_curve = np.array([
                         np.mean(1.0 / (1.0 + np.exp(
                             -_DA_BETA * (
-                                np.where(cv >= 0, wr_win, wl_win) * cv / z_safe
+                                np.where(cv >= 0, wr_win, wl_win) * abs(cv) / z_safe
                                 - _DA_OFFSET
                             )
                         )))
@@ -3009,7 +3317,7 @@ elif page == 'Model Recovery':
             _da_blurb = (
                 ' Joint dopamine fit is enabled: each trial also emits a '
                 '`dopamine` value drawn from '
-                '`N(σ(β · (w_eff · c / z − 0.5)), sig_DA²)` (β = 6) '
+                '`N(σ(β · (w_eff · |c| / z − 0.5)), sig_DA²)` (β = 6) '
                 '(`w_eff = wr` if `c ≥ 0` else `wl`), and the fit estimates '
                 '`sig_DA` jointly with `sig_i`.'
                 if kwargs.get('race_with_dopamine') else ''
@@ -3093,7 +3401,7 @@ is modelled.
             key='rec_race_with_dopamine',
             help='Add a per-trial dopamine peak to the simulated data and '
                  'fit it with a Gaussian likelihood whose mean is '
-                 'σ(β · (w_eff · c / z − 0.5)) (β = 6, w_eff = wr if c ≥ 0 '
+                 'σ(β · (w_eff · |c| / z − 0.5)) (β = 6, w_eff = wr if c ≥ 0 '
                  'else wl) and whose '
                  'variance (sig_DA²) is estimated jointly with sig_i.',
         )
@@ -4115,7 +4423,7 @@ is modelled.
                             curve_t = np.array([
                                 np.mean(1.0 / (1.0 + np.exp(
                                     -_DA_BETA_T * (
-                                        np.where(cv >= 0, wr_t, wl_t) * cv / z_t
+                                        np.where(cv >= 0, wr_t, wl_t) * abs(cv) / z_t
                                         - _DA_OFFSET_T
                                     )
                                 )))
@@ -4124,7 +4432,7 @@ is modelled.
                             curve_r = np.array([
                                 np.mean(1.0 / (1.0 + np.exp(
                                     -_DA_BETA_R * (
-                                        np.where(cv >= 0, wr_r, wl_r) * cv / z_r
+                                        np.where(cv >= 0, wr_r, wl_r) * abs(cv) / z_r
                                         - _DA_OFFSET_R
                                     )
                                 )))

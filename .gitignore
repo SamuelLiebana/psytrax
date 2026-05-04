@@ -5,9 +5,8 @@ dist/
 build/
 .eggs/
 *.npy
-# Whitelist per-mouse data files at any depth under data/ (e.g. data/*.npy
-# AND data/with_dopamine/*.npy) so they ship with the Streamlit app on
-# GitHub-hosted deployments.
+# Whitelist per-mouse data files at any depth under data/ so they ship
+# with the Streamlit app on GitHub-hosted deployments.
 !data/**/*.npy
 !example_fits/*.npy
 fits/
