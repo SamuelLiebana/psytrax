@@ -4,11 +4,17 @@ import numpy as np
 import pytest
 from scipy.sparse import csc_matrix
 from scipy.optimize import OptimizeResult
+import jax.numpy as jnp
 
 import psytrax
 import psytrax._execution as execution_mod
-from psytrax._helper.helperFunctions import sparse_logdet
-from psytrax._hyper_opt import _should_retry_hyper_minimize
+from psytrax._helper.helperFunctions import myblk_diags, sparse_logdet
+from psytrax._hyper_opt import (
+    _block_tridiag_solve_logdet_jax,
+    _blocks_from_prior_and_likelihood,
+    _should_retry_hyper_minimize,
+    _sparse_trial_blocks,
+)
 from psytrax._jax_map import _raise_if_invalid_solution
 from psytrax.fit import _is_retryable_fit_error, _model_default_E0
 from psytrax.models.logistic import N_PARAMS, default_E0, log_lik_trial
@@ -142,6 +148,42 @@ def test_hyper_minimize_retry_ignores_real_step_or_tiny_gradient():
 
     assert not _should_retry_hyper_minimize(moved, x0, [(-15, 5), (-15, 5)])
     assert not _should_retry_hyper_minimize(stationary, x0, [(-15, 5), (-15, 5)])
+
+
+def test_jax_block_helpers_match_sparse_hessian_layout_and_logdet():
+    n_trials = 4
+    n_params = 2
+    blocks = np.array([
+        [[-1.0, 0.1], [0.1, -0.8]],
+        [[-1.2, 0.0], [0.0, -0.7]],
+        [[-0.9, 0.2], [0.2, -1.1]],
+        [[-1.1, 0.1], [0.1, -0.6]],
+    ])
+    sparse_h = myblk_diags(blocks)
+
+    recovered = _sparse_trial_blocks(sparse_h, n_params, n_trials)
+    assert np.allclose(recovered, blocks)
+
+    q_diag = jnp.asarray(np.full((n_trials, n_params), 2.0))
+    q_off = jnp.asarray(np.full((n_trials - 1, n_params), -0.25))
+    dense = np.zeros((n_trials * n_params, n_trials * n_params))
+    for t in range(n_trials):
+        dense[t * n_params:(t + 1) * n_params,
+              t * n_params:(t + 1) * n_params] = (
+            np.diag(np.asarray(q_diag[t])) - blocks[t]
+        )
+        if t + 1 < n_trials:
+            off = np.diag(np.asarray(q_off[t]))
+            dense[t * n_params:(t + 1) * n_params,
+                  (t + 1) * n_params:(t + 2) * n_params] = off
+            dense[(t + 1) * n_params:(t + 2) * n_params,
+                  t * n_params:(t + 1) * n_params] = off
+
+    A = _blocks_from_prior_and_likelihood(jnp, q_diag, jnp.asarray(blocks))
+    _, logdet = _block_tridiag_solve_logdet_jax(
+        jnp, A, q_off, jnp.zeros((n_trials, n_params)), solve_rhs=False,
+    )
+    assert np.allclose(float(logdet), np.linalg.slogdet(dense)[1])
 
 
 def test_model_default_e0_is_discovered_for_builtin_model():
