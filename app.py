@@ -3748,9 +3748,11 @@ is modelled.
     st.subheader('2. Trial setup')
     col_n, col_seed = st.columns([2, 1])
     with col_n:
-        N_rec = st.slider('Number of trials', 200, 4000, 1000, step=100,
+        N_rec = st.slider('Number of trials', 200, 5000, 1000, step=100,
                           key='rec_n_trials',
-                          help='More trials → better recovery, longer fit.')
+                          help='More trials → better recovery, longer fit. '
+                               '5000 is around the upper edge of what fits '
+                               'in a few minutes on a single CPU.')
     with col_seed:
         seed_rec = st.number_input('Random seed', min_value=0, max_value=2**31 - 1,
                                    value=42, step=1, key='rec_seed')
@@ -4814,23 +4816,57 @@ is modelled.
         W_std_rec     = (result_rec.get('hess_info') or {}).get('W_std')
         companion_fit = result_rec.get('companion_fit')
 
-        n_cols = min(K_r, 3)
-        n_rows = int(np.ceil(K_r / n_cols))
-        fig_rec, axes_rec = plt.subplots(n_rows, n_cols,
-                                         figsize=(5 * n_cols, 3 * n_rows),
-                                         squeeze=False)
-        _tc = _style_fig(fig_rec)
-        trials_rec = np.arange(N_r)
-
         primary_label   = result_rec.get('fit_label',   'recovered')
         companion_label = (companion_fit.get('fit_label', 'recovered (alt prior)')
                            if companion_fit else None)
         recovered_alt   = companion_fit['params'] if companion_fit else None
         W_std_alt       = ((companion_fit.get('hess_info') or {}).get('W_std')
                            if companion_fit else None)
+        trials_rec      = np.arange(N_r)
+        is_race_recov   = set(param_names_r) >= {'wr', 'wl', 'br', 'bl', 'z'}
+
+        # Same wl|wr / bl|br / z layout used by Visualise Results so the
+        # two pages render identically for race fits.
+        if is_race_recov:
+            idx_map = {n: i for i, n in enumerate(param_names_r)}
+            fig_rec = plt.figure(figsize=(12, 7.6))
+            _tc = _style_fig(fig_rec)
+            gs = fig_rec.add_gridspec(3, 4, hspace=0.38, wspace=0.16)
+            fig_rec.subplots_adjust(
+                left=0.06, right=0.985, top=0.92, bottom=0.075,
+            )
+            ax_wl = fig_rec.add_subplot(gs[0, 0:2])
+            ax_wr = fig_rec.add_subplot(gs[0, 2:4], sharey=ax_wl)
+            ax_bl = fig_rec.add_subplot(gs[1, 0:2])
+            ax_br = fig_rec.add_subplot(gs[1, 2:4], sharey=ax_bl)
+            ax_z  = fig_rec.add_subplot(gs[2, 1:3])
+            _race_axes = [
+                ('wl', ax_wl, False), ('wr', ax_wr, True),
+                ('bl', ax_bl, False), ('br', ax_br, True),
+                ('z',  ax_z,  False),
+            ]
+            iter_axes = (
+                (idx_map[name], ax, name, hide_y)
+                for name, ax, hide_y in _race_axes
+            )
+            for_axes_postloop = [ax_wr, ax_br]   # right-column shared-y axes
+        else:
+            n_cols = min(K_r, 3)
+            n_rows = int(np.ceil(K_r / n_cols))
+            fig_rec, axes_rec = plt.subplots(n_rows, n_cols,
+                                             figsize=(5 * n_cols, 3 * n_rows),
+                                             squeeze=False)
+            _tc = _style_fig(fig_rec)
+            iter_axes = (
+                (k, ax, name, False)
+                for k, (ax, name) in enumerate(zip(axes_rec.flat,
+                                                   param_names_r))
+            )
+            for_axes_postloop = []
 
         per_param_summary = []
-        for k, (ax, name) in enumerate(zip(axes_rec.flat, param_names_r)):
+        first_legend_done = False
+        for k, ax, name, hide_y in iter_axes:
             _style_ax(ax, xlabel='Trial', title=name)
             ax.plot(trials_rec, true_params_r[k], color='#000000', lw=1.5, label='true')
             ax.plot(trials_rec, recovered[k], color='#4e9af1', lw=1.0,
@@ -4852,8 +4888,11 @@ is modelled.
                         recovered_alt[k] + W_std_alt[k],
                         color='#f1a44e', alpha=0.10,
                     )
-            if k == 0:
+            if hide_y:
+                plt.setp(ax.get_yticklabels(), visible=False)
+            if not first_legend_done:
                 _style_legend(ax)
+                first_legend_done = True
             mae = float(np.mean(np.abs(recovered[k] - true_params_r[k])))
             if np.std(true_params_r[k]) > 0 and np.std(recovered[k]) > 0:
                 corr = float(np.corrcoef(recovered[k], true_params_r[k])[0, 1])
@@ -4872,11 +4911,13 @@ is modelled.
                 row[f'corr ({companion_label})'] = corr_a
             per_param_summary.append(row)
 
-        for ax in axes_rec.flat[K_r:]:
-            ax.set_visible(False)
+        if not is_race_recov:
+            for ax in axes_rec.flat[K_r:]:
+                ax.set_visible(False)
         fig_rec.suptitle('Parameter recovery: true vs recovered',
                          color=_tc['text'], fontsize=12)
-        fig_rec.tight_layout(rect=[0, 0, 1, 0.96], pad=1.3)
+        if not is_race_recov:
+            fig_rec.tight_layout(rect=[0, 0, 1, 0.96], pad=1.3)
         _show_fig(fig_rec, 'recovery_overlay.png')
 
         # Log-evidence comparison block (only when both fits ran).
