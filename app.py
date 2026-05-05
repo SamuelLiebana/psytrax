@@ -43,7 +43,7 @@ try:
         DEFAULT_DA_OFFSET as _DA_OFFSET_DEFAULT,
     )
 except ImportError:
-    _DA_BETA_DEFAULT, _DA_OFFSET_DEFAULT = 2.0, 1.4
+    _DA_BETA_DEFAULT, _DA_OFFSET_DEFAULT = 2.0, 0.001
 
 
 def _is_logistic(param_names):
@@ -895,30 +895,30 @@ noise, and trajectory credible bands (`hess_calc='weights'`).
 
 | Mouse | Trials | Time |
 |---|---:|---:|
-| DAP044 | 407 | 0.77 min (46s) |
-| DAP048 | 2,580 | 1.15 min (69s) |
-| DAP110 | 2,583 | 1.19 min (71s) |
-| DAP039 | 3,162 | 0.84 min (50s) |
-| DAP014 | 3,213 | 1.40 min (84s) |
-| DAP027 | 3,693 | 1.56 min (94s) |
-| DAP033 | 4,019 | 1.67 min (100s) |
-| DAP013 | 4,413 | 1.73 min (104s) |
-| DAP009 | 4,885 | 1.44 min (86s) |
-| DAP023 | 4,911 | 1.57 min (94s) |
-| DAP017 | 5,078 | 1.78 min (107s) |
-| DAP011 | 5,413 | 0.83 min (50s) |
-| DAP015 | 5,989 | 1.65 min (99s) |
-| DAP051 | 6,170 | 1.88 min (113s) |
-| DAP156 | 6,371 | 2.08 min (125s) |
-| DAP022 | 6,548 | 1.92 min (115s) |
-| DAP046 | 7,796 | 3.25 min (195s) |
-| DAP050 | 8,173 | 0.85 min (51s) |
-| DAP028 | 8,408 | 3.26 min (196s) |
-| DAP024 | 9,602 | 3.20 min (192s) |
-| DAP007 | 12,018 | 3.99 min (239s) |
+| DAP044 | 407 | 0.72 min (43s) |
+| DAP048 | 2,580 | 1.33 min (80s) |
+| DAP110 | 2,583 | 1.03 min (62s) |
+| DAP039 | 3,162 | 2.65 min (159s) |
+| DAP014 | 3,213 | 1.32 min (79s) |
+| DAP027 | 3,693 | 1.75 min (105s) |
+| DAP033 | 4,019 | 2.92 min (175s) |
+| DAP013 | 4,413 | 1.78 min (107s) |
+| DAP009 | 4,885 | 2.02 min (121s) |
+| DAP023 | 4,911 | 1.63 min (98s) |
+| DAP017 | 5,078 | 2.35 min (141s) |
+| DAP011 | 5,413 | 2.69 min (162s) |
+| DAP015 | 5,989 | 3.38 min (203s) |
+| DAP051 | 6,170 | 1.97 min (118s) |
+| DAP156 | 6,371 | 2.60 min (156s) |
+| DAP022 | 6,548 | 3.77 min (226s) |
+| DAP046 | 7,796 | 4.36 min (261s) |
+| DAP050 | 8,173 | 3.56 min (214s) |
+| DAP028 | 8,408 | 2.99 min (180s) |
+| DAP024 | 9,602 | 1.87 min (112s) |
+| DAP007 | 12,018 | 2.46 min (147s) |
 
-Across all 21 bundled dopamine example mice, the median fit time was 1.65 min
-and the range was 0.77-3.99 min. These timings use real datasets rather than
+Across all 21 bundled dopamine example mice, the median fit time was 2.35 min
+and the range was 0.72-4.36 min. These timings use real datasets rather than
 synthetic sweeps, so they are not perfectly monotonic in trial count. NVIDIA
 CUDA (float64) is expected to give a further **3-8x speedup** for models with
 K >= 3 via `jax.vmap` on-device computation.
@@ -1686,7 +1686,7 @@ def learning_rule(params, dat_trial):
                     )
                     _mh_init.setdefault(
                         'da_offset',
-                        float(getattr(_race_module, 'DEFAULT_DA_OFFSET', 1.4)),
+                        float(getattr(_race_module, 'DEFAULT_DA_OFFSET', 0.001)),
                     )
                     # Apply user-defined starting values from the advanced
                     # expander (any subset; missing keys keep the model
@@ -1847,7 +1847,7 @@ def learning_rule(params, dat_trial):
                     )
                     _init_mh.setdefault(
                         'da_offset',
-                        float(getattr(_race_module, 'DEFAULT_DA_OFFSET', 1.4)),
+                        float(getattr(_race_module, 'DEFAULT_DA_OFFSET', 0.001)),
                     )
                     for k, v in (_custom_da_init or {}).items():
                         if k in _init_mh and v is not None:

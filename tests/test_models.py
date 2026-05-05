@@ -40,7 +40,7 @@ def test_race_dopamine_default_model_hyper_starts_near_fitted_region():
 
     assert model_hyper["sig_i"] == 0.01
     assert model_hyper["da_beta"] == 2.0
-    assert model_hyper["da_offset"] == 1.4
+    assert model_hyper["da_offset"] == 0.001
 
 
 def test_race_dopamine_tanh_readout_is_zero_centered():

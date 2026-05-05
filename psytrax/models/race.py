@@ -72,11 +72,11 @@ DEFAULT_SIG_DA = 0.2
 # Both `da_beta` (inverse temperature) and `da_offset` (centre on the
 # linear-prediction axis) live in ``model_hyper`` and are optimised
 # jointly with ``sig_DA`` and ``sig_i`` by the EB outer loop.  The defaults
-# start with a moderate slope and a centre near the unit-scale linear
-# prediction values recovered in full dopamine fits, but EB will move them as
-# needed to match the data.
+# start with a moderate slope and a near-zero centre so zero contrast is
+# effectively neutral under the tanh readout.  The small positive offset keeps
+# the EB log-parameterisation valid while still allowing the optimiser to move.
 DEFAULT_DA_BETA   = 2.0
-DEFAULT_DA_OFFSET = 1.4
+DEFAULT_DA_OFFSET = 0.001
 
 
 def default_model_hyper():
