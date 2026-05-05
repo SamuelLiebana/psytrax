@@ -1603,7 +1603,7 @@ def learning_rule(params, dat_trial):
     run_btn = st.button('Run fit', disabled=st.session_state['fit_running'], key='fit_run')
 
     if run_btn:
-        import psytrax
+        from psytrax.fit import fit as _psytrax_fit
         import psytrax._hyper_opt as _hyper_opt_mod
         import time
 
@@ -1706,7 +1706,7 @@ def learning_rule(params, dat_trial):
                     fit_kwargs['learning_rule'] = _learning_rule
                     _status_cb({'stage': 'setup', 'message': 'Learning rule enabled — alpha will be optimised.'})
 
-                result = psytrax.fit(
+                result = _psytrax_fit(
                     hyper=hyper,
                     **fit_kwargs,
                 )
@@ -2508,7 +2508,7 @@ elif page == 'IBL Explorer':
     _ibl_run = st.button('Run fit', disabled=st.session_state['ibl_fit_running'], key='ibl_fit_run')
 
     if _ibl_run:
-        import psytrax
+        from psytrax.fit import fit as _psytrax_fit
         import psytrax._hyper_opt as _ibl_hyper_opt_mod
         import time as _time
 
@@ -2566,7 +2566,7 @@ elif page == 'IBL Explorer':
                     _ibl_status_cb({'stage': 'setup',
                                     'message': 'Learning rule enabled — alpha will be optimised.'})
 
-                result = psytrax.fit(hyper=_ibl_hyper, **fit_kw)
+                result = _psytrax_fit(hyper=_ibl_hyper, **fit_kw)
                 _iq.put(('done', result))
             except Exception:
                 import traceback
@@ -3414,6 +3414,7 @@ elif page == 'Compare Models':
 # ---------------------------------------------------------------------------
 elif page == 'Model Recovery':
     import psytrax
+    from psytrax.fit import fit as _psytrax_fit
     import psytrax._hyper_opt as _rec_hyper_opt_mod
     import importlib.util, tempfile
     import time as _rec_time
@@ -4278,7 +4279,7 @@ is modelled.
                     primary_label = 'zero-centred prior'
 
                 t0 = _rec_time.time()
-                result = psytrax.fit(**primary_kwargs)
+                result = _psytrax_fit(**primary_kwargs)
                 t_fit = _rec_time.time() - t0
                 result['fit_label']        = primary_label
 
@@ -4293,7 +4294,7 @@ is modelled.
                     comp_kwargs = dict(fit_kwargs)
                     comp_kwargs.pop('learning_rule', None)
                     t0c = _rec_time.time()
-                    companion = psytrax.fit(**comp_kwargs)
+                    companion = _psytrax_fit(**comp_kwargs)
                     companion['fit_label']    = 'zero-centred prior'
                     companion['fit_time']     = _rec_time.time() - t0c
                     companion['true_params']  = _true_params_run
