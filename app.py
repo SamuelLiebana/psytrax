@@ -30,7 +30,7 @@ _DDM_APPROX_PARAMS = {'w', 'b', 'z'}
 _RT_CURVE_FAMILIES = {'race', 'ddm_exact', 'ddm_approx'}
 
 # ---------------------------------------------------------------------------
-# Race-model dopamine sigmoid defaults — pulled from the model module so the
+# Race-model dopamine readout defaults — pulled from the model module so the
 # plotted analytic curves match whatever β / offset the model was fitted
 # with.  Wrapped in try/except so app.py can still load against an older
 # psytrax.models.race that pre-dates the dopamine code (e.g. a stale
@@ -397,6 +397,11 @@ def _shared_ylim(series_list, pad_frac=0.05, min_pad=0.05):
 _TRAJ_COLORS = ['#4e9af1', '#f1a44e', '#4ef17a', '#f14e7a', '#c44ef1', '#f1f14e']
 
 
+def _dopamine_tanh_readout(linear_pred, da_beta, da_offset):
+    """Tanh dopamine readout used by the race model."""
+    return np.tanh(0.5 * da_beta * (linear_pred - da_offset))
+
+
 def _render_parameter_trajectories(result, *, key_suffix=''):
     """Inline plot of the K trial-by-trial parameter trajectories.
 
@@ -651,11 +656,11 @@ def _render_quartile_plots(result, *, n_win=4):
         z_w  = np.where(params[z_idx, t0:t1] > 0,
                         params[z_idx, t0:t1], 1.0)
         da_curve = np.array([
-            np.mean(1.0 / (1.0 + np.exp(
-                -_DA_BETA * (
-                    np.where(cv >= 0, wr_w, wl_w) * abs(cv) / z_w - _DA_OFFSET
-                )
-            )))
+            np.mean(_dopamine_tanh_readout(
+                np.where(cv >= 0, wr_w, wl_w) * abs(cv) / z_w,
+                _DA_BETA,
+                _DA_OFFSET,
+            ))
             for cv in c_grid
         ])
         panel_data.append((t0, t1, c_uniq, da_mean, da_sem, n_w, da_curve))
@@ -1089,9 +1094,9 @@ columns to the required fields.
         disabled=not _data_has_dopamine,
         help=(
             'Adds a Gaussian likelihood term '
-            'N(σ(da_beta · (w_eff · |c| / z − da_offset)), sig_DA²) for the '
-            'per-trial dopamine peak. `sig_DA`, `da_beta`, and `da_offset` '
-            'are estimated jointly with `sig_i` by Empirical Bayes. '
+            'N(tanh(0.5 · da_beta · (w_eff · |c| / z − da_offset)), sig_DA²) '
+            'for the per-trial dopamine peak. `sig_DA`, `da_beta`, and '
+            '`da_offset` are estimated jointly with `sig_i` by Empirical Bayes. '
             'Available only when the loaded dataset contains a `dopamine` '
             'field — use the `with_dopamine ::` files in the dropdown above.'
         ),
@@ -1140,7 +1145,7 @@ columns to the required fields.
 **Race model + joint dopamine fit** — two independent inverse-Gaussian
 accumulators racing to threshold (`wr, wl, br, bl, z` evolve under the
 random-walk prior, `sig_i` is an EB scalar).  In addition the per-trial
-dopamine peak is modelled as `N(σ(da_beta · (w_eff · |c| / z − da_offset)),
+dopamine peak is modelled as `N(tanh(0.5 · da_beta · (w_eff · |c| / z − da_offset)),
 sig_DA²)` with `w_eff = wr` if `c ≥ 0` else `wl`.  EB jointly optimises
 `sig_i, sig_DA, da_beta, da_offset` with the random-walk variances.
 """)
@@ -1543,8 +1548,8 @@ def learning_rule(params, dat_trial):
             _da_init_specs = [
                 ('sig_i',     'within-trial accumulator noise',    _DEFAULT_SIG_I),
                 ('sig_DA',    'Gaussian std on dopamine peak',     _DEFAULT_SIG_DA),
-                ('da_beta',   'sigmoid inverse temperature',       _DEF_BETA),
-                ('da_offset', 'sigmoid centre on linear-pred axis', _DEF_OFFSET),
+                ('da_beta',   'tanh inverse temperature',          _DEF_BETA),
+                ('da_offset', 'tanh centre on linear-pred axis',    _DEF_OFFSET),
             ]
             _da_cols = st.columns(len(_da_init_specs))
             for (key, descr, default_val), _col in zip(_da_init_specs, _da_cols):
@@ -2975,8 +2980,8 @@ elif page == 'Visualise Results':
             st.caption(
                 'Black dots: empirical mean dopamine peak per signed contrast '
                 '(within each quartile of trials). Blue line: analytic '
-                'prediction `σ(da_beta · (w_eff · |c| / z − da_offset))` averaged '
-                'over each window\'s '
+                'prediction `tanh(0.5 · da_beta · (w_eff · |c| / z − da_offset))` '
+                'averaged over each window\'s '
                 'recovered trajectory, where `w_eff = wr` for `c ≥ 0` and '
                 '`w_eff = wl` otherwise.'
             )
@@ -3011,7 +3016,7 @@ elif page == 'Visualise Results':
                     ]) if c_uniq_win.size else np.array([])
                     n_w = np.array([np.sum(c_win_f == cv) for cv in c_uniq_win])
 
-                    # Analytic curve: average σ(β·(w_eff · |c| / z − offset))
+                    # Analytic curve: average the tanh dopamine readout
                     # over the window. β and offset come from the recovered
                     # model_hyper (EB-fitted alongside sig_DA) when present,
                     # otherwise fall back to the model defaults imported at
@@ -3023,12 +3028,11 @@ elif page == 'Visualise Results':
                     z_win  = params[_z_idx,  t0:t1]
                     z_safe = np.where(z_win > 0, z_win, 1.0)
                     da_curve = np.array([
-                        np.mean(1.0 / (1.0 + np.exp(
-                            -_DA_BETA * (
-                                np.where(cv >= 0, wr_win, wl_win) * abs(cv) / z_safe
-                                - _DA_OFFSET
-                            )
-                        )))
+                        np.mean(_dopamine_tanh_readout(
+                            np.where(cv >= 0, wr_win, wl_win) * abs(cv) / z_safe,
+                            _DA_BETA,
+                            _DA_OFFSET,
+                        ))
                         for cv in c_grid
                     ])
                     panel_da.append((t0, t1, c_uniq_win, da_mean, da_sem,
@@ -3458,7 +3462,7 @@ elif page == 'Model Recovery':
             _da_blurb = (
                 ' Joint dopamine fit is enabled: each trial also emits a '
                 '`dopamine` value drawn from '
-                '`N(σ(da_beta · (w_eff · |c| / z − da_offset)), sig_DA²)` '
+                '`N(tanh(0.5 · da_beta · (w_eff · |c| / z − da_offset)), sig_DA²)` '
                 '(`w_eff = wr` if `c ≥ 0` else `wl`), and the fit estimates '
                 '`sig_DA`, `da_beta`, and `da_offset` jointly with `sig_i`.'
                 if kwargs.get('race_with_dopamine') else ''
@@ -3533,7 +3537,7 @@ is modelled.
         )
 
     # Race model can additionally fit a per-trial dopamine peak, modelled as
-    # N(σ(da_beta·(w_eff·|c|/z − da_offset)), sig_DA²), with all three
+    # N(tanh(0.5·da_beta·(w_eff·|c|/z − da_offset)), sig_DA²), with all three
     # dopamine readout scalars estimated by EB.
     _rec_race_with_dopamine = False
     if _rec_model_choice == 'Race model (inverse-Gaussian)':
@@ -3543,7 +3547,7 @@ is modelled.
             key='rec_race_with_dopamine',
             help='Add a per-trial dopamine peak to the simulated data and '
                  'fit it with a Gaussian likelihood whose mean is '
-                 'σ(da_beta · (w_eff · |c| / z − da_offset)) '
+                 'tanh(0.5 · da_beta · (w_eff · |c| / z − da_offset)) '
                  '(w_eff = wr if c ≥ 0 else wl) and whose variance (sig_DA²) '
                  'is estimated jointly with sig_i.',
         )
@@ -4823,21 +4827,19 @@ is modelled.
                             z_r  = np.where(recovered[_z_idx, t0:t1] > 0,
                                             recovered[_z_idx, t0:t1], 1.0)
                             curve_t = np.array([
-                                np.mean(1.0 / (1.0 + np.exp(
-                                    -_DA_BETA_T * (
-                                        np.where(cv >= 0, wr_t, wl_t) * abs(cv) / z_t
-                                        - _DA_OFFSET_T
-                                    )
-                                )))
+                                np.mean(_dopamine_tanh_readout(
+                                    np.where(cv >= 0, wr_t, wl_t) * abs(cv) / z_t,
+                                    _DA_BETA_T,
+                                    _DA_OFFSET_T,
+                                ))
                                 for cv in c_grid
                             ])
                             curve_r = np.array([
-                                np.mean(1.0 / (1.0 + np.exp(
-                                    -_DA_BETA_R * (
-                                        np.where(cv >= 0, wr_r, wl_r) * abs(cv) / z_r
-                                        - _DA_OFFSET_R
-                                    )
-                                )))
+                                np.mean(_dopamine_tanh_readout(
+                                    np.where(cv >= 0, wr_r, wl_r) * abs(cv) / z_r,
+                                    _DA_BETA_R,
+                                    _DA_OFFSET_R,
+                                ))
                                 for cv in c_grid
                             ])
 

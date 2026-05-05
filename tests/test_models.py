@@ -41,3 +41,27 @@ def test_race_dopamine_default_model_hyper_starts_near_fitted_region():
     assert model_hyper["sig_i"] == 0.01
     assert model_hyper["da_beta"] == 2.0
     assert model_hyper["da_offset"] == 1.4
+
+
+def test_race_dopamine_tanh_readout_is_zero_centered():
+    params = np.array([1.0, 1.0, 0.8, 0.8, 1.0])
+    model_hyper = {
+        "sig_i": 0.01,
+        "sig_DA": 0.1,
+        "da_beta": 2.0,
+        "da_offset": 0.0,
+    }
+    dat = {"inputs": {"c": 0.0}, "r": 1.0, "T": 0.5}
+
+    ll_at_zero = race_log_lik_trial(
+        params,
+        {**dat, "dopamine": 0.0},
+        model_hyper,
+    )
+    ll_at_unshifted_midpoint = race_log_lik_trial(
+        params,
+        {**dat, "dopamine": 0.5},
+        model_hyper,
+    )
+
+    assert float(np.asarray(ll_at_zero)) > float(np.asarray(ll_at_unshifted_midpoint))
