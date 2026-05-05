@@ -3877,23 +3877,23 @@ is modelled.
     _rec_traj_method = st.radio(
         'Trajectory generation method',
         [
+            'Gaussian random walk',
             'Slider-driven sinusoid',
             'REINFORCE forward simulation',
-            'Gaussian random walk',
         ],
         horizontal=True,
         key='rec_traj_method',
         help=(
+            '**Gaussian random walk** (default) — start from a fixed point '
+            'and add 𝒩(0, σ²) noise per trial, with optional larger '
+            '𝒩(0, σ_day²) jumps at session boundaries. This is the matching '
+            "prior of psytrax's default fit (no learning rule), so it lets "
+            'you verify EB recovers σ and σ_day directly. '
             '**Slider-driven** — each trajectory is a closed-form sinusoid '
             'set by offset, slope, amplitude, period, and phase sliders. '
             '**REINFORCE** — start from a fixed point and let each trajectory '
             'evolve under the policy-gradient learning rule (Williams 1992) '
-            'plus Gaussian random walk. '
-            '**Gaussian random walk** — start from a fixed point and add '
-            '𝒩(0, σ²) noise per trial, with optional larger 𝒩(0, σ_day²) '
-            'jumps at session boundaries. This is the matching prior of '
-            'psytrax\'s default fit (no learning rule), so it lets you '
-            'verify EB recovers σ and σ_day directly.'
+            'plus Gaussian random walk.'
         ),
     )
     _rec_use_reinforce = (_rec_traj_method == 'REINFORCE forward simulation')
