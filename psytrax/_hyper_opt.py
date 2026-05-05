@@ -236,7 +236,8 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             status_callback=status_callback,
         )
 
-        diff = np.linalg.norm((optVals - np.array(result.x)) / np.maximum(np.abs(optVals), 1e-8))
+        result = _limit_hyperparameter_step(result, optVals, opt_keywords, showOpt=showOpt)
+        diff = _hyperparameter_update_size(optVals, result.x)
         if showOpt:
             method_used = getattr(result, 'psytrax_method', result.get('method', 'unknown'))
             print(f'Hyper optimiser: {method_used}')
@@ -776,6 +777,66 @@ def _should_retry_hyper_minimize(result, optVals, bounds,
     if not np.any(free):
         return False
     return np.nanmax(np.abs(jac[free])) > grad_tol
+
+
+def _hyperparameter_update_size(old_x, new_x):
+    """Return the absolute Euclidean step size in log2-hyperparameter space."""
+    old_x = np.asarray(old_x, dtype=float)
+    new_x = np.asarray(new_x, dtype=float)
+    return float(np.linalg.norm(new_x - old_x))
+
+
+def _limit_hyperparameter_step(result, optVals, opt_keywords,
+                               max_log2_step=2.0, showOpt=0):
+    """Damp very large EB hyperparameter moves in log2 space.
+
+    The outer optimiser works in log2 coordinates, so an absolute displacement
+    is already multiplicative: one unit is a 2x change, two units is a 4x
+    change.  Limiting the largest coordinate move keeps the decoupled Laplace
+    proposal close enough that the next full MAP/evidence cycle is less likely
+    to jump into a poor region.
+    """
+    optVals = np.asarray(optVals, dtype=float)
+    target = np.asarray(result.x, dtype=float)
+    delta = target - optVals
+    max_abs = float(np.nanmax(np.abs(delta))) if delta.size else 0.0
+    if not np.isfinite(max_abs) or max_abs <= max_log2_step:
+        return result
+
+    base_fun = _hyperOpt_lossfun(optVals, opt_keywords)
+    if not np.isfinite(base_fun):
+        return result
+
+    initial_scale = max_log2_step / max_abs
+    best_x = optVals
+    best_fun = base_fun
+    scale = initial_scale
+    improvement_tol = max(1e-8, 1e-8 * abs(float(base_fun)))
+
+    for _ in range(10):
+        candidate = optVals + scale * delta
+        candidate_fun = _hyperOpt_lossfun(candidate, opt_keywords)
+        if (np.isfinite(candidate_fun) and
+                candidate_fun < best_fun - improvement_tol):
+            best_x = candidate
+            best_fun = candidate_fun
+            break
+        scale *= 0.5
+
+    limited = OptimizeResult(result.copy())
+    limited.x = best_x
+    limited.fun = best_fun
+    limited.psytrax_method = getattr(result, 'psytrax_method', 'unknown')
+    if np.array_equal(best_x, optVals):
+        limited.psytrax_method += ' (step rejected)'
+    else:
+        limited.psytrax_method += f' (step limited {scale:.3f}x)'
+    if showOpt and not np.array_equal(best_x, target):
+        print(
+            f'Limited hyper step: max |Δlog2| {max_abs:.3f} -> '
+            f'{np.nanmax(np.abs(best_x - optVals)):.3f}'
+        )
+    return limited
 
 
 def _emit_status(callback, message, stage=None, **extra):

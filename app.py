@@ -43,7 +43,7 @@ try:
         DEFAULT_DA_OFFSET as _DA_OFFSET_DEFAULT,
     )
 except ImportError:
-    _DA_BETA_DEFAULT, _DA_OFFSET_DEFAULT = 6.0, 0.5
+    _DA_BETA_DEFAULT, _DA_OFFSET_DEFAULT = 2.0, 1.4
 
 
 def _is_logistic(param_names):
@@ -1674,11 +1674,11 @@ def learning_rule(params, dat_trial):
                     # regardless of which version is in site-packages.
                     _mh_init.setdefault(
                         'da_beta',
-                        float(getattr(_race_module, 'DEFAULT_DA_BETA', 6.0)),
+                        float(getattr(_race_module, 'DEFAULT_DA_BETA', 2.0)),
                     )
                     _mh_init.setdefault(
                         'da_offset',
-                        float(getattr(_race_module, 'DEFAULT_DA_OFFSET', 0.5)),
+                        float(getattr(_race_module, 'DEFAULT_DA_OFFSET', 1.4)),
                     )
                     # Apply user-defined starting values from the advanced
                     # expander (any subset; missing keys keep the model
@@ -1818,11 +1818,11 @@ def learning_rule(params, dat_trial):
                     _init_mh = _race_module.default_model_hyper_with_dopamine()
                     _init_mh.setdefault(
                         'da_beta',
-                        float(getattr(_race_module, 'DEFAULT_DA_BETA', 6.0)),
+                        float(getattr(_race_module, 'DEFAULT_DA_BETA', 2.0)),
                     )
                     _init_mh.setdefault(
                         'da_offset',
-                        float(getattr(_race_module, 'DEFAULT_DA_OFFSET', 0.5)),
+                        float(getattr(_race_module, 'DEFAULT_DA_OFFSET', 1.4)),
                     )
                     for k, v in (_custom_da_init or {}).items():
                         if k in _init_mh and v is not None:
@@ -3014,7 +3014,7 @@ elif page == 'Visualise Results':
             st.caption(
                 'Black dots: empirical mean dopamine peak per signed contrast '
                 '(within each quartile of trials). Blue line: analytic '
-                'prediction `σ(β · (w_eff · |c| / z − 0.5))` (β = 6) averaged '
+                'prediction `σ(da_beta · (w_eff · |c| / z − da_offset))` averaged '
                 'over each window\'s '
                 'recovered trajectory, where `w_eff = wr` for `c ≥ 0` and '
                 '`w_eff = wl` otherwise.'
@@ -3497,9 +3497,9 @@ elif page == 'Model Recovery':
             _da_blurb = (
                 ' Joint dopamine fit is enabled: each trial also emits a '
                 '`dopamine` value drawn from '
-                '`N(σ(β · (w_eff · |c| / z − 0.5)), sig_DA²)` (β = 6) '
+                '`N(σ(da_beta · (w_eff · |c| / z − da_offset)), sig_DA²)` '
                 '(`w_eff = wr` if `c ≥ 0` else `wl`), and the fit estimates '
-                '`sig_DA` jointly with `sig_i`.'
+                '`sig_DA`, `da_beta`, and `da_offset` jointly with `sig_i`.'
                 if kwargs.get('race_with_dopamine') else ''
             )
             return {
@@ -3572,7 +3572,8 @@ is modelled.
         )
 
     # Race model can additionally fit a per-trial dopamine peak, modelled as
-    # N(σ(β·(w_eff·c/z − 0.5)), sig_DA²) with sig_DA estimated by EB.
+    # N(σ(da_beta·(w_eff·|c|/z − da_offset)), sig_DA²), with all three
+    # dopamine readout scalars estimated by EB.
     _rec_race_with_dopamine = False
     if _rec_model_choice == 'Race model (inverse-Gaussian)':
         _rec_race_with_dopamine = st.checkbox(
@@ -3581,9 +3582,9 @@ is modelled.
             key='rec_race_with_dopamine',
             help='Add a per-trial dopamine peak to the simulated data and '
                  'fit it with a Gaussian likelihood whose mean is '
-                 'σ(β · (w_eff · |c| / z − 0.5)) (β = 6, w_eff = wr if c ≥ 0 '
-                 'else wl) and whose '
-                 'variance (sig_DA²) is estimated jointly with sig_i.',
+                 'σ(da_beta · (w_eff · |c| / z − da_offset)) '
+                 '(w_eff = wr if c ≥ 0 else wl) and whose variance (sig_DA²) '
+                 'is estimated jointly with sig_i.',
         )
 
     _rec_bundle = None

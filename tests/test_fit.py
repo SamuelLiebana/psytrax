@@ -12,6 +12,8 @@ from psytrax._helper.helperFunctions import myblk_diags, sparse_logdet
 from psytrax._hyper_opt import (
     _block_tridiag_solve_logdet_jax,
     _blocks_from_prior_and_likelihood,
+    _hyperparameter_update_size,
+    _limit_hyperparameter_step,
     _should_retry_hyper_minimize,
     _sparse_trial_blocks,
 )
@@ -148,6 +150,34 @@ def test_hyper_minimize_retry_ignores_real_step_or_tiny_gradient():
 
     assert not _should_retry_hyper_minimize(moved, x0, [(-15, 5), (-15, 5)])
     assert not _should_retry_hyper_minimize(stationary, x0, [(-15, 5), (-15, 5)])
+
+
+def test_hyperparameter_update_size_handles_log2_zero_start():
+    old_x = np.array([1.0, 0.0])
+    new_x = np.array([1.0, 0.01])
+
+    assert _hyperparameter_update_size(old_x, new_x) == pytest.approx(0.01)
+
+
+def test_hyperparameter_step_limiter_rejects_non_improving_large_step(monkeypatch):
+    x0 = np.array([0.0])
+    result = OptimizeResult(x=np.array([10.0]), fun=0.0)
+    result.psytrax_method = "test"
+
+    import psytrax._hyper_opt as hyper_opt_mod
+
+    monkeypatch.setattr(
+        hyper_opt_mod,
+        "_hyperOpt_lossfun",
+        lambda x, _keywords: 1.0 + float(np.sum(np.asarray(x) ** 2)),
+    )
+
+    limited = _limit_hyperparameter_step(
+        result, x0, {}, max_log2_step=2.0,
+    )
+
+    assert np.allclose(limited.x, x0)
+    assert "step rejected" in limited.psytrax_method
 
 
 def test_jax_block_helpers_match_sparse_hessian_layout_and_logdet():
