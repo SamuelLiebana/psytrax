@@ -173,9 +173,6 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             f"Evaluated current hyperparameters (log-evidence {logEvd:.3f}).",
             stage="cycle",
             log_evidence=float(logEvd),
-            partial_result=_partial_hyperopt_result(
-                best_eMode, best_hyper, best_model_hyper, best_logEvd, K, N,
-            ),
         )
 
         if not current_jump:
@@ -791,25 +788,6 @@ def _hyperparameter_update_size(old_x, new_x):
     old_x = np.asarray(old_x, dtype=float)
     new_x = np.asarray(new_x, dtype=float)
     return float(np.linalg.norm(new_x - old_x))
-
-
-def _partial_hyperopt_result(eMode, hyper, model_hyper, log_evidence, K, N):
-    """Build a lightweight best-so-far result snapshot for app cancellation."""
-    return {
-        'params': np.reshape(np.asarray(eMode, dtype=float), (K, N), order='C').copy(),
-        'hyper': {
-            key: (np.array(value, copy=True) if isinstance(value, np.ndarray)
-                  else float(value) if np.isscalar(value) else value)
-            for key, value in (hyper or {}).items()
-        },
-        'model_hyper': {
-            key: float(value)
-            for key, value in (model_hyper or {}).items()
-        },
-        'log_evidence': float(log_evidence),
-        'hess_info': {'partial': True},
-        'partial': True,
-    }
 
 
 def _limit_hyperparameter_step(result, optVals, opt_keywords,

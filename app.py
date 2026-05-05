@@ -7,7 +7,6 @@ import io
 import os
 import threading
 import queue
-from datetime import datetime
 import numpy as np
 import streamlit as st
 import matplotlib.pyplot as plt
@@ -439,9 +438,9 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
 
     if traj_mode == 'Separate' and is_race:
         idx = {n: i for i, n in enumerate(param_names)}
-        fig = plt.figure(figsize=(13, 7))
+        fig = plt.figure(figsize=(14, 8), constrained_layout=True)
         _tc = _style_fig(fig)
-        gs = fig.add_gridspec(4, 3, hspace=0.55, wspace=0.18)
+        gs = fig.add_gridspec(4, 3, hspace=0.85, wspace=0.28)
         # wr / wl on rows 0–1 (top half), shared y.
         ax_wr = fig.add_subplot(gs[0:2, 0])
         ax_wl = fig.add_subplot(gs[0:2, 1], sharey=ax_wr)
@@ -456,6 +455,7 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
         def _draw(ax, name, idx_in_palette, hide_y=False):
             col = _TRAJ_COLORS[idx_in_palette % len(_TRAJ_COLORS)]
             _style_ax(ax, xlabel='Trial', title=name)
+            ax.title.set_pad(10)
             i = idx[name]
             ax.plot(trials, params[i], color=col, lw=0.8, alpha=0.9)
             if W_std is not None:
@@ -474,15 +474,15 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
         _draw(ax_br, 'br', 2)
         _draw(ax_bl, 'bl', 3, hide_y=True)
         _draw(ax_z,  'z',  4)
-        fig.tight_layout(pad=1.4)
         _show_fig(fig, 'param_trajectories.png')
 
     elif traj_mode == 'Separate':
         n_cols = min(K, 3)
         n_rows = int(np.ceil(K / n_cols))
         fig, axes = plt.subplots(n_rows, n_cols,
-                                 figsize=(5 * n_cols, 3 * n_rows),
-                                 squeeze=False)
+                                 figsize=(5 * n_cols, 3.6 * n_rows),
+                                 squeeze=False,
+                                 constrained_layout=True)
         _tc = _style_fig(fig)
         for k, (ax, name) in enumerate(zip(axes.flat, param_names)):
             col = _TRAJ_COLORS[k % len(_TRAJ_COLORS)]
@@ -496,7 +496,6 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
                 ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
         for ax in axes.flat[K:]:
             ax.set_visible(False)
-        fig.tight_layout(pad=1.3)
         _show_fig(fig, 'param_trajectories.png')
     else:
         fig, ax = plt.subplots(figsize=(12, 4))
@@ -1601,17 +1600,6 @@ def learning_rule(params, dat_trial):
         st.session_state['fit_log'] = []
     if 'fit_error' not in st.session_state:
         st.session_state['fit_error'] = None
-    if 'fit_progress' not in st.session_state:
-        st.session_state['fit_progress'] = {
-            'cycle': 0,
-            'map_iter': 0,
-            'log_evd': '—',
-            'best': '—',
-            'map_loss': '—',
-            'status': 'Preparing fit…',
-        }
-    if 'fit_partial_result' not in st.session_state:
-        st.session_state['fit_partial_result'] = None
 
     run_btn = st.button('Run fit', disabled=st.session_state['fit_running'], key='fit_run')
 
@@ -1624,41 +1612,8 @@ def learning_rule(params, dat_trial):
         st.session_state['fit_result_path'] = None
         st.session_state['fit_log'] = []
         st.session_state['fit_error'] = None
-        st.session_state['fit_partial_result'] = None
-        st.session_state['fit_progress'] = {
-            'cycle': 0,
-            'map_iter': 0,
-            'log_evd': '—',
-            'best': '—',
-            'map_loss': '—',
-            'status': 'Preparing fit…',
-        }
 
         _q = queue.Queue()
-        _cancel_event = threading.Event()
-        st.session_state['_fit_cancel_event'] = _cancel_event
-        _latest_partial = {'result': None}
-
-        class _FitStopped(Exception):
-            pass
-
-        _fit_start = datetime.now()
-
-        def _save_partial_fit(partial):
-            if partial is None:
-                raise _FitStopped('No completed EB cycle is available yet.')
-            os.makedirs('fits', exist_ok=True)
-            res = dict(partial)
-            res['param_names'] = list(_pnames)
-            res['data'] = raw
-            res['n_trials'] = int(res['params'].shape[1])
-            res['duration'] = datetime.now() - _fit_start
-            res['execution'] = {'description': 'partial Streamlit run'}
-            res['stopped_early'] = True
-            suffix = f'_N{res["n_trials"]}' if n_trials_opt is not None else ''
-            path = os.path.join('fits', f'{subject_name}{suffix}_partial_fit.npy')
-            np.save(path, res)
-            return path
 
         # Minimal tqdm shim: forwards each cycle and MAP-iteration update to the queue.
         # _n      = outer cycle count (incremented by update())
@@ -1673,27 +1628,17 @@ def learning_rule(params, dat_trial):
                 self._map_n = 0   # reset inner counter for the new cycle
                 self._postfix.pop('MAP loss', None)
                 _q.put(('progress', self._n, self._map_n, dict(self._postfix)))
-                if _cancel_event.is_set():
-                    raise _FitStopped()
             def set_postfix(self, d, **kwargs):
                 self._postfix.update(d)
                 if 'MAP loss' in d:
                     self._map_n += 1
                 _q.put(('progress', self._n, self._map_n, dict(self._postfix)))
-                if _cancel_event.is_set():
-                    raise _FitStopped()
             def close(self): pass
             def __enter__(self): return self
             def __exit__(self, *a): pass
 
         def _status_cb(payload):
-            partial = payload.pop('partial_result', None)
-            if partial is not None:
-                _latest_partial['result'] = partial
-                _q.put(('partial', partial))
             _q.put(('status', payload))
-            if _cancel_event.is_set():
-                raise _FitStopped()
 
         _orig_tqdm = _hyper_opt_mod.tqdm
         _hyper_opt_mod.tqdm = _QueueTqdm
@@ -1767,11 +1712,6 @@ def learning_rule(params, dat_trial):
                     **fit_kwargs,
                 )
                 _q.put(('done', result))
-            except _FitStopped:
-                try:
-                    _q.put(('cancelled', _save_partial_fit(_latest_partial['result'])))
-                except _FitStopped as e:
-                    _q.put(('error', str(e)))
             except Exception as e:
                 import traceback
                 _q.put(('error', traceback.format_exc()))
@@ -1782,22 +1722,13 @@ def learning_rule(params, dat_trial):
         _thread.start()
         st.session_state['_fit_thread'] = _thread
         st.session_state['_fit_queue'] = _q
-        st.rerun()
 
     if st.session_state['fit_running']:
         import time
         _q      = st.session_state['_fit_queue']
         _thread = st.session_state['_fit_thread']
-        _cancel_event = st.session_state.get('_fit_cancel_event')
 
         st.markdown('**Fitting in progress…** &nbsp; `JAX L-BFGS`')
-        if st.button('Stop fit and show best-so-far result',
-                     key='fit_stop_btn',
-                     disabled=bool(_cancel_event and _cancel_event.is_set())):
-            if _cancel_event is not None:
-                _cancel_event.set()
-            st.warning('Stop requested. The current MAP/EB step will finish or yield at the next progress checkpoint.')
-
         col_cyc, col_map = st.columns(2)
         cycle_text   = col_cyc.empty()
         map_text     = col_map.empty()
@@ -1805,62 +1736,73 @@ def learning_rule(params, dat_trial):
         log_evd_text = st.empty()
         log_box      = st.empty()
 
-        progress = dict(st.session_state.get('fit_progress', {}))
+        cycle, map_iter, log_evd_str, best_str, map_loss_str = 0, 0, '—', '—', '—'
+        current_status = 'Preparing fit…'
         fit_log = st.session_state.get('fit_log', [])
         terminal = None
+
+        while _thread.is_alive():
+            while not _q.empty():
+                try:
+                    msg = _q.get_nowait()
+                    if msg[0] == 'progress':
+                        _, cycle, map_iter, postfix = msg
+                        log_evd_str = postfix.get('log_evd', '—')
+                        best_str = postfix.get('best', '—')
+                        map_loss_str = postfix.get('MAP loss', map_loss_str)
+                    elif msg[0] == 'status':
+                        payload = msg[1]
+                        current_status = payload.get('message', current_status)
+                        fit_log.append(current_status)
+                        fit_log = fit_log[-12:]
+                        st.session_state['fit_log'] = fit_log
+                    elif msg[0] in ('done', 'error'):
+                        terminal = msg
+                except queue.Empty:
+                    break
+            cycle_text.metric('Cycles completed', cycle)
+            map_text.metric('MAP iters (current cycle)', map_iter)
+            status_text.markdown(f'**Current step:** {current_status}')
+            log_evd_text.markdown(
+                f'Log evidence (higher is better) — current: **{log_evd_str}** '
+                f'&nbsp;|&nbsp; best: **{best_str}**'
+                + (
+                    f' &nbsp;|&nbsp; Neg. log posterior (lower is better): **{map_loss_str}**'
+                    if map_loss_str != '—' else ''
+                )
+            )
+            if fit_log:
+                log_box.code('\n'.join(fit_log), language='text')
+            time.sleep(0.5)
 
         while not _q.empty():
             try:
                 msg = _q.get_nowait()
                 if msg[0] == 'progress':
                     _, cycle, map_iter, postfix = msg
-                    progress['cycle'] = cycle
-                    progress['map_iter'] = map_iter
-                    progress['log_evd'] = postfix.get('log_evd', progress.get('log_evd', '—'))
-                    progress['best'] = postfix.get('best', progress.get('best', '—'))
-                    progress['map_loss'] = postfix.get('MAP loss', progress.get('map_loss', '—'))
+                    log_evd_str = postfix.get('log_evd', log_evd_str)
+                    best_str = postfix.get('best', best_str)
+                    map_loss_str = postfix.get('MAP loss', map_loss_str)
                 elif msg[0] == 'status':
                     payload = msg[1]
-                    progress['status'] = payload.get('message', progress.get('status', 'Preparing fit…'))
-                    fit_log.append(progress['status'])
+                    current_status = payload.get('message', current_status)
+                    fit_log.append(current_status)
                     fit_log = fit_log[-12:]
-                elif msg[0] == 'partial':
-                    st.session_state['fit_partial_result'] = msg[1]
-                elif msg[0] in ('done', 'cancelled', 'error'):
+                elif msg[0] in ('done', 'error'):
                     terminal = msg
             except queue.Empty:
                 break
 
-        st.session_state['fit_progress'] = progress
         st.session_state['fit_log'] = fit_log
-        cycle_text.metric('Cycles completed', progress.get('cycle', 0))
-        map_text.metric('MAP iters (current cycle)', progress.get('map_iter', 0))
-        status_text.markdown(f'**Current step:** {progress.get("status", "Preparing fit…")}')
-        log_evd_text.markdown(
-            f'Log evidence (higher is better) — current: **{progress.get("log_evd", "—")}** '
-            f'&nbsp;|&nbsp; best: **{progress.get("best", "—")}**'
-            + (
-                f' &nbsp;|&nbsp; Neg. log posterior (lower is better): **{progress.get("map_loss")}**'
-                if progress.get('map_loss', '—') != '—' else ''
-            )
-        )
-        if fit_log:
-            log_box.code('\n'.join(fit_log), language='text')
+        st.session_state['fit_running'] = False
+        if terminal is None:
+            terminal = ('error', 'No result received from fitting thread.')
+        msg_type, payload = terminal[0], terminal[1]
+        if msg_type == 'done':
+            st.session_state['fit_result_path'] = payload
+        else:
+            st.session_state['fit_error'] = payload
 
-        if terminal is not None or not _thread.is_alive():
-            if terminal is None:
-                terminal = ('error', 'No result received from fitting thread.')
-            msg_type, payload = terminal[0], terminal[1]
-            st.session_state['fit_running'] = False
-            if msg_type in ('done', 'cancelled'):
-                st.session_state['fit_result_path'] = payload
-                if msg_type == 'cancelled':
-                    st.session_state['fit_error'] = None
-            else:
-                st.session_state['fit_error'] = payload
-            st.rerun()
-
-        time.sleep(0.5)
         st.rerun()
 
     if st.session_state['fit_error']:
@@ -1869,10 +1811,7 @@ def learning_rule(params, dat_trial):
     if st.session_state['fit_result_path']:
         path = st.session_state['fit_result_path']
         res = np.load(path, allow_pickle=True).item()
-        if res.get('stopped_early') or res.get('partial'):
-            st.warning(f'Fit stopped early. Showing best-so-far result saved to `{path}`')
-        else:
-            st.success(f'Fit complete! Saved to `{path}`')
+        st.success(f'Fit complete! Saved to `{path}`')
         c1, c2, c3, c4 = st.columns(4)
         c1.metric('Trials', res['params'].shape[1])
         c2.metric('Parameters', res['params'].shape[0])
@@ -4171,15 +4110,6 @@ is modelled.
         st.session_state['rec_log'] = []
     if 'rec_error' not in st.session_state:
         st.session_state['rec_error'] = None
-    if 'rec_progress' not in st.session_state:
-        st.session_state['rec_progress'] = {
-            'cycle': 0,
-            'map_iter': 0,
-            'log_evd': '—',
-            'best': '—',
-            'map_loss': '—',
-            'status': 'Preparing…',
-        }
 
     # Dual-fit comparison: only meaningful when truth came from REINFORCE.
     if _rec_use_reinforce:
@@ -4211,22 +4141,8 @@ is modelled.
         st.session_state['rec_result']  = None
         st.session_state['rec_log']     = []
         st.session_state['rec_error']   = None
-        st.session_state['rec_progress'] = {
-            'cycle': 0,
-            'map_iter': 0,
-            'log_evd': '—',
-            'best': '—',
-            'map_loss': '—',
-            'status': 'Preparing…',
-        }
 
         _rec_q = queue.Queue()
-        _rec_cancel_event = threading.Event()
-        st.session_state['_rec_cancel_event'] = _rec_cancel_event
-        _rec_latest_partial = {'result': None}
-
-        class _RecStopped(Exception):
-            pass
 
         class _RecQueueTqdm:
             def __init__(self, *a, **kw):
@@ -4235,27 +4151,17 @@ is modelled.
                 self._n += n; self._map_n = 0
                 self._postfix.pop('MAP loss', None)
                 _rec_q.put(('progress', self._n, self._map_n, dict(self._postfix)))
-                if _rec_cancel_event.is_set():
-                    raise _RecStopped()
             def set_postfix(self, d, **kwargs):
                 self._postfix.update(d)
                 if 'MAP loss' in d:
                     self._map_n += 1
                 _rec_q.put(('progress', self._n, self._map_n, dict(self._postfix)))
-                if _rec_cancel_event.is_set():
-                    raise _RecStopped()
             def close(self): pass
             def __enter__(self): return self
             def __exit__(self, *a): pass
 
         def _rec_status_cb(payload):
-            partial = payload.pop('partial_result', None)
-            if partial is not None:
-                _rec_latest_partial['result'] = partial
-                _rec_q.put(('partial', partial))
             _rec_q.put(('status', payload))
-            if _rec_cancel_event.is_set():
-                raise _RecStopped()
 
         _rec_orig_tqdm = _rec_hyper_opt_mod.tqdm
         _rec_hyper_opt_mod.tqdm = _RecQueueTqdm
@@ -4292,37 +4198,6 @@ is modelled.
                      for n in _rec_bundle['PARAM_NAMES']], dtype=float),
             }
         )
-        _rec_context = {
-            'data': None,
-            'true_params': None,
-            'simulate_time': 0.0,
-            'fit_start': None,
-            'primary_label': 'recovered',
-            'primary_result': None,
-        }
-
-        def _partial_recovery_result(partial):
-            if partial is None or _rec_context['data'] is None:
-                raise _RecStopped('No completed EB cycle is available yet.')
-            result = dict(partial)
-            result['param_names'] = list(_bundle_local['PARAM_NAMES'])
-            result['true_params'] = _rec_context['true_params']
-            result['true_model_hyper'] = _true_mh_local
-            result['simulated_data'] = _rec_context['data']
-            result['simulate_time'] = _rec_context['simulate_time']
-            if _rec_context['fit_start'] is not None:
-                result['fit_time'] = _rec_time.time() - _rec_context['fit_start']
-            result['model_family'] = _bundle_local['family']
-            result['traj_method'] = 'reinforce' if _use_reinforce_local else 'slider'
-            result['fit_label'] = _rec_context['primary_label']
-            result['stopped_early'] = True
-            result['input_modes'] = {
-                k: spec.get('mode', 'discrete')
-                for k, spec in _value_pools_local.items()
-            }
-            if _use_reinforce_local:
-                result['reinforce_cfg'] = _reinforce_cfg_local
-            return result
 
         def _run_recovery():
             try:
@@ -4365,9 +4240,6 @@ is modelled.
                     )
                     _true_params_run = _true_params_local
                 t_sim = _rec_time.time() - t0
-                _rec_context['data'] = data
-                _rec_context['true_params'] = _true_params_run
-                _rec_context['simulate_time'] = t_sim
                 _rec_status_cb({'message': f'Simulated in {t_sim:.1f}s — running EB fit…',
                                 'stage': 'fit_start'})
 
@@ -4409,14 +4281,11 @@ is modelled.
                     primary_label = 'REINFORCE prior'
                 else:
                     primary_label = 'zero-centred prior'
-                _rec_context['primary_label'] = primary_label
 
                 t0 = _rec_time.time()
-                _rec_context['fit_start'] = t0
                 result = psytrax.fit(**primary_kwargs)
                 t_fit = _rec_time.time() - t0
                 result['fit_label']        = primary_label
-                _rec_context['primary_result'] = result
 
                 # Optional companion fit with the opposite prior.
                 companion = None
@@ -4454,13 +4323,6 @@ is modelled.
                 }
 
                 _rec_q.put(('done', result))
-            except _RecStopped:
-                try:
-                    _rec_q.put(('cancelled', _partial_recovery_result(
-                        _rec_context.get('primary_result') or _rec_latest_partial['result'],
-                    )))
-                except _RecStopped as exc:
-                    _rec_q.put(('error', str(exc)))
             except Exception:
                 import traceback
                 _rec_q.put(('error', traceback.format_exc()))
@@ -4471,22 +4333,13 @@ is modelled.
         _t.start()
         st.session_state['_rec_thread'] = _t
         st.session_state['_rec_queue']  = _rec_q
-        st.rerun()
 
     # Stream progress while the thread is alive ----------------------
     if st.session_state['rec_running']:
         _rec_q  = st.session_state['_rec_queue']
         _t      = st.session_state['_rec_thread']
-        _rec_cancel_event = st.session_state.get('_rec_cancel_event')
 
         st.markdown('**Recovery in progress…** &nbsp; `simulate → fit`')
-        if st.button('Stop recovery and show best-so-far result',
-                     key='rec_stop_btn',
-                     disabled=bool(_rec_cancel_event and _rec_cancel_event.is_set())):
-            if _rec_cancel_event is not None:
-                _rec_cancel_event.set()
-            st.warning('Stop requested. The current MAP/EB step will finish or yield at the next progress checkpoint.')
-
         col_cyc, col_map = st.columns(2)
         cycle_text   = col_cyc.empty()
         map_text     = col_map.empty()
@@ -4494,58 +4347,73 @@ is modelled.
         log_evd_text = st.empty()
         log_box      = st.empty()
 
-        progress = dict(st.session_state.get('rec_progress', {}))
+        cycle, map_iter = 0, 0
+        log_evd_str, best_str, map_loss_str = '—', '—', '—'
+        current_status = 'Preparing…'
         rec_log = st.session_state.get('rec_log', [])
         terminal = None
+
+        while _t.is_alive():
+            while not _rec_q.empty():
+                try:
+                    msg = _rec_q.get_nowait()
+                    if msg[0] == 'progress':
+                        _, cycle, map_iter, postfix = msg
+                        log_evd_str = postfix.get('log_evd', log_evd_str)
+                        best_str = postfix.get('best', best_str)
+                        map_loss_str = postfix.get('MAP loss', map_loss_str)
+                    elif msg[0] == 'status':
+                        payload = msg[1]
+                        current_status = payload.get('message', current_status)
+                        rec_log.append(current_status)
+                        rec_log = rec_log[-12:]
+                        st.session_state['rec_log'] = rec_log
+                    elif msg[0] in ('done', 'error'):
+                        terminal = msg
+                except queue.Empty:
+                    break
+            cycle_text.metric('Cycles completed', cycle)
+            map_text.metric('MAP iters (current cycle)', map_iter)
+            status_text.markdown(f'**Current step:** {current_status}')
+            log_evd_text.markdown(
+                f'Log evidence (higher is better) — current: **{log_evd_str}** &nbsp;|&nbsp; '
+                f'best: **{best_str}**'
+                + (f' &nbsp;|&nbsp; Neg log-posterior (lower is better): **{map_loss_str}**'
+                   if map_loss_str != '—' else '')
+            )
+            if rec_log:
+                log_box.code('\n'.join(rec_log), language='text')
+            _rec_time.sleep(0.5)
 
         while not _rec_q.empty():
             try:
                 msg = _rec_q.get_nowait()
                 if msg[0] == 'progress':
                     _, cycle, map_iter, postfix = msg
-                    progress['cycle'] = cycle
-                    progress['map_iter'] = map_iter
-                    progress['log_evd'] = postfix.get('log_evd', progress.get('log_evd', '—'))
-                    progress['best'] = postfix.get('best', progress.get('best', '—'))
-                    progress['map_loss'] = postfix.get('MAP loss', progress.get('map_loss', '—'))
+                    log_evd_str = postfix.get('log_evd', log_evd_str)
+                    best_str = postfix.get('best', best_str)
+                    map_loss_str = postfix.get('MAP loss', map_loss_str)
                 elif msg[0] == 'status':
                     payload = msg[1]
-                    progress['status'] = payload.get('message', progress.get('status', 'Preparing…'))
-                    rec_log.append(progress['status'])
+                    current_status = payload.get('message', current_status)
+                    rec_log.append(current_status)
                     rec_log = rec_log[-12:]
-                elif msg[0] in ('done', 'cancelled', 'error'):
+                elif msg[0] in ('done', 'error'):
                     terminal = msg
             except queue.Empty:
                 break
 
-        st.session_state['rec_progress'] = progress
         st.session_state['rec_log'] = rec_log
-        cycle_text.metric('Cycles completed', progress.get('cycle', 0))
-        map_text.metric('MAP iters (current cycle)', progress.get('map_iter', 0))
-        status_text.markdown(f'**Current step:** {progress.get("status", "Preparing…")}')
-        log_evd_text.markdown(
-            f'Log evidence (higher is better) — current: **{progress.get("log_evd", "—")}** &nbsp;|&nbsp; '
-            f'best: **{progress.get("best", "—")}**'
-            + (f' &nbsp;|&nbsp; Neg log-posterior (lower is better): **{progress.get("map_loss")}**'
-               if progress.get('map_loss', '—') != '—' else '')
-        )
-        if rec_log:
-            log_box.code('\n'.join(rec_log), language='text')
-
-        if terminal is not None or not _t.is_alive():
-            if terminal is None:
-                terminal = ('error', 'No result received from recovery thread.')
-            msg_type, payload = terminal[0], terminal[1]
-            st.session_state['rec_running'] = False
-            if msg_type in ('done', 'cancelled'):
-                st.session_state['rec_result'] = payload
-                st.session_state['rec_error'] = None
-            else:
-                st.session_state['rec_error'] = payload
-                st.error(f'Recovery failed:\n```\n{payload}\n```')
-            st.rerun()
-
-        _rec_time.sleep(0.5)
+        st.session_state['rec_running'] = False
+        if terminal is None:
+            terminal = ('error', 'No result received from recovery thread.')
+        msg_type, payload = terminal[0], terminal[1]
+        if msg_type == 'done':
+            st.session_state['rec_result'] = payload
+            st.session_state['rec_error'] = None
+        else:
+            st.session_state['rec_error'] = payload
+            st.error(f'Recovery failed:\n```\n{payload}\n```')
         st.rerun()
 
     # --- Download button (visible as soon as a fit has finished) -------
@@ -4570,16 +4438,12 @@ is modelled.
     result_rec = st.session_state.get('rec_result')
     if result_rec is not None:
         _rec_done_msg = (
-            f'{"Stopped early — showing best-so-far result" if result_rec.get("stopped_early") else "Done"} '
-            f'— simulated **{result_rec["params"].shape[1]}** trials in '
+            f'Done — simulated **{result_rec["params"].shape[1]}** trials in '
             f'{result_rec.get("simulate_time", 0):.1f}s, '
             f'fit in {result_rec.get("fit_time", 0):.1f}s.  '
             f'Log evidence: {result_rec["log_evidence"]:.2f}.'
         )
-        if result_rec.get('stopped_early'):
-            st.warning(_rec_done_msg)
-        else:
-            st.success(_rec_done_msg)
+        st.success(_rec_done_msg)
 
         # --- Recovered model_hyper -------------------------------------
         rec_mh  = result_rec.get('model_hyper') or {}
