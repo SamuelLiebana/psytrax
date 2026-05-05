@@ -396,6 +396,133 @@ def _shared_ylim(series_list, pad_frac=0.05, min_pad=0.05):
 
 _TRAJ_COLORS = ['#4e9af1', '#f1a44e', '#4ef17a', '#f14e7a', '#c44ef1', '#f1f14e']
 
+# Publication-style colour scheme used by the Gaussian-walk recovery
+# figures.  Race weights/baselines are paired blue/red, threshold is black.
+# Other models fall back to the generic palette above.
+_PUB_COLORS = {
+    'wr': '#0000FF', 'wl': '#E50000',
+    'br': '#069AF3', 'bl': '#FC5A50',
+    'z':  '#000000',
+}
+
+
+def _render_gw_publication_figures(result):
+    """Render the two publication-style figures for a Gaussian-walk recovery.
+
+    Figure (a) overlays simulated and recovered trajectories with 95%
+    credible intervals (±1.96 × W_std).  Figure (b) compares the true
+    random-walk σ values (horizontal bars) against the EB-recovered σ
+    values with 95% error bars, on log₂ scale.
+    """
+    rec     = result['params']
+    truth   = result['true_params']
+    names   = list(result['param_names'])
+    K, N    = rec.shape
+    W_std   = (result.get('hess_info') or {}).get('W_std')
+    gw_cfg  = result.get('gaussian_walk_cfg') or {}
+    true_log2_sigma = np.asarray(gw_cfg.get('log2_sigma', []), dtype=float)
+    rec_sigma       = np.asarray(result.get('hyper', {}).get('sigma'), dtype=float)
+    hyp_std         = np.asarray(
+        (result.get('hess_info') or {}).get('hyp_std', []), dtype=float
+    )
+    hyp_optList     = list(
+        (result.get('hess_info') or {}).get('hyp_optList', [])
+    )
+
+    colors = [_PUB_COLORS.get(n, _TRAJ_COLORS[i % len(_TRAJ_COLORS)])
+              for i, n in enumerate(names)]
+    trials = np.arange(N)
+
+    st.subheader('Publication-style recovery figures')
+    st.caption(
+        'Figure (a) overlays simulated and recovered parameter trajectories '
+        'with 95% credible intervals (±1.96 × W_std). Figure (b) compares '
+        'the true random-walk σ values (horizontal bars) against the '
+        'EB-recovered σ values with 95% error bars, on log₂ scale.'
+    )
+
+    # --- (a) trajectory overlay -----------------------------------------
+    fig_a, ax_a = plt.subplots(figsize=(13, 4.5))
+    _style_fig(fig_a)
+    _style_ax(ax_a, xlabel='# Trials', ylabel='Parameters')
+    handles_named, l_sim, l_rec = [], None, None
+    for i, name in enumerate(names):
+        z_order = 2 * i
+        l_sim_h, = ax_a.plot(trials, truth[i], c=colors[i], lw=0.8,
+                             zorder=z_order, label=name)
+        handles_named.append(l_sim_h)
+        l_rec_h, = ax_a.plot(trials, rec[i], c=colors[i], lw=1.0,
+                             linestyle='--', alpha=0.7, zorder=z_order + 1)
+        if W_std is not None:
+            ax_a.fill_between(
+                trials,
+                rec[i] - 1.96 * W_std[i],
+                rec[i] + 1.96 * W_std[i],
+                facecolor=colors[i], alpha=0.18, zorder=z_order + 1,
+            )
+        if l_sim is None:
+            l_sim, l_rec = l_sim_h, l_rec_h
+
+    ax_a.axhline(0, color='black', linestyle='--', lw=0.5, alpha=0.5, zorder=0)
+    leg_names  = ax_a.legend(handles=handles_named, loc='upper left',
+                             prop={'size': 10})
+    if l_sim is not None and l_rec is not None:
+        ax_a.legend(handles=[l_sim, l_rec],
+                    labels=['simulated', 'recovered'],
+                    loc='upper center', prop={'size': 10})
+        ax_a.add_artist(leg_names)
+    ax_a.spines['right'].set_visible(False)
+    ax_a.spines['top'].set_visible(False)
+    fig_a.tight_layout()
+    _show_fig(fig_a, 'recovery_publication_trajectories.png')
+
+    # --- (b) hyperparameter recovery -----------------------------------
+    if (true_log2_sigma.size == K and rec_sigma.size == K
+            and 'sigma' in hyp_optList):
+        # Find the slice of hyp_std corresponding to the per-param sigma
+        # vector; entries before it are scalar contributions of length 1.
+        sig_idx = hyp_optList.index('sigma')
+        prefix_len = 0
+        for j, key in enumerate(hyp_optList):
+            if j >= sig_idx:
+                break
+            v = result.get('hyper', {}).get(key)
+            prefix_len += 1 if (v is None or np.ndim(v) == 0) else K
+        sigma_std = (
+            hyp_std[prefix_len:prefix_len + K]
+            if hyp_std.size >= prefix_len + K
+            else np.full(K, np.nan)
+        )
+        recovered_log2 = np.log2(rec_sigma)
+
+        fig_b, ax_b = plt.subplots(figsize=(0.9 * K + 1.5, 3.5))
+        _style_fig(fig_b)
+        _style_ax(ax_b, ylabel=r'$\log_2(\sigma)$')
+        l_sim_b, l_rec_b = None, None
+        for i, name in enumerate(names):
+            l_sim_b, = ax_b.plot([i - 0.3, i + 0.3],
+                                 [true_log2_sigma[i]] * 2,
+                                 color='black', linestyle='-', lw=1.4,
+                                 zorder=0)
+            l_rec_b = ax_b.errorbar(
+                [i], recovered_log2[i],
+                yerr=1.96 * sigma_std[i] if np.isfinite(sigma_std[i]) else None,
+                c=colors[i], lw=1.2, marker='o', markersize=6,
+            )
+        ax_b.set_xticks(np.arange(K))
+        ax_b.set_xticklabels([rf'$\sigma_{{{n}}}$' for n in names])
+        ax_b.set_xlim(-0.5, K - 0.5)
+        ax_b.spines['right'].set_visible(False)
+        ax_b.spines['top'].set_visible(False)
+        if l_sim_b is not None and l_rec_b is not None:
+            ax_b.legend([l_sim_b, l_rec_b], ['simulated', 'recovered'],
+                        prop={'size': 9}, loc='lower right')
+        fig_b.tight_layout()
+        _show_fig(fig_b, 'recovery_publication_sigma.png')
+    else:
+        st.caption(':grey[Hyperparameter recovery figure skipped — fit did not '
+                   'expose a per-parameter sigma vector.]')
+
 
 def _dopamine_tanh_readout(linear_pred, da_beta, da_offset):
     """Tanh dopamine readout used by the race model."""
@@ -622,6 +749,7 @@ def _render_quartile_plots(result, *, n_win=4):
     try:
         wr_idx = param_names.index('wr')
         wl_idx = param_names.index('wl')
+        z_idx  = param_names.index('z')
     except ValueError:
         return
 
@@ -652,9 +780,10 @@ def _render_quartile_plots(result, *, n_win=4):
         n_w = np.array([np.sum(c_f == cv) for cv in c_uniq])
         wr_w = params[wr_idx, t0:t1]
         wl_w = params[wl_idx, t0:t1]
+        z_w  = np.maximum(params[z_idx, t0:t1], 1e-9)
         da_curve = np.array([
             np.mean(_dopamine_tanh_readout(
-                np.where(cv >= 0, wr_w, wl_w) * abs(cv),
+                np.where(cv >= 0, wr_w, wl_w) * abs(cv) / z_w,
                 _DA_BETA,
                 _DA_OFFSET,
             ))
@@ -1091,7 +1220,7 @@ columns to the required fields.
         disabled=not _data_has_dopamine,
         help=(
             'Adds a Gaussian likelihood term '
-            'N(tanh(0.5 · da_beta · (w_eff · |c| − da_offset)), sig_DA²) '
+            'N(tanh(0.5 · da_beta · ((w_eff · |c| / z) − da_offset)), sig_DA²) '
             'for the per-trial dopamine peak. `sig_DA`, `da_beta`, and '
             '`da_offset` are estimated jointly with `sig_i` by Empirical Bayes. '
             'Available only when the loaded dataset contains a `dopamine` '
@@ -1142,7 +1271,7 @@ columns to the required fields.
 **Race model + joint dopamine fit** — two independent inverse-Gaussian
 accumulators racing to threshold (`wr, wl, br, bl, z` evolve under the
 random-walk prior, `sig_i` is an EB scalar).  In addition the per-trial
-dopamine peak is modelled as `N(tanh(0.5 · da_beta · (w_eff · |c| − da_offset)),
+dopamine peak is modelled as `N(tanh(0.5 · da_beta · ((w_eff · |c| / z) − da_offset)),
 sig_DA²)` with `w_eff = wr` if `c ≥ 0` else `wl`.  EB jointly optimises
 `sig_i, sig_DA, da_beta, da_offset` with the random-walk variances.
 """)
@@ -1546,7 +1675,7 @@ def learning_rule(params, dat_trial):
                 ('sig_i',     'within-trial accumulator noise',    _DEFAULT_SIG_I),
                 ('sig_DA',    'Gaussian std on dopamine peak',     _DEFAULT_SIG_DA),
                 ('da_beta',   'tanh inverse temperature',          _DEF_BETA),
-                ('da_offset', 'tanh centre on weighted contrast',   _DEF_OFFSET),
+                ('da_offset', 'tanh centre on normalised drive',    _DEF_OFFSET),
             ]
             _da_cols = st.columns(len(_da_init_specs))
             for (key, descr, default_val), _col in zip(_da_init_specs, _da_cols):
@@ -2977,7 +3106,7 @@ elif page == 'Visualise Results':
             st.caption(
                 'Black dots: empirical mean dopamine peak per signed contrast '
                 '(within each quartile of trials). Blue line: analytic '
-                'prediction `tanh(0.5 · da_beta · (w_eff · |c| − da_offset))` '
+                'prediction `tanh(0.5 · da_beta · ((w_eff · |c| / z) − da_offset))` '
                 'averaged over each window\'s '
                 'recovered trajectory, where `w_eff = wr` for `c ≥ 0` and '
                 '`w_eff = wl` otherwise.'
@@ -2986,8 +3115,9 @@ elif page == 'Visualise Results':
             try:
                 _wr_idx = list(param_names).index('wr')
                 _wl_idx = list(param_names).index('wl')
+                _z_idx  = list(param_names).index('z')
             except ValueError:
-                _wr_idx = _wl_idx = None
+                _wr_idx = _wl_idx = _z_idx = None
 
             if _wr_idx is not None:
                 fig_da, axes_da = plt.subplots(2, 2, figsize=(11, 8))
@@ -3021,9 +3151,10 @@ elif page == 'Visualise Results':
                     _DA_OFFSET = float(_model_mh.get('da_offset', _DA_OFFSET_DEFAULT))
                     wr_win = params[_wr_idx, t0:t1]
                     wl_win = params[_wl_idx, t0:t1]
+                    z_win  = np.maximum(params[_z_idx, t0:t1], 1e-9)
                     da_curve = np.array([
                         np.mean(_dopamine_tanh_readout(
-                            np.where(cv >= 0, wr_win, wl_win) * abs(cv),
+                            np.where(cv >= 0, wr_win, wl_win) * abs(cv) / z_win,
                             _DA_BETA,
                             _DA_OFFSET,
                         ))
@@ -3457,7 +3588,7 @@ elif page == 'Model Recovery':
             _da_blurb = (
                 ' Joint dopamine fit is enabled: each trial also emits a '
                 '`dopamine` value drawn from '
-                '`N(tanh(0.5 · da_beta · (w_eff · |c| − da_offset)), sig_DA²)` '
+                '`N(tanh(0.5 · da_beta · ((w_eff · |c| / z) − da_offset)), sig_DA²)` '
                 '(`w_eff = wr` if `c ≥ 0` else `wl`), and the fit estimates '
                 '`sig_DA`, `da_beta`, and `da_offset` jointly with `sig_i`.'
                 if kwargs.get('race_with_dopamine') else ''
@@ -3532,7 +3663,7 @@ is modelled.
         )
 
     # Race model can additionally fit a per-trial dopamine peak, modelled as
-    # N(tanh(0.5·da_beta·(w_eff·|c| − da_offset)), sig_DA²), with all three
+    # N(tanh(0.5·da_beta·((w_eff·|c|/z) − da_offset)), sig_DA²), with all three
     # dopamine readout scalars estimated by EB.
     _rec_race_with_dopamine = False
     if _rec_model_choice == 'Race model (inverse-Gaussian)':
@@ -3542,7 +3673,7 @@ is modelled.
             key='rec_race_with_dopamine',
             help='Add a per-trial dopamine peak to the simulated data and '
                  'fit it with a Gaussian likelihood whose mean is '
-                 'tanh(0.5 · da_beta · (w_eff · |c| − da_offset)) '
+                 'tanh(0.5 · da_beta · ((w_eff · |c| / z) − da_offset)) '
                  '(w_eff = wr if c ≥ 0 else wl) and whose variance (sig_DA²) '
                  'is estimated jointly with sig_i.',
         )
@@ -3743,7 +3874,11 @@ is modelled.
 
     _rec_traj_method = st.radio(
         'Trajectory generation method',
-        ['Slider-driven sinusoid', 'REINFORCE forward simulation'],
+        [
+            'Slider-driven sinusoid',
+            'REINFORCE forward simulation',
+            'Gaussian random walk',
+        ],
         horizontal=True,
         key='rec_traj_method',
         help=(
@@ -3751,12 +3886,16 @@ is modelled.
             'set by offset, slope, amplitude, period, and phase sliders. '
             '**REINFORCE** — start from a fixed point and let each trajectory '
             'evolve under the policy-gradient learning rule (Williams 1992) '
-            'plus Gaussian random walk. Gives a realistic "true" trajectory '
-            'for testing whether the EB fit recovers it both with and '
-            'without the matching learning-rule prior.'
+            'plus Gaussian random walk. '
+            '**Gaussian random walk** — start from a fixed point and add '
+            '𝒩(0, σ²) noise per trial, with optional larger 𝒩(0, σ_day²) '
+            'jumps at session boundaries. This is the matching prior of '
+            'psytrax\'s default fit (no learning rule), so it lets you '
+            'verify EB recovers σ and σ_day directly.'
         ),
     )
     _rec_use_reinforce = (_rec_traj_method == 'REINFORCE forward simulation')
+    _rec_use_gw        = (_rec_traj_method == 'Gaussian random walk')
 
     if _rec_use_reinforce:
         st.caption(
@@ -3764,6 +3903,13 @@ is modelled.
             'matches `sign(c)`, else 0; tie-broken at random when `c = 0`), '
             'update each parameter by `α · ∇_θ log p(y | x, θ)` × reward, '
             'then add `𝒩(0, σ²_walk)` noise.'
+        )
+    elif _rec_use_gw:
+        st.caption(
+            'Trial *t*: `params[k, t] = params[k, t-1] + 𝒩(0, σ²_k)`, '
+            'with the variance bumped to `σ²_day,k` at session boundaries '
+            'when `Number of sessions > 1`. σ values below are entered on '
+            '`log₂` scale (psytrax convention, e.g. −4 → σ ≈ 0.0625).'
         )
     else:
         st.caption(
@@ -3925,10 +4071,88 @@ is modelled.
                 )
         _rec_reinforce_cfg = _re_cfg
 
+    # ------------------------------------------------------------------
+    # Gaussian-walk trajectory generation (per-parameter σ on log₂ scale,
+    # optional larger σ_day at session boundaries).
+    # ------------------------------------------------------------------
+    _rec_gw_cfg = None
+    if _rec_use_gw:
+        # Family-aware defaults for log₂(σ) — slow drifts on weights and
+        # baselines, near-stationary threshold, mirroring the values used
+        # in the user's reference recovery scripts.
+        _GW_LOG2_SIGMA_DEFAULTS = {
+            'race':      {'wr': -4.0, 'wl': -4.0, 'br': -5.0, 'bl': -5.0, 'z': -12.0},
+            'ddm_exact': {'w': -4.0, 'b': -5.0, 'a': -12.0},
+            'logistic':  None,
+        }
+        family_def = _GW_LOG2_SIGMA_DEFAULTS.get(_rec_bundle['family'])
+
+        cols_top = st.columns([2, 1, 1])
+        with cols_top[0]:
+            st.markdown('**Per-parameter random-walk σ** (log₂ scale)')
+        with cols_top[1]:
+            _gw_n_sessions = int(st.number_input(
+                'Number of sessions',
+                min_value=1, max_value=max(1, N_rec // 50),
+                value=1, step=1, key='rec_gw_n_sessions',
+                help='When > 1, the N trials are split into evenly-sized '
+                     'sessions and an extra `𝒩(0, σ_day²)` jump is added at '
+                     'each session boundary, matching the per-session '
+                     'volatility allowance in psytrax.',
+            ))
+        with cols_top[2]:
+            _gw_seed_offset = st.number_input(
+                'Walk seed offset', min_value=0, max_value=10_000,
+                value=0, step=1, key='rec_gw_seed_offset',
+                help='Added to the global seed so you can resample a new '
+                     'walk while keeping every other setting fixed.',
+            )
+
+        _gw_cfg = {'params_0': {}, 'log2_sigma': {}, 'log2_sigDay': {}}
+        for k, name in enumerate(_rec_bundle['PARAM_NAMES']):
+            if _default_E0_arr is not None and k < _default_E0_arr.shape[0]:
+                d_init = float(_default_E0_arr[k, 0])
+            else:
+                d_init = 0.0
+            d_log2_sig = (family_def or {}).get(name, -4.0)
+            d_log2_sig_day = d_log2_sig + 2.0   # σ_day default 4× σ
+            cols = st.columns(3)
+            with cols[0]:
+                _gw_cfg['params_0'][name] = st.number_input(
+                    f'`{name}` initial value',
+                    value=float(d_init), step=0.05, format='%.4f',
+                    key=f'rec_gw_init_{_rec_bundle["family"]}_{name}',
+                )
+            with cols[1]:
+                _gw_cfg['log2_sigma'][name] = st.number_input(
+                    f'`{name}` log₂(σ)',
+                    value=float(d_log2_sig), step=0.5, format='%.2f',
+                    key=f'rec_gw_log2sigma_{_rec_bundle["family"]}_{name}',
+                    help='Within-session per-trial walk standard deviation, '
+                         'in log₂ units (e.g. −4 → σ ≈ 0.0625).',
+                )
+            with cols[2]:
+                if _gw_n_sessions > 1:
+                    _gw_cfg['log2_sigDay'][name] = st.number_input(
+                        f'`{name}` log₂(σ_day)',
+                        value=float(d_log2_sig_day), step=0.5, format='%.2f',
+                        key=f'rec_gw_log2sigday_{_rec_bundle["family"]}_{name}',
+                        help='Walk std at each session boundary (typically '
+                             'larger than within-session σ to absorb the '
+                             'jump between separate recording days).',
+                    )
+                else:
+                    _gw_cfg['log2_sigDay'][name] = None
+                    st.markdown(':grey[—]')
+        _gw_cfg['n_sessions']  = int(_gw_n_sessions)
+        _gw_cfg['seed_offset'] = int(_gw_seed_offset)
+        _rec_gw_cfg = _gw_cfg
+
     # The big per-parameter slider expanders only run in slider-driven mode;
-    # in REINFORCE mode the trajectories come from the forward simulator.
+    # in REINFORCE / Gaussian-walk modes the trajectories come from the
+    # forward simulator instead.
     _slider_loop = (enumerate(_rec_bundle['PARAM_NAMES'])
-                    if not _rec_use_reinforce else iter([]))
+                    if not (_rec_use_reinforce or _rec_use_gw) else iter([]))
     for k, name in _slider_loop:
         with st.expander(f'`{name}` trajectory shape', expanded=(k == 0)):
             _default_lo, _default_hi = _bounds_for(name)
@@ -4037,10 +4261,10 @@ is modelled.
             plt.close(_mini_fig)
 
     # Build the truth trajectory matrix when in slider-driven mode.  In
-    # REINFORCE mode the trajectory is produced by the forward simulator
-    # inside the worker thread (it depends on the random seed and reward
-    # outcomes), so true_params is built there instead.
-    if _rec_use_reinforce:
+    # REINFORCE / Gaussian-walk modes the trajectory is produced inside
+    # the worker thread (it depends on the random seed), so true_params
+    # is built there instead.
+    if _rec_use_reinforce or _rec_use_gw:
         true_params = None
     else:
         true_params = np.stack([
@@ -4181,6 +4405,24 @@ is modelled.
         _init_mh_local       = dict(_rec_init_mh)
         _use_reinforce_local = bool(_rec_use_reinforce)
         _compare_fits_local  = bool(_rec_compare_fits)
+        _use_gw_local        = bool(_rec_use_gw)
+        _gw_cfg_local        = (
+            None if not _use_gw_local else {
+                'params_0': np.array(
+                    [_rec_gw_cfg['params_0'][n]
+                     for n in _rec_bundle['PARAM_NAMES']], dtype=float),
+                'log2_sigma': np.array(
+                    [_rec_gw_cfg['log2_sigma'][n]
+                     for n in _rec_bundle['PARAM_NAMES']], dtype=float),
+                'log2_sigDay': np.array(
+                    [(_rec_gw_cfg['log2_sigDay'][n]
+                      if _rec_gw_cfg['log2_sigDay'][n] is not None
+                      else _rec_gw_cfg['log2_sigma'][n])
+                     for n in _rec_bundle['PARAM_NAMES']], dtype=float),
+                'n_sessions':  int(_rec_gw_cfg['n_sessions']),
+                'seed_offset': int(_rec_gw_cfg['seed_offset']),
+            }
+        )
         _reinforce_cfg_local = (
             None if not _use_reinforce_local else {
                 'params_0':   np.array(
@@ -4207,7 +4449,42 @@ is modelled.
                         inputs[k] = rng.choice(spec['values'], size=_N_local)
 
                 t0 = _rec_time.time()
-                if _use_reinforce_local:
+                if _use_gw_local:
+                    _rec_status_cb({
+                        'message': f'Generating {_N_local} trials of Gaussian-walk truth…',
+                        'stage':   'simulate',
+                    })
+                    # Build the per-trial walk-variance vector (length N) for
+                    # each parameter: σ within sessions, σ_day at the boundary
+                    # *between* consecutive sessions.
+                    n_sess = max(1, _gw_cfg_local['n_sessions'])
+                    session_lengths = np.full(n_sess, _N_local // n_sess, dtype=int)
+                    session_lengths[-1] += _N_local - session_lengths.sum()
+                    boundaries = set(int(b) for b in
+                                     np.cumsum(session_lengths)[:-1].tolist())
+                    K_par = len(_gw_cfg_local['params_0'])
+                    sigma     = 2.0 ** _gw_cfg_local['log2_sigma']
+                    sigma_day = 2.0 ** _gw_cfg_local['log2_sigDay']
+                    rng_walk = np.random.default_rng(
+                        _seed_local + _gw_cfg_local['seed_offset']
+                    )
+                    _true_params_run = np.zeros((K_par, _N_local), dtype=float)
+                    _true_params_run[:, 0] = _gw_cfg_local['params_0']
+                    for t in range(1, _N_local):
+                        sig_t = sigma_day if t in boundaries else sigma
+                        _true_params_run[:, t] = (
+                            _true_params_run[:, t - 1]
+                            + rng_walk.normal(0.0, sig_t, size=K_par)
+                        )
+                    data = psytrax.simulate(
+                        _bundle_local['sample_trial'],
+                        _true_params_run,
+                        inputs,
+                        rng=rng,
+                        model_hyper=_true_mh_local,
+                        session_lengths=session_lengths,
+                    )
+                elif _use_reinforce_local:
                     _rec_status_cb({
                         'message': f'Forward-simulating {_N_local} REINFORCE trials…',
                         'stage':   'simulate',
@@ -4307,10 +4584,16 @@ is modelled.
                 result['simulate_time']    = t_sim
                 result['fit_time']         = t_fit
                 result['model_family']     = _bundle_local['family']
-                result['traj_method']      = (
-                    'reinforce' if _use_reinforce_local else 'slider')
+                if _use_gw_local:
+                    result['traj_method'] = 'gaussian_walk'
+                elif _use_reinforce_local:
+                    result['traj_method'] = 'reinforce'
+                else:
+                    result['traj_method'] = 'slider'
                 if _use_reinforce_local:
                     result['reinforce_cfg'] = _reinforce_cfg_local
+                if _use_gw_local:
+                    result['gaussian_walk_cfg'] = _gw_cfg_local
                 if companion is not None:
                     result['companion_fit'] = companion
                 result['input_modes']      = {
@@ -4458,6 +4741,14 @@ is modelled.
                         f'true {tval:.4f}  →  rec {rval:.4f}',
                         delta=f'{delta:+.4f}' if delta is not None else None,
                     )
+
+        # ------------------------------------------------------------
+        # Publication-style recovery figures (only when truth came from
+        # a Gaussian-walk simulation, since they need true σ values).
+        # ------------------------------------------------------------
+        if (result_rec.get('traj_method') == 'gaussian_walk'
+                and result_rec.get('gaussian_walk_cfg')):
+            _render_gw_publication_figures(result_rec)
 
         # --- Trajectory overlay ---------------------------------------
         recovered     = result_rec['params']
@@ -4779,8 +5070,9 @@ is modelled.
                     try:
                         _wr_idx = list(param_names_r).index('wr')
                         _wl_idx = list(param_names_r).index('wl')
+                        _z_idx  = list(param_names_r).index('z')
                     except ValueError:
-                        _wr_idx = None
+                        _wr_idx = _wl_idx = _z_idx = None
 
                     if _wr_idx is not None:
                         for wi, ax in enumerate(axes_d.flat):
@@ -4816,9 +5108,11 @@ is modelled.
                             wl_t = true_params_r[_wl_idx, t0:t1]
                             wr_r = recovered[_wr_idx, t0:t1]
                             wl_r = recovered[_wl_idx, t0:t1]
+                            z_t = np.maximum(true_params_r[_z_idx, t0:t1], 1e-9)
+                            z_r = np.maximum(recovered[_z_idx, t0:t1], 1e-9)
                             curve_t = np.array([
                                 np.mean(_dopamine_tanh_readout(
-                                    np.where(cv >= 0, wr_t, wl_t) * abs(cv),
+                                    np.where(cv >= 0, wr_t, wl_t) * abs(cv) / z_t,
                                     _DA_BETA_T,
                                     _DA_OFFSET_T,
                                 ))
@@ -4826,7 +5120,7 @@ is modelled.
                             ])
                             curve_r = np.array([
                                 np.mean(_dopamine_tanh_readout(
-                                    np.where(cv >= 0, wr_r, wl_r) * abs(cv),
+                                    np.where(cv >= 0, wr_r, wl_r) * abs(cv) / z_r,
                                     _DA_BETA_R,
                                     _DA_OFFSET_R,
                                 ))

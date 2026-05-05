@@ -68,13 +68,14 @@ DEFAULT_SIG_I = 0.01
 DEFAULT_SIG_DA = 0.2
 
 # Default starting values for the dopamine tanh response function:
-#     pred = tanh(0.5 * da_beta * (w_eff · |c| − da_offset))
+#     pred = tanh(0.5 * da_beta * ((w_eff · |c| / z) − da_offset))
 # Both `da_beta` (inverse temperature) and `da_offset` (centre on the
-# weighted-contrast axis) live in ``model_hyper`` and are optimised
-# jointly with ``sig_DA`` and ``sig_i`` by the EB outer loop.  The defaults
-# start with a moderate slope and a near-zero centre so zero contrast is
-# effectively neutral under the tanh readout.  The small positive offset keeps
-# the EB log-parameterisation valid while still allowing the optimiser to move.
+# threshold-normalised weighted-contrast axis) live in ``model_hyper`` and are
+# optimised jointly with ``sig_DA`` and ``sig_i`` by the EB outer loop.  The
+# defaults start with a moderate slope and a near-zero centre so zero contrast
+# is effectively neutral under the tanh readout.  The small positive offset
+# keeps the EB log-parameterisation valid while still allowing the optimiser
+# to move.
 DEFAULT_DA_BETA   = 2.0
 DEFAULT_DA_OFFSET = 0.001
 
@@ -93,7 +94,7 @@ def default_model_hyper_with_dopamine():
     """Model-level hyperparameters when the dopamine term is enabled.
 
     The dopamine peak is modelled as
-        ``N(tanh(0.5 · da_beta · (w_eff · |c| − da_offset)), sig_DA²)``
+        ``N(tanh(0.5 · da_beta · ((w_eff · |c| / z) − da_offset)), sig_DA²)``
     where ``w_eff = wr`` if ``c >= 0`` else ``wl``.  Using ``|c|`` makes
     the prediction symmetric in stimulus strength so left and right strong
     stimuli both push the predicted dopamine peak upward.  All four
@@ -102,7 +103,7 @@ def default_model_hyper_with_dopamine():
       * ``sig_i``     — within-trial accumulator noise (existing race scalar)
       * ``sig_DA``    — Gaussian std on the dopamine peak
       * ``da_beta``   — tanh inverse temperature (slope)
-      * ``da_offset`` — tanh centre on the weighted-contrast axis
+      * ``da_offset`` — tanh centre on the threshold-normalised weighted-contrast axis
 
     Pass this dict explicitly to ``psytrax.fit(..., model_hyper=...)`` when
     fitting the joint choice + RT + dopamine likelihood.
@@ -125,7 +126,7 @@ def log_lik_trial(params, dat_trial, model_hyper=None):
     When ``dat_trial`` contains a ``'dopamine'`` field and ``model_hyper``
     contains a ``'sig_DA'`` scalar, an extra Gaussian likelihood term is
     added:  the per-trial dopamine peak is modelled as
-    ``N(tanh(0.5 · da_beta · (w_eff · |c| − da_offset)), sig_DA²)`` where
+    ``N(tanh(0.5 · da_beta · ((w_eff · |c| / z) − da_offset)), sig_DA²)`` where
     ``w_eff = wr if c >= 0 else wl``.  Using ``|c|`` makes the prediction
     symmetric in stimulus strength so left and right strong stimuli both
     push the predicted peak upward (no need for ``wl`` to flip sign).
@@ -204,8 +205,9 @@ def _log_lik_dopamine(params, dat_trial, model_hyper):
     # strong right stimuli (positive c) both push the predicted dopamine
     # response upward, scaled by wl and wr respectively.
     w_eff  = jnp.where(c >= 0.0, wr, wl)
+    z_safe = jnp.where(z > 0.0, z, jnp.array(1.0, dtype=params.dtype))
     pred = jnp.tanh(0.5 * da_beta * (
-        w_eff * jnp.abs(c) - da_offset
+        (w_eff * jnp.abs(c) / z_safe) - da_offset
     ))
     valid = (
         jnp.isfinite(da)
@@ -329,8 +331,9 @@ def sample_trial(params, dat_trial, rng, model_hyper):
             da_offset = float(model_hyper.get('da_offset', DEFAULT_DA_OFFSET))
             w_eff = wr if c >= 0.0 else wl
             # Mirror the |c| convention used in log_lik_trial.
+            z_safe = z if z > 0.0 else 1.0
             pred = np.tanh(0.5 * da_beta * (
-                w_eff * abs(c) - da_offset
+                (w_eff * abs(c) / z_safe) - da_offset
             ))
             out['dopamine'] = float(rng.normal(pred, sig_DA))
         else:

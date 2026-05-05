@@ -68,7 +68,7 @@ def test_race_dopamine_tanh_readout_is_zero_centered():
     assert float(np.asarray(ll_at_zero)) > float(np.asarray(ll_at_unshifted_midpoint))
 
 
-def test_race_dopamine_readout_does_not_depend_on_threshold_scale():
+def test_race_dopamine_readout_uses_threshold_normalised_drive():
     model_hyper = {
         "sig_DA": 0.1,
         "da_beta": 2.0,
@@ -86,4 +86,4 @@ def test_race_dopamine_readout_does_not_depend_on_threshold_scale():
         model_hyper,
     )
 
-    assert np.allclose(np.asarray(ll_z1), np.asarray(ll_z2))
+    assert float(np.asarray(ll_z1)) > float(np.asarray(ll_z2))
