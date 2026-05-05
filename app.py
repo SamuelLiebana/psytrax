@@ -4406,6 +4406,13 @@ is modelled.
         _use_reinforce_local = bool(_rec_use_reinforce)
         _compare_fits_local  = bool(_rec_compare_fits)
         _use_gw_local        = bool(_rec_use_gw)
+        # Per-parameter clipping bounds (so a stray Gaussian step can't push
+        # `z` ≤ 0 etc. and crash the simulator → fit pipeline with infinite
+        # RTs).  Falls back to `(-inf, +inf)` for unbounded parameters.
+        _gw_bounds_local = [
+            _bounds_for(name) if _CLIP_TRAJECTORY else (-np.inf, np.inf)
+            for name in _rec_bundle['PARAM_NAMES']
+        ]
         _gw_cfg_local        = (
             None if not _use_gw_local else {
                 'params_0': np.array(
@@ -4469,13 +4476,29 @@ is modelled.
                         _seed_local + _gw_cfg_local['seed_offset']
                     )
                     _true_params_run = np.zeros((K_par, _N_local), dtype=float)
-                    _true_params_run[:, 0] = _gw_cfg_local['params_0']
+                    _lo = np.array([b[0] for b in _gw_bounds_local], dtype=float)
+                    _hi = np.array([b[1] for b in _gw_bounds_local], dtype=float)
+                    _true_params_run[:, 0] = np.clip(
+                        _gw_cfg_local['params_0'], _lo, _hi
+                    )
                     for t in range(1, _N_local):
                         sig_t = sigma_day if t in boundaries else sigma
-                        _true_params_run[:, t] = (
+                        step = (
                             _true_params_run[:, t - 1]
                             + rng_walk.normal(0.0, sig_t, size=K_par)
                         )
+                        # Reflect off the bounds so the trajectory stays
+                        # in the valid region (clipping alone causes the
+                        # walk to "stick" to the bound).
+                        below = step < _lo
+                        above = step > _hi
+                        if np.any(below):
+                            step[below] = 2.0 * _lo[below] - step[below]
+                        if np.any(above):
+                            step[above] = 2.0 * _hi[above] - step[above]
+                        # In case the reflection over-shoots the other
+                        # side (huge σ vs narrow bound), final-clamp.
+                        _true_params_run[:, t] = np.clip(step, _lo, _hi)
                     data = psytrax.simulate(
                         _bundle_local['sample_trial'],
                         _true_params_run,
@@ -4484,6 +4507,39 @@ is modelled.
                         model_hyper=_true_mh_local,
                         session_lengths=session_lengths,
                     )
+                    # Defensive: the simulator can still return non-finite
+                    # RTs for pathological parameter combinations (e.g.
+                    # both accumulators with non-positive drift on a 0-
+                    # contrast trial in race).  Drop those trials so the
+                    # downstream fit doesn't trip on `times must be finite`.
+                    if 'times' in data:
+                        T_arr = np.asarray(data['times'], dtype=float)
+                        valid = np.isfinite(T_arr) & (T_arr > 0.0)
+                        if not np.all(valid):
+                            n_bad = int(np.sum(~valid))
+                            _rec_status_cb({
+                                'message': (f'Dropped {n_bad}/{_N_local} '
+                                            'trials with non-finite RTs.'),
+                                'stage':   'simulate_filter',
+                            })
+                            data['times']     = T_arr[valid]
+                            data['responses'] = np.asarray(
+                                data['responses'])[valid]
+                            for k, v in list(data.get('inputs', {}).items()):
+                                data['inputs'][k] = np.asarray(v)[valid]
+                            for k in list(data.keys()):
+                                if k in ('inputs', 'responses', 'times',
+                                         'session_lengths'):
+                                    continue
+                                arr = np.asarray(data[k])
+                                if arr.shape and arr.shape[0] == _N_local:
+                                    data[k] = arr[valid]
+                            _true_params_run = _true_params_run[:, valid]
+                            # Recompute simple session_lengths matching the
+                            # surviving trials so psytrax.fit gets a
+                            # consistent dayLength sum.
+                            data['session_lengths'] = np.array(
+                                [int(np.sum(valid))], dtype=int)
                 elif _use_reinforce_local:
                     _rec_status_cb({
                         'message': f'Forward-simulating {_N_local} REINFORCE trials…',
