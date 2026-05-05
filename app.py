@@ -622,7 +622,6 @@ def _render_quartile_plots(result, *, n_win=4):
     try:
         wr_idx = param_names.index('wr')
         wl_idx = param_names.index('wl')
-        z_idx  = param_names.index('z')
     except ValueError:
         return
 
@@ -653,11 +652,9 @@ def _render_quartile_plots(result, *, n_win=4):
         n_w = np.array([np.sum(c_f == cv) for cv in c_uniq])
         wr_w = params[wr_idx, t0:t1]
         wl_w = params[wl_idx, t0:t1]
-        z_w  = np.where(params[z_idx, t0:t1] > 0,
-                        params[z_idx, t0:t1], 1.0)
         da_curve = np.array([
             np.mean(_dopamine_tanh_readout(
-                np.where(cv >= 0, wr_w, wl_w) * abs(cv) / z_w,
+                np.where(cv >= 0, wr_w, wl_w) * abs(cv),
                 _DA_BETA,
                 _DA_OFFSET,
             ))
@@ -1094,7 +1091,7 @@ columns to the required fields.
         disabled=not _data_has_dopamine,
         help=(
             'Adds a Gaussian likelihood term '
-            'N(tanh(0.5 · da_beta · (w_eff · |c| / z − da_offset)), sig_DA²) '
+            'N(tanh(0.5 · da_beta · (w_eff · |c| − da_offset)), sig_DA²) '
             'for the per-trial dopamine peak. `sig_DA`, `da_beta`, and '
             '`da_offset` are estimated jointly with `sig_i` by Empirical Bayes. '
             'Available only when the loaded dataset contains a `dopamine` '
@@ -1145,7 +1142,7 @@ columns to the required fields.
 **Race model + joint dopamine fit** — two independent inverse-Gaussian
 accumulators racing to threshold (`wr, wl, br, bl, z` evolve under the
 random-walk prior, `sig_i` is an EB scalar).  In addition the per-trial
-dopamine peak is modelled as `N(tanh(0.5 · da_beta · (w_eff · |c| / z − da_offset)),
+dopamine peak is modelled as `N(tanh(0.5 · da_beta · (w_eff · |c| − da_offset)),
 sig_DA²)` with `w_eff = wr` if `c ≥ 0` else `wl`.  EB jointly optimises
 `sig_i, sig_DA, da_beta, da_offset` with the random-walk variances.
 """)
@@ -1549,7 +1546,7 @@ def learning_rule(params, dat_trial):
                 ('sig_i',     'within-trial accumulator noise',    _DEFAULT_SIG_I),
                 ('sig_DA',    'Gaussian std on dopamine peak',     _DEFAULT_SIG_DA),
                 ('da_beta',   'tanh inverse temperature',          _DEF_BETA),
-                ('da_offset', 'tanh centre on linear-pred axis',    _DEF_OFFSET),
+                ('da_offset', 'tanh centre on weighted contrast',   _DEF_OFFSET),
             ]
             _da_cols = st.columns(len(_da_init_specs))
             for (key, descr, default_val), _col in zip(_da_init_specs, _da_cols):
@@ -2980,7 +2977,7 @@ elif page == 'Visualise Results':
             st.caption(
                 'Black dots: empirical mean dopamine peak per signed contrast '
                 '(within each quartile of trials). Blue line: analytic '
-                'prediction `tanh(0.5 · da_beta · (w_eff · |c| / z − da_offset))` '
+                'prediction `tanh(0.5 · da_beta · (w_eff · |c| − da_offset))` '
                 'averaged over each window\'s '
                 'recovered trajectory, where `w_eff = wr` for `c ≥ 0` and '
                 '`w_eff = wl` otherwise.'
@@ -2989,9 +2986,8 @@ elif page == 'Visualise Results':
             try:
                 _wr_idx = list(param_names).index('wr')
                 _wl_idx = list(param_names).index('wl')
-                _z_idx  = list(param_names).index('z')
             except ValueError:
-                _wr_idx = _wl_idx = _z_idx = None
+                _wr_idx = _wl_idx = None
 
             if _wr_idx is not None:
                 fig_da, axes_da = plt.subplots(2, 2, figsize=(11, 8))
@@ -3025,11 +3021,9 @@ elif page == 'Visualise Results':
                     _DA_OFFSET = float(_model_mh.get('da_offset', _DA_OFFSET_DEFAULT))
                     wr_win = params[_wr_idx, t0:t1]
                     wl_win = params[_wl_idx, t0:t1]
-                    z_win  = params[_z_idx,  t0:t1]
-                    z_safe = np.where(z_win > 0, z_win, 1.0)
                     da_curve = np.array([
                         np.mean(_dopamine_tanh_readout(
-                            np.where(cv >= 0, wr_win, wl_win) * abs(cv) / z_safe,
+                            np.where(cv >= 0, wr_win, wl_win) * abs(cv),
                             _DA_BETA,
                             _DA_OFFSET,
                         ))
@@ -3462,7 +3456,7 @@ elif page == 'Model Recovery':
             _da_blurb = (
                 ' Joint dopamine fit is enabled: each trial also emits a '
                 '`dopamine` value drawn from '
-                '`N(tanh(0.5 · da_beta · (w_eff · |c| / z − da_offset)), sig_DA²)` '
+                '`N(tanh(0.5 · da_beta · (w_eff · |c| − da_offset)), sig_DA²)` '
                 '(`w_eff = wr` if `c ≥ 0` else `wl`), and the fit estimates '
                 '`sig_DA`, `da_beta`, and `da_offset` jointly with `sig_i`.'
                 if kwargs.get('race_with_dopamine') else ''
@@ -3537,7 +3531,7 @@ is modelled.
         )
 
     # Race model can additionally fit a per-trial dopamine peak, modelled as
-    # N(tanh(0.5·da_beta·(w_eff·|c|/z − da_offset)), sig_DA²), with all three
+    # N(tanh(0.5·da_beta·(w_eff·|c| − da_offset)), sig_DA²), with all three
     # dopamine readout scalars estimated by EB.
     _rec_race_with_dopamine = False
     if _rec_model_choice == 'Race model (inverse-Gaussian)':
@@ -3547,7 +3541,7 @@ is modelled.
             key='rec_race_with_dopamine',
             help='Add a per-trial dopamine peak to the simulated data and '
                  'fit it with a Gaussian likelihood whose mean is '
-                 'tanh(0.5 · da_beta · (w_eff · |c| / z − da_offset)) '
+                 'tanh(0.5 · da_beta · (w_eff · |c| − da_offset)) '
                  '(w_eff = wr if c ≥ 0 else wl) and whose variance (sig_DA²) '
                  'is estimated jointly with sig_i.',
         )
@@ -4784,7 +4778,6 @@ is modelled.
                     try:
                         _wr_idx = list(param_names_r).index('wr')
                         _wl_idx = list(param_names_r).index('wl')
-                        _z_idx  = list(param_names_r).index('z')
                     except ValueError:
                         _wr_idx = None
 
@@ -4820,15 +4813,11 @@ is modelled.
                             _DA_OFFSET_R = float(rec_mh.get('da_offset',  _DA_OFFSET_DEFAULT))
                             wr_t = true_params_r[_wr_idx, t0:t1]
                             wl_t = true_params_r[_wl_idx, t0:t1]
-                            z_t  = np.where(true_params_r[_z_idx, t0:t1] > 0,
-                                            true_params_r[_z_idx, t0:t1], 1.0)
                             wr_r = recovered[_wr_idx, t0:t1]
                             wl_r = recovered[_wl_idx, t0:t1]
-                            z_r  = np.where(recovered[_z_idx, t0:t1] > 0,
-                                            recovered[_z_idx, t0:t1], 1.0)
                             curve_t = np.array([
                                 np.mean(_dopamine_tanh_readout(
-                                    np.where(cv >= 0, wr_t, wl_t) * abs(cv) / z_t,
+                                    np.where(cv >= 0, wr_t, wl_t) * abs(cv),
                                     _DA_BETA_T,
                                     _DA_OFFSET_T,
                                 ))
@@ -4836,7 +4825,7 @@ is modelled.
                             ])
                             curve_r = np.array([
                                 np.mean(_dopamine_tanh_readout(
-                                    np.where(cv >= 0, wr_r, wl_r) * abs(cv) / z_r,
+                                    np.where(cv >= 0, wr_r, wl_r) * abs(cv),
                                     _DA_BETA_R,
                                     _DA_OFFSET_R,
                                 ))

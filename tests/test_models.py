@@ -3,6 +3,7 @@ import numpy as np
 from psytrax.models.ddm import log_lik_trial as ddm_log_lik_trial
 from psytrax.models.race import (
     default_model_hyper_with_dopamine,
+    _log_lik_dopamine,
     log_lik_trial as race_log_lik_trial,
 )
 
@@ -65,3 +66,24 @@ def test_race_dopamine_tanh_readout_is_zero_centered():
     )
 
     assert float(np.asarray(ll_at_zero)) > float(np.asarray(ll_at_unshifted_midpoint))
+
+
+def test_race_dopamine_readout_does_not_depend_on_threshold_scale():
+    model_hyper = {
+        "sig_DA": 0.1,
+        "da_beta": 2.0,
+        "da_offset": 0.0,
+    }
+    dat = {"inputs": {"c": 1.0}, "dopamine": np.tanh(1.0)}
+    ll_z1 = _log_lik_dopamine(
+        np.array([1.0, 1.0, 0.8, 0.8, 1.0]),
+        dat,
+        model_hyper,
+    )
+    ll_z2 = _log_lik_dopamine(
+        np.array([1.0, 1.0, 0.8, 0.8, 2.0]),
+        dat,
+        model_hyper,
+    )
+
+    assert np.allclose(np.asarray(ll_z1), np.asarray(ll_z2))
