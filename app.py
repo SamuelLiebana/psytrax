@@ -432,8 +432,8 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
     # Race-family layout: pair the symmetric weights left/right, then centre
     # the lapse-like z trajectory underneath at the same panel width.
     #
-    #   wr | wl
-    #   br | bl
+    #   wl | wr
+    #   bl | br
     #      z
     #
     is_race = set(param_names) >= {'wr', 'wl', 'br', 'bl', 'z'}
@@ -444,10 +444,10 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
         _tc = _style_fig(fig)
         gs = fig.add_gridspec(3, 4, hspace=0.38, wspace=0.16)
         fig.subplots_adjust(left=0.06, right=0.985, top=0.96, bottom=0.075)
-        ax_wr = fig.add_subplot(gs[0, 0:2])
-        ax_wl = fig.add_subplot(gs[0, 2:4], sharey=ax_wr)
-        ax_br = fig.add_subplot(gs[1, 0:2])
-        ax_bl = fig.add_subplot(gs[1, 2:4], sharey=ax_br)
+        ax_wl = fig.add_subplot(gs[0, 0:2])
+        ax_wr = fig.add_subplot(gs[0, 2:4], sharey=ax_wl)
+        ax_bl = fig.add_subplot(gs[1, 0:2])
+        ax_br = fig.add_subplot(gs[1, 2:4], sharey=ax_bl)
         ax_z  = fig.add_subplot(gs[2, 1:3])
 
         def _draw(ax, name, idx_in_palette, hide_y=False):
@@ -466,10 +466,10 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
                 # tick labels so the shared axis reads cleanly.
                 plt.setp(ax.get_yticklabels(), visible=False)
 
-        _draw(ax_wr, 'wr', 0)
-        _draw(ax_wl, 'wl', 1, hide_y=True)
-        _draw(ax_br, 'br', 2)
-        _draw(ax_bl, 'bl', 3, hide_y=True)
+        _draw(ax_wl, 'wl', 1)
+        _draw(ax_wr, 'wr', 0, hide_y=True)
+        _draw(ax_bl, 'bl', 3)
+        _draw(ax_br, 'br', 2, hide_y=True)
         _draw(ax_z,  'z',  4)
         _show_fig(fig, 'param_trajectories.png')
 
