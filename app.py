@@ -429,31 +429,25 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
         key=f'fit_traj_mode{key_suffix}',
     )
 
-    # Race-family layout: pair the symmetric weights so the eye can compare
-    # left vs right.  Built on a 4-row × 3-column gridspec where every panel
-    # spans 2 grid-rows, so all five sub-axes end up the same size.
+    # Race-family layout: pair the symmetric weights left/right, then centre
+    # the lapse-like z trajectory underneath at the same panel width.
     #
-    #   wr | wl |       ← rows 0–1, shared y-axis (drift weights)
-    #   br | bl |  z    ← z spans rows 1–2 (vertically centred between the
-    #                    upper and lower pairs) — same size as the others
+    #   wr | wl
+    #   br | bl
+    #      z
     #
     is_race = set(param_names) >= {'wr', 'wl', 'br', 'bl', 'z'}
 
     if traj_mode == 'Separate' and is_race:
         idx = {n: i for i, n in enumerate(param_names)}
-        fig = plt.figure(figsize=(14, 8), constrained_layout=True)
+        fig = plt.figure(figsize=(11, 10), constrained_layout=True)
         _tc = _style_fig(fig)
-        gs = fig.add_gridspec(4, 3, hspace=0.85, wspace=0.28)
-        # wr / wl on rows 0–1 (top half), shared y.
-        ax_wr = fig.add_subplot(gs[0:2, 0])
-        ax_wl = fig.add_subplot(gs[0:2, 1], sharey=ax_wr)
-        # br / bl on rows 2–3 (bottom half), shared y.
-        ax_br = fig.add_subplot(gs[2:4, 0])
-        ax_bl = fig.add_subplot(gs[2:4, 1], sharey=ax_br)
-        # z spans rows 1–2 in the right column → same panel size as the
-        # left-column ones, vertically centred between the wr/wl and br/bl
-        # rows.
-        ax_z  = fig.add_subplot(gs[1:3, 2])
+        gs = fig.add_gridspec(3, 4, hspace=0.65, wspace=0.28)
+        ax_wr = fig.add_subplot(gs[0, 0:2])
+        ax_wl = fig.add_subplot(gs[0, 2:4], sharey=ax_wr)
+        ax_br = fig.add_subplot(gs[1, 0:2])
+        ax_bl = fig.add_subplot(gs[1, 2:4], sharey=ax_br)
+        ax_z  = fig.add_subplot(gs[2, 1:3])
 
         def _draw(ax, name, idx_in_palette, hide_y=False):
             col = _TRAJ_COLORS[idx_in_palette % len(_TRAJ_COLORS)]
