@@ -4816,12 +4816,19 @@ is modelled.
         W_std_rec     = (result_rec.get('hess_info') or {}).get('W_std')
         companion_fit = result_rec.get('companion_fit')
 
-        primary_label   = result_rec.get('fit_label',   'recovered')
-        companion_label = (companion_fit.get('fit_label', 'recovered (alt prior)')
-                           if companion_fit else None)
-        recovered_alt   = companion_fit['params'] if companion_fit else None
-        W_std_alt       = ((companion_fit.get('hess_info') or {}).get('W_std')
-                           if companion_fit else None)
+        # When there's only one fit, just call it "recovered".  When there's
+        # a comparison companion, both fits keep their prior-specific labels
+        # so the legend can tell them apart.
+        if companion_fit is None:
+            primary_label   = 'recovered'
+            companion_label = None
+        else:
+            primary_label   = result_rec.get('fit_label', 'recovered')
+            companion_label = companion_fit.get(
+                'fit_label', 'recovered (alt prior)')
+        recovered_alt = companion_fit['params'] if companion_fit else None
+        W_std_alt     = ((companion_fit.get('hess_info') or {}).get('W_std')
+                         if companion_fit else None)
         trials_rec      = np.arange(N_r)
         is_race_recov   = set(param_names_r) >= {'wr', 'wl', 'br', 'bl', 'z'}
 
@@ -4898,10 +4905,12 @@ is modelled.
                 corr = float(np.corrcoef(recovered[k], true_params_r[k])[0, 1])
             else:
                 corr = float('nan')
-            row = {'parameter': name,
-                   f'MAE ({primary_label})': mae,
-                   f'corr ({primary_label})': corr}
-            if recovered_alt is not None:
+            if recovered_alt is None:
+                row = {'parameter': name, 'MAE': mae, 'corr': corr}
+            else:
+                row = {'parameter': name,
+                       f'MAE ({primary_label})': mae,
+                       f'corr ({primary_label})': corr}
                 mae_a = float(np.mean(np.abs(recovered_alt[k] - true_params_r[k])))
                 if np.std(true_params_r[k]) > 0 and np.std(recovered_alt[k]) > 0:
                     corr_a = float(np.corrcoef(recovered_alt[k], true_params_r[k])[0, 1])
