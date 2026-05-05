@@ -7,6 +7,7 @@ import io
 import os
 import threading
 import queue
+from datetime import datetime
 import numpy as np
 import streamlit as st
 import matplotlib.pyplot as plt
@@ -473,6 +474,7 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
         _draw(ax_br, 'br', 2)
         _draw(ax_bl, 'bl', 3, hide_y=True)
         _draw(ax_z,  'z',  4)
+        fig.tight_layout(pad=1.4)
         _show_fig(fig, 'param_trajectories.png')
 
     elif traj_mode == 'Separate':
@@ -494,7 +496,7 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
                 ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
         for ax in axes.flat[K:]:
             ax.set_visible(False)
-        fig.tight_layout()
+        fig.tight_layout(pad=1.3)
         _show_fig(fig, 'param_trajectories.png')
     else:
         fig, ax = plt.subplots(figsize=(12, 4))
@@ -510,7 +512,7 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
         for b in boundaries[:-1]:
             ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
         _style_legend(ax)
-        fig.tight_layout()
+        fig.tight_layout(pad=1.3)
         _show_fig(fig, 'param_trajectories.png')
 
 
@@ -886,18 +888,39 @@ For most users, `device='auto'` is the recommended default.
     st.subheader('Performance')
     st.markdown("""
 Wall-clock fitting times on Apple M4 CPU, JAX L-BFGS optimizer, float64,
-measured on bundled example mice spanning lower and higher trial counts.
-Times include warm-start, hyperparameter optimisation, and Hessian computation.
+measured on bundled dopamine example mice. Times include warm-start, MAP/EB
+cycles, joint choice + RT + dopamine likelihood, session-boundary process
+noise, and trajectory credible bands (`hess_calc='weights'`).
 
-| Model | **DAP044** (520) | **DAP027** (2,535) | **DAP009** (5,289) | **DAP011** (5,681) | **DAP031** (7,836) | **DAP007** (11,411) |
-|---|---|---|---|---|---|---|
-| Logistic (K=2) | 2.1s | 10.8s | 10.3s | 23.0s | 19.1s | 20.3s |
-| DDM approx (K=3) | 5.3s | 11.1s | 28.4s | 45.6s | 40.5s | 35.8s |
-| Race fixed sig_i (K=5) | 12.6s | 28.2s | 13.9s | 76.9s | 72.8s | 101.2s |
+| Mouse | Trials | Time |
+|---|---:|---:|
+| DAP044 | 407 | 0.77 min (46s) |
+| DAP048 | 2,580 | 1.15 min (69s) |
+| DAP110 | 2,583 | 1.19 min (71s) |
+| DAP039 | 3,162 | 0.84 min (50s) |
+| DAP014 | 3,213 | 1.40 min (84s) |
+| DAP027 | 3,693 | 1.56 min (94s) |
+| DAP033 | 4,019 | 1.67 min (100s) |
+| DAP013 | 4,413 | 1.73 min (104s) |
+| DAP009 | 4,885 | 1.44 min (86s) |
+| DAP023 | 4,911 | 1.57 min (94s) |
+| DAP017 | 5,078 | 1.78 min (107s) |
+| DAP011 | 5,413 | 0.83 min (50s) |
+| DAP015 | 5,989 | 1.65 min (99s) |
+| DAP051 | 6,170 | 1.88 min (113s) |
+| DAP156 | 6,371 | 2.08 min (125s) |
+| DAP022 | 6,548 | 1.92 min (115s) |
+| DAP046 | 7,796 | 3.25 min (195s) |
+| DAP050 | 8,173 | 0.85 min (51s) |
+| DAP028 | 8,408 | 3.26 min (196s) |
+| DAP024 | 9,602 | 3.20 min (192s) |
+| DAP007 | 12,018 | 3.99 min (239s) |
 
-These timings use real datasets rather than synthetic sweeps, so they are not
-perfectly monotonic in trial count. NVIDIA CUDA (float64) is expected to give
-a further **3–8× speedup** for models with K ≥ 3 via `jax.vmap` on-device computation.
+Across all 21 bundled dopamine example mice, the median fit time was 1.65 min
+and the range was 0.77-3.99 min. These timings use real datasets rather than
+synthetic sweeps, so they are not perfectly monotonic in trial count. NVIDIA
+CUDA (float64) is expected to give a further **3-8x speedup** for models with
+K >= 3 via `jax.vmap` on-device computation.
 """)
 
     st.subheader('Installation')
@@ -1084,28 +1107,6 @@ columns to the required fields.
             ':grey[Dopamine fit disabled — the loaded dataset does not '
             'contain a `dopamine` field.]'
         )
-
-    # Diagnostic: show exactly what the *deployed* psytrax exposes for the
-    # joint dopamine fit.  If this only lists `sig_i, sig_DA` (or omits
-    # `da_beta` / `da_offset`), the Streamlit Cloud build is using a stale
-    # psytrax wheel — `Reboot app` again, or set `requirements.txt` to use
-    # `-e .` instead of `.` so the source is always live.
-    if _race_with_dopamine:
-        try:
-            from psytrax.models import race as _race_diag
-            _diag_mh = (_race_diag.default_model_hyper_with_dopamine()
-                        if hasattr(_race_diag, 'default_model_hyper_with_dopamine')
-                        else _race_diag.default_model_hyper())
-            st.caption(
-                f':grey[Deployed `default_model_hyper_with_dopamine()` returns '
-                f'`{_diag_mh}` — should contain all of '
-                '`sig_i`, `sig_DA`, `da_beta`, `da_offset`. Anything missing '
-                'means a stale psytrax install.]'
-            )
-        except Exception as _diag_exc:
-            st.caption(
-                f':red[Could not inspect deployed psytrax: `{_diag_exc}`]'
-            )
 
     st.divider()
 
@@ -1585,6 +1586,12 @@ def learning_rule(params, dat_trial):
 
     # --- Run ---
     st.subheader('5. Fit')
+    st.info(
+        'Streamlit-hosted fits can be noticeably slower than running psytrax '
+        'locally, especially for dopamine race fits. This page is mainly for '
+        'checking the workflow and inspecting intermediate behaviour; use a '
+        'local Python run for production batches.',
+    )
 
     if 'fit_running' not in st.session_state:
         st.session_state['fit_running'] = False
@@ -1594,6 +1601,17 @@ def learning_rule(params, dat_trial):
         st.session_state['fit_log'] = []
     if 'fit_error' not in st.session_state:
         st.session_state['fit_error'] = None
+    if 'fit_progress' not in st.session_state:
+        st.session_state['fit_progress'] = {
+            'cycle': 0,
+            'map_iter': 0,
+            'log_evd': '—',
+            'best': '—',
+            'map_loss': '—',
+            'status': 'Preparing fit…',
+        }
+    if 'fit_partial_result' not in st.session_state:
+        st.session_state['fit_partial_result'] = None
 
     run_btn = st.button('Run fit', disabled=st.session_state['fit_running'], key='fit_run')
 
@@ -1606,8 +1624,41 @@ def learning_rule(params, dat_trial):
         st.session_state['fit_result_path'] = None
         st.session_state['fit_log'] = []
         st.session_state['fit_error'] = None
+        st.session_state['fit_partial_result'] = None
+        st.session_state['fit_progress'] = {
+            'cycle': 0,
+            'map_iter': 0,
+            'log_evd': '—',
+            'best': '—',
+            'map_loss': '—',
+            'status': 'Preparing fit…',
+        }
 
         _q = queue.Queue()
+        _cancel_event = threading.Event()
+        st.session_state['_fit_cancel_event'] = _cancel_event
+        _latest_partial = {'result': None}
+
+        class _FitStopped(Exception):
+            pass
+
+        _fit_start = datetime.now()
+
+        def _save_partial_fit(partial):
+            if partial is None:
+                raise _FitStopped('No completed EB cycle is available yet.')
+            os.makedirs('fits', exist_ok=True)
+            res = dict(partial)
+            res['param_names'] = list(_pnames)
+            res['data'] = raw
+            res['n_trials'] = int(res['params'].shape[1])
+            res['duration'] = datetime.now() - _fit_start
+            res['execution'] = {'description': 'partial Streamlit run'}
+            res['stopped_early'] = True
+            suffix = f'_N{res["n_trials"]}' if n_trials_opt is not None else ''
+            path = os.path.join('fits', f'{subject_name}{suffix}_partial_fit.npy')
+            np.save(path, res)
+            return path
 
         # Minimal tqdm shim: forwards each cycle and MAP-iteration update to the queue.
         # _n      = outer cycle count (incremented by update())
@@ -1622,17 +1673,27 @@ def learning_rule(params, dat_trial):
                 self._map_n = 0   # reset inner counter for the new cycle
                 self._postfix.pop('MAP loss', None)
                 _q.put(('progress', self._n, self._map_n, dict(self._postfix)))
+                if _cancel_event.is_set():
+                    raise _FitStopped()
             def set_postfix(self, d, **kwargs):
                 self._postfix.update(d)
                 if 'MAP loss' in d:
                     self._map_n += 1
                 _q.put(('progress', self._n, self._map_n, dict(self._postfix)))
+                if _cancel_event.is_set():
+                    raise _FitStopped()
             def close(self): pass
             def __enter__(self): return self
             def __exit__(self, *a): pass
 
         def _status_cb(payload):
+            partial = payload.pop('partial_result', None)
+            if partial is not None:
+                _latest_partial['result'] = partial
+                _q.put(('partial', partial))
             _q.put(('status', payload))
+            if _cancel_event.is_set():
+                raise _FitStopped()
 
         _orig_tqdm = _hyper_opt_mod.tqdm
         _hyper_opt_mod.tqdm = _QueueTqdm
@@ -1706,6 +1767,11 @@ def learning_rule(params, dat_trial):
                     **fit_kwargs,
                 )
                 _q.put(('done', result))
+            except _FitStopped:
+                try:
+                    _q.put(('cancelled', _save_partial_fit(_latest_partial['result'])))
+                except _FitStopped as e:
+                    _q.put(('error', str(e)))
             except Exception as e:
                 import traceback
                 _q.put(('error', traceback.format_exc()))
@@ -1716,13 +1782,22 @@ def learning_rule(params, dat_trial):
         _thread.start()
         st.session_state['_fit_thread'] = _thread
         st.session_state['_fit_queue'] = _q
+        st.rerun()
 
     if st.session_state['fit_running']:
         import time
         _q      = st.session_state['_fit_queue']
         _thread = st.session_state['_fit_thread']
+        _cancel_event = st.session_state.get('_fit_cancel_event')
 
         st.markdown('**Fitting in progress…** &nbsp; `JAX L-BFGS`')
+        if st.button('Stop fit and show best-so-far result',
+                     key='fit_stop_btn',
+                     disabled=bool(_cancel_event and _cancel_event.is_set())):
+            if _cancel_event is not None:
+                _cancel_event.set()
+            st.warning('Stop requested. The current MAP/EB step will finish or yield at the next progress checkpoint.')
+
         col_cyc, col_map = st.columns(2)
         cycle_text   = col_cyc.empty()
         map_text     = col_map.empty()
@@ -1730,56 +1805,62 @@ def learning_rule(params, dat_trial):
         log_evd_text = st.empty()
         log_box      = st.empty()
 
-        # Poll the queue while the thread is alive, streaming updates to the browser
-        cycle, map_iter, log_evd_str, best_str, map_loss_str = 0, 0, '—', '—', '—'
-        current_status = 'Preparing fit…'
+        progress = dict(st.session_state.get('fit_progress', {}))
         fit_log = st.session_state.get('fit_log', [])
-        while _thread.is_alive():
-            while not _q.empty():
-                try:
-                    msg = _q.get_nowait()
-                    if msg[0] == 'progress':
-                        _, cycle, map_iter, postfix = msg
-                        log_evd_str  = postfix.get('log_evd',  '—')
-                        best_str     = postfix.get('best',     '—')
-                        map_loss_str = postfix.get('MAP loss', map_loss_str)
-                    elif msg[0] == 'status':
-                        payload = msg[1]
-                        current_status = payload.get('message', current_status)
-                        fit_log.append(current_status)
-                        fit_log = fit_log[-12:]
-                        st.session_state['fit_log'] = fit_log
-                except queue.Empty:
-                    break
-            cycle_text.metric('Cycles completed', cycle)
-            map_text.metric('MAP iters (current cycle)', map_iter)
-            status_text.markdown(f'**Current step:** {current_status}')
-            log_evd_text.markdown(
-                f'Log evidence (higher is better) — current: **{log_evd_str}** &nbsp;|&nbsp; best: **{best_str}**'
-                + (
-                    f' &nbsp;|&nbsp; Neg. log posterior (lower is better): **{map_loss_str}**'
-                    if map_loss_str != '—' else ''
-                )
-            )
-            if fit_log:
-                log_box.code('\n'.join(fit_log), language='text')
-            time.sleep(0.5)
+        terminal = None
 
-        # Thread finished — drain any remaining messages
-        msg_type, payload = 'error', 'No result received from fitting thread.'
         while not _q.empty():
             try:
-                m = _q.get_nowait()
-                if m[0] in ('done', 'error'):
-                    msg_type, payload = m[0], m[1]
+                msg = _q.get_nowait()
+                if msg[0] == 'progress':
+                    _, cycle, map_iter, postfix = msg
+                    progress['cycle'] = cycle
+                    progress['map_iter'] = map_iter
+                    progress['log_evd'] = postfix.get('log_evd', progress.get('log_evd', '—'))
+                    progress['best'] = postfix.get('best', progress.get('best', '—'))
+                    progress['map_loss'] = postfix.get('MAP loss', progress.get('map_loss', '—'))
+                elif msg[0] == 'status':
+                    payload = msg[1]
+                    progress['status'] = payload.get('message', progress.get('status', 'Preparing fit…'))
+                    fit_log.append(progress['status'])
+                    fit_log = fit_log[-12:]
+                elif msg[0] == 'partial':
+                    st.session_state['fit_partial_result'] = msg[1]
+                elif msg[0] in ('done', 'cancelled', 'error'):
+                    terminal = msg
             except queue.Empty:
                 break
 
-        st.session_state['fit_running'] = False
-        if msg_type == 'done':
-            st.session_state['fit_result_path'] = payload
-        else:
-            st.session_state['fit_error'] = payload
+        st.session_state['fit_progress'] = progress
+        st.session_state['fit_log'] = fit_log
+        cycle_text.metric('Cycles completed', progress.get('cycle', 0))
+        map_text.metric('MAP iters (current cycle)', progress.get('map_iter', 0))
+        status_text.markdown(f'**Current step:** {progress.get("status", "Preparing fit…")}')
+        log_evd_text.markdown(
+            f'Log evidence (higher is better) — current: **{progress.get("log_evd", "—")}** '
+            f'&nbsp;|&nbsp; best: **{progress.get("best", "—")}**'
+            + (
+                f' &nbsp;|&nbsp; Neg. log posterior (lower is better): **{progress.get("map_loss")}**'
+                if progress.get('map_loss', '—') != '—' else ''
+            )
+        )
+        if fit_log:
+            log_box.code('\n'.join(fit_log), language='text')
+
+        if terminal is not None or not _thread.is_alive():
+            if terminal is None:
+                terminal = ('error', 'No result received from fitting thread.')
+            msg_type, payload = terminal[0], terminal[1]
+            st.session_state['fit_running'] = False
+            if msg_type in ('done', 'cancelled'):
+                st.session_state['fit_result_path'] = payload
+                if msg_type == 'cancelled':
+                    st.session_state['fit_error'] = None
+            else:
+                st.session_state['fit_error'] = payload
+            st.rerun()
+
+        time.sleep(0.5)
         st.rerun()
 
     if st.session_state['fit_error']:
@@ -1787,8 +1868,11 @@ def learning_rule(params, dat_trial):
 
     if st.session_state['fit_result_path']:
         path = st.session_state['fit_result_path']
-        st.success(f'Fit complete! Saved to `{path}`')
         res = np.load(path, allow_pickle=True).item()
+        if res.get('stopped_early') or res.get('partial'):
+            st.warning(f'Fit stopped early. Showing best-so-far result saved to `{path}`')
+        else:
+            st.success(f'Fit complete! Saved to `{path}`')
         c1, c2, c3, c4 = st.columns(4)
         c1.metric('Trials', res['params'].shape[1])
         c2.metric('Parameters', res['params'].shape[0])
@@ -1844,26 +1928,6 @@ def learning_rule(params, dat_trial):
             st.markdown('**Optimised model-level hyperparameters**')
             st.dataframe(pd.DataFrame(mh_rows).set_index('hyperparameter'),
                          use_container_width=True)
-
-            # Diagnostic: show exactly which model_hyper keys EB actually
-            # optimised on this run.  If this list is empty (or missing
-            # da_beta / da_offset) while the table above shows initial ==
-            # recovered for those keys, the deployed psytrax wheel is
-            # stale — Reboot the app on Streamlit Cloud, and if that
-            # doesn't help, switch the trailing `.` in `requirements.txt`
-            # to `-e .` so the source is always live.
-            _hess = res.get('hess_info') or {}
-            _mh_optlist = _hess.get('hyp_model_hyper_optList') or []
-            _hyp_optlist = _hess.get('hyp_optList') or []
-            st.caption(
-                f':grey[EB optimised: '
-                f'`hyper={_hyp_optlist}`, '
-                f'`model_hyper={_mh_optlist}`. '
-                'Any model_hyper key listed here was passed through to the '
-                'outer L-BFGS-B loop; an empty list (or one missing '
-                '`da_beta` / `da_offset`) on a `with_dopamine` fit indicates '
-                'a stale psytrax install on the deployment.]'
-            )
 
         with open(path, 'rb') as f:
             st.download_button(
@@ -2871,46 +2935,7 @@ elif page == 'Visualise Results':
 
     # --- Parameter trajectories ---
     st.subheader('Parameter trajectories')
-    traj_mode = st.radio('Display mode', ['Separate', 'Combined'],
-                         horizontal=True, label_visibility='collapsed')
-
-    trials      = np.arange(N)
-    day_lengths = dat.get('dayLength') if dat.get('dayLength') is not None else np.array([])
-    boundaries  = np.cumsum(day_lengths).astype(int) if len(day_lengths) else np.array([], dtype=int)
-
-    if traj_mode == 'Separate':
-        n_cols = min(K, 3)
-        n_rows = int(np.ceil(K / n_cols))
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 3 * n_rows), squeeze=False)
-        _tc = _style_fig(fig)
-        for k, (ax, name) in enumerate(zip(axes.flat, param_names)):
-            col = COLORS[k % len(COLORS)]
-            _style_ax(ax, xlabel='Trial', title=name)
-            ax.plot(trials, params[k], color=col, lw=0.8, alpha=0.9)
-            if W_std is not None:
-                ax.fill_between(trials, params[k] - W_std[k], params[k] + W_std[k],
-                                color=col, alpha=0.2)
-            for b in boundaries[:-1]:
-                ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
-        for ax in axes.flat[K:]:
-            ax.set_visible(False)
-        fig.tight_layout()
-        _show_fig(fig, 'param_trajectories.png')
-    else:  # Combined
-        fig, ax = plt.subplots(figsize=(12, 4))
-        _tc = _style_fig(fig)
-        _style_ax(ax, xlabel='Trial', ylabel='Parameter value')
-        for k, name in enumerate(param_names):
-            col = COLORS[k % len(COLORS)]
-            ax.plot(trials, params[k], color=col, lw=0.9, alpha=0.9, label=name)
-            if W_std is not None:
-                ax.fill_between(trials, params[k] - W_std[k], params[k] + W_std[k],
-                                color=col, alpha=0.15)
-        for b in boundaries[:-1]:
-            ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
-        _style_legend(ax)
-        fig.tight_layout()
-        _show_fig(fig, 'param_trajectories.png')
+    _render_parameter_trajectories(result, key_suffix='_vis')
 
     # --- Psychometric & chronometric curves ---
     if 'inputs' in dat and 'c' in dat['inputs'] and 'r' in dat:
@@ -3431,7 +3456,7 @@ elif page == 'Compare Models':
                         ax.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
                 for ax in axes.flat[K:]:
                     ax.set_visible(False)
-                fig3.tight_layout()
+                fig3.tight_layout(pad=1.3)
                 _show_fig(fig3, f'params_{name}.png')
             else:  # Combined
                 fig3, ax3 = plt.subplots(figsize=(12, 4))
@@ -3446,7 +3471,7 @@ elif page == 'Compare Models':
                 for b in boundaries[:-1]:
                     ax3.axvline(b, color=_tc['text'], lw=0.5, alpha=0.3, ls='--')
                 _style_legend(ax3, fontsize=7)
-                fig3.tight_layout()
+                fig3.tight_layout(pad=1.3)
                 _show_fig(fig3, f'params_{name}.png')
 
 
@@ -4131,6 +4156,11 @@ is modelled.
     # 5. Run recovery (threaded, verbose)
     # ------------------------------------------------------------------
     st.subheader(f'{"5" if _default_mh else "4"}. Run recovery')
+    st.info(
+        'Model-recovery fits run inside the Streamlit session and may be '
+        'slower than the same code on your local machine. Treat this page as '
+        'an interactive sanity check for the recovery workflow.',
+    )
 
     # Session-state setup
     if 'rec_running' not in st.session_state:
@@ -4141,6 +4171,15 @@ is modelled.
         st.session_state['rec_log'] = []
     if 'rec_error' not in st.session_state:
         st.session_state['rec_error'] = None
+    if 'rec_progress' not in st.session_state:
+        st.session_state['rec_progress'] = {
+            'cycle': 0,
+            'map_iter': 0,
+            'log_evd': '—',
+            'best': '—',
+            'map_loss': '—',
+            'status': 'Preparing…',
+        }
 
     # Dual-fit comparison: only meaningful when truth came from REINFORCE.
     if _rec_use_reinforce:
@@ -4172,8 +4211,22 @@ is modelled.
         st.session_state['rec_result']  = None
         st.session_state['rec_log']     = []
         st.session_state['rec_error']   = None
+        st.session_state['rec_progress'] = {
+            'cycle': 0,
+            'map_iter': 0,
+            'log_evd': '—',
+            'best': '—',
+            'map_loss': '—',
+            'status': 'Preparing…',
+        }
 
         _rec_q = queue.Queue()
+        _rec_cancel_event = threading.Event()
+        st.session_state['_rec_cancel_event'] = _rec_cancel_event
+        _rec_latest_partial = {'result': None}
+
+        class _RecStopped(Exception):
+            pass
 
         class _RecQueueTqdm:
             def __init__(self, *a, **kw):
@@ -4182,17 +4235,27 @@ is modelled.
                 self._n += n; self._map_n = 0
                 self._postfix.pop('MAP loss', None)
                 _rec_q.put(('progress', self._n, self._map_n, dict(self._postfix)))
+                if _rec_cancel_event.is_set():
+                    raise _RecStopped()
             def set_postfix(self, d, **kwargs):
                 self._postfix.update(d)
                 if 'MAP loss' in d:
                     self._map_n += 1
                 _rec_q.put(('progress', self._n, self._map_n, dict(self._postfix)))
+                if _rec_cancel_event.is_set():
+                    raise _RecStopped()
             def close(self): pass
             def __enter__(self): return self
             def __exit__(self, *a): pass
 
         def _rec_status_cb(payload):
+            partial = payload.pop('partial_result', None)
+            if partial is not None:
+                _rec_latest_partial['result'] = partial
+                _rec_q.put(('partial', partial))
             _rec_q.put(('status', payload))
+            if _rec_cancel_event.is_set():
+                raise _RecStopped()
 
         _rec_orig_tqdm = _rec_hyper_opt_mod.tqdm
         _rec_hyper_opt_mod.tqdm = _RecQueueTqdm
@@ -4229,6 +4292,37 @@ is modelled.
                      for n in _rec_bundle['PARAM_NAMES']], dtype=float),
             }
         )
+        _rec_context = {
+            'data': None,
+            'true_params': None,
+            'simulate_time': 0.0,
+            'fit_start': None,
+            'primary_label': 'recovered',
+            'primary_result': None,
+        }
+
+        def _partial_recovery_result(partial):
+            if partial is None or _rec_context['data'] is None:
+                raise _RecStopped('No completed EB cycle is available yet.')
+            result = dict(partial)
+            result['param_names'] = list(_bundle_local['PARAM_NAMES'])
+            result['true_params'] = _rec_context['true_params']
+            result['true_model_hyper'] = _true_mh_local
+            result['simulated_data'] = _rec_context['data']
+            result['simulate_time'] = _rec_context['simulate_time']
+            if _rec_context['fit_start'] is not None:
+                result['fit_time'] = _rec_time.time() - _rec_context['fit_start']
+            result['model_family'] = _bundle_local['family']
+            result['traj_method'] = 'reinforce' if _use_reinforce_local else 'slider'
+            result['fit_label'] = _rec_context['primary_label']
+            result['stopped_early'] = True
+            result['input_modes'] = {
+                k: spec.get('mode', 'discrete')
+                for k, spec in _value_pools_local.items()
+            }
+            if _use_reinforce_local:
+                result['reinforce_cfg'] = _reinforce_cfg_local
+            return result
 
         def _run_recovery():
             try:
@@ -4271,6 +4365,9 @@ is modelled.
                     )
                     _true_params_run = _true_params_local
                 t_sim = _rec_time.time() - t0
+                _rec_context['data'] = data
+                _rec_context['true_params'] = _true_params_run
+                _rec_context['simulate_time'] = t_sim
                 _rec_status_cb({'message': f'Simulated in {t_sim:.1f}s — running EB fit…',
                                 'stage': 'fit_start'})
 
@@ -4312,11 +4409,14 @@ is modelled.
                     primary_label = 'REINFORCE prior'
                 else:
                     primary_label = 'zero-centred prior'
+                _rec_context['primary_label'] = primary_label
 
                 t0 = _rec_time.time()
+                _rec_context['fit_start'] = t0
                 result = psytrax.fit(**primary_kwargs)
                 t_fit = _rec_time.time() - t0
                 result['fit_label']        = primary_label
+                _rec_context['primary_result'] = result
 
                 # Optional companion fit with the opposite prior.
                 companion = None
@@ -4354,6 +4454,13 @@ is modelled.
                 }
 
                 _rec_q.put(('done', result))
+            except _RecStopped:
+                try:
+                    _rec_q.put(('cancelled', _partial_recovery_result(
+                        _rec_context.get('primary_result') or _rec_latest_partial['result'],
+                    )))
+                except _RecStopped as exc:
+                    _rec_q.put(('error', str(exc)))
             except Exception:
                 import traceback
                 _rec_q.put(('error', traceback.format_exc()))
@@ -4364,13 +4471,22 @@ is modelled.
         _t.start()
         st.session_state['_rec_thread'] = _t
         st.session_state['_rec_queue']  = _rec_q
+        st.rerun()
 
     # Stream progress while the thread is alive ----------------------
     if st.session_state['rec_running']:
         _rec_q  = st.session_state['_rec_queue']
         _t      = st.session_state['_rec_thread']
+        _rec_cancel_event = st.session_state.get('_rec_cancel_event')
 
         st.markdown('**Recovery in progress…** &nbsp; `simulate → fit`')
+        if st.button('Stop recovery and show best-so-far result',
+                     key='rec_stop_btn',
+                     disabled=bool(_rec_cancel_event and _rec_cancel_event.is_set())):
+            if _rec_cancel_event is not None:
+                _rec_cancel_event.set()
+            st.warning('Stop requested. The current MAP/EB step will finish or yield at the next progress checkpoint.')
+
         col_cyc, col_map = st.columns(2)
         cycle_text   = col_cyc.empty()
         map_text     = col_map.empty()
@@ -4378,57 +4494,59 @@ is modelled.
         log_evd_text = st.empty()
         log_box      = st.empty()
 
-        cycle, map_iter = 0, 0
-        log_evd_str, best_str, map_loss_str = '—', '—', '—'
-        current_status = 'Preparing…'
+        progress = dict(st.session_state.get('rec_progress', {}))
         rec_log = st.session_state.get('rec_log', [])
+        terminal = None
 
-        while _t.is_alive():
-            while not _rec_q.empty():
-                try:
-                    msg = _rec_q.get_nowait()
-                    if msg[0] == 'progress':
-                        _, cycle, map_iter, postfix = msg
-                        log_evd_str  = postfix.get('log_evd',  log_evd_str)
-                        best_str     = postfix.get('best',     best_str)
-                        map_loss_str = postfix.get('MAP loss', map_loss_str)
-                    elif msg[0] == 'status':
-                        payload = msg[1]
-                        current_status = payload.get('message', current_status)
-                        rec_log.append(current_status)
-                        rec_log = rec_log[-12:]
-                        st.session_state['rec_log'] = rec_log
-                except queue.Empty:
-                    break
-            cycle_text.metric('Cycles completed', cycle)
-            map_text.metric('MAP iters (current cycle)', map_iter)
-            status_text.markdown(f'**Current step:** {current_status}')
-            log_evd_text.markdown(
-                f'Log evidence (higher is better) — current: **{log_evd_str}** &nbsp;|&nbsp; '
-                f'best: **{best_str}**'
-                + (f' &nbsp;|&nbsp; Neg log-posterior (lower is better): **{map_loss_str}**'
-                   if map_loss_str != '—' else '')
-            )
-            if rec_log:
-                log_box.code('\n'.join(rec_log), language='text')
-            _rec_time.sleep(0.5)
-
-        # Drain the queue once the thread finishes
-        msg_type, payload = 'error', 'No result received from recovery thread.'
         while not _rec_q.empty():
             try:
-                m = _rec_q.get_nowait()
-                if m[0] in ('done', 'error'):
-                    msg_type, payload = m[0], m[1]
+                msg = _rec_q.get_nowait()
+                if msg[0] == 'progress':
+                    _, cycle, map_iter, postfix = msg
+                    progress['cycle'] = cycle
+                    progress['map_iter'] = map_iter
+                    progress['log_evd'] = postfix.get('log_evd', progress.get('log_evd', '—'))
+                    progress['best'] = postfix.get('best', progress.get('best', '—'))
+                    progress['map_loss'] = postfix.get('MAP loss', progress.get('map_loss', '—'))
+                elif msg[0] == 'status':
+                    payload = msg[1]
+                    progress['status'] = payload.get('message', progress.get('status', 'Preparing…'))
+                    rec_log.append(progress['status'])
+                    rec_log = rec_log[-12:]
+                elif msg[0] in ('done', 'cancelled', 'error'):
+                    terminal = msg
             except queue.Empty:
                 break
 
-        st.session_state['rec_running'] = False
-        if msg_type == 'done':
-            st.session_state['rec_result'] = payload
-        else:
-            st.session_state['rec_error']  = payload
-            st.error(f'Recovery failed:\n```\n{payload}\n```')
+        st.session_state['rec_progress'] = progress
+        st.session_state['rec_log'] = rec_log
+        cycle_text.metric('Cycles completed', progress.get('cycle', 0))
+        map_text.metric('MAP iters (current cycle)', progress.get('map_iter', 0))
+        status_text.markdown(f'**Current step:** {progress.get("status", "Preparing…")}')
+        log_evd_text.markdown(
+            f'Log evidence (higher is better) — current: **{progress.get("log_evd", "—")}** &nbsp;|&nbsp; '
+            f'best: **{progress.get("best", "—")}**'
+            + (f' &nbsp;|&nbsp; Neg log-posterior (lower is better): **{progress.get("map_loss")}**'
+               if progress.get('map_loss', '—') != '—' else '')
+        )
+        if rec_log:
+            log_box.code('\n'.join(rec_log), language='text')
+
+        if terminal is not None or not _t.is_alive():
+            if terminal is None:
+                terminal = ('error', 'No result received from recovery thread.')
+            msg_type, payload = terminal[0], terminal[1]
+            st.session_state['rec_running'] = False
+            if msg_type in ('done', 'cancelled'):
+                st.session_state['rec_result'] = payload
+                st.session_state['rec_error'] = None
+            else:
+                st.session_state['rec_error'] = payload
+                st.error(f'Recovery failed:\n```\n{payload}\n```')
+            st.rerun()
+
+        _rec_time.sleep(0.5)
+        st.rerun()
 
     # --- Download button (visible as soon as a fit has finished) -------
     _rec_result_for_dl = st.session_state.get('rec_result')
@@ -4451,12 +4569,17 @@ is modelled.
     # ------------------------------------------------------------------
     result_rec = st.session_state.get('rec_result')
     if result_rec is not None:
-        st.success(
-            f'Done — simulated **{result_rec["params"].shape[1]}** trials in '
+        _rec_done_msg = (
+            f'{"Stopped early — showing best-so-far result" if result_rec.get("stopped_early") else "Done"} '
+            f'— simulated **{result_rec["params"].shape[1]}** trials in '
             f'{result_rec.get("simulate_time", 0):.1f}s, '
             f'fit in {result_rec.get("fit_time", 0):.1f}s.  '
             f'Log evidence: {result_rec["log_evidence"]:.2f}.'
         )
+        if result_rec.get('stopped_early'):
+            st.warning(_rec_done_msg)
+        else:
+            st.success(_rec_done_msg)
 
         # --- Recovered model_hyper -------------------------------------
         rec_mh  = result_rec.get('model_hyper') or {}
@@ -4546,7 +4669,7 @@ is modelled.
             ax.set_visible(False)
         fig_rec.suptitle('Parameter recovery: true vs recovered',
                          color=_tc['text'], fontsize=12)
-        fig_rec.tight_layout()
+        fig_rec.tight_layout(rect=[0, 0, 1, 0.96], pad=1.3)
         _show_fig(fig_rec, 'recovery_overlay.png')
 
         # Log-evidence comparison block (only when both fits ran).

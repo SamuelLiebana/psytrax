@@ -62,7 +62,7 @@ _INVALID_LOG_LIK = -1e12
 
 # Default initial value for the within-trial accumulator noise (used as the
 # starting point for the EB outer loop unless the caller overrides it).
-DEFAULT_SIG_I = 0.1
+DEFAULT_SIG_I = 0.01
 # Default initial value for the dopamine observation noise (only used when
 # fitting the optional dopamine likelihood term).
 DEFAULT_SIG_DA = 0.2

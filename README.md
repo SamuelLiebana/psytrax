@@ -123,7 +123,7 @@ model's within-trial accumulator noise `sig_i`. Expose them via
 
 ```python
 def default_model_hyper():
-    return {'sig_i': 0.1}   # starting point for Empirical Bayes
+    return {'sig_i': 0.01}  # starting point for Empirical Bayes
 
 def log_lik_trial(params, dat_trial, model_hyper):
     sig_i = model_hyper['sig_i']
@@ -281,15 +281,33 @@ For most users, `device='auto'` is the recommended default.
 
 ## Performance
 
-Wall-clock fitting times on Apple M4 CPU (JAX L-BFGS, float64), measured on bundled example mice spanning lower and higher trial counts. Times include warm-start, hyperparameter optimisation, and Hessian computation.
+Wall-clock fitting times on Apple M4 CPU (JAX L-BFGS, float64), measured on the bundled dopamine example mice. Times include warm-start, MAP/EB cycles, joint choice + RT + dopamine likelihood, session-boundary process noise, and trajectory credible bands (`hess_calc='weights'`).
 
-| Model | **DAP044** (520) | **DAP027** (2,535) | **DAP009** (5,289) | **DAP011** (5,681) | **DAP031** (7,836) | **DAP007** (11,411) |
-|---|---|---|---|---|---|---|
-| Logistic (K=2) | 2.1s | 10.8s | 10.3s | 23.0s | 19.1s | 20.3s |
-| DDM approx (K=3) | 5.3s | 11.1s | 28.4s | 45.6s | 40.5s | 35.8s |
-| Race fixed sig_i (K=5) | 12.6s | 28.2s | 13.9s | 76.9s | 72.8s | 101.2s |
+| Mouse | Trials | Time |
+|---|---:|---:|
+| DAP044 | 407 | 0.77 min (46s) |
+| DAP048 | 2,580 | 1.15 min (69s) |
+| DAP110 | 2,583 | 1.19 min (71s) |
+| DAP039 | 3,162 | 0.84 min (50s) |
+| DAP014 | 3,213 | 1.40 min (84s) |
+| DAP027 | 3,693 | 1.56 min (94s) |
+| DAP033 | 4,019 | 1.67 min (100s) |
+| DAP013 | 4,413 | 1.73 min (104s) |
+| DAP009 | 4,885 | 1.44 min (86s) |
+| DAP023 | 4,911 | 1.57 min (94s) |
+| DAP017 | 5,078 | 1.78 min (107s) |
+| DAP011 | 5,413 | 0.83 min (50s) |
+| DAP015 | 5,989 | 1.65 min (99s) |
+| DAP051 | 6,170 | 1.88 min (113s) |
+| DAP156 | 6,371 | 2.08 min (125s) |
+| DAP022 | 6,548 | 1.92 min (115s) |
+| DAP046 | 7,796 | 3.25 min (195s) |
+| DAP050 | 8,173 | 0.85 min (51s) |
+| DAP028 | 8,408 | 3.26 min (196s) |
+| DAP024 | 9,602 | 3.20 min (192s) |
+| DAP007 | 12,018 | 3.99 min (239s) |
 
-These timings are intentionally based on real datasets rather than synthetic sweeps, so they are not perfectly monotonic in trial count. Fit time depends not just on `N`, but also on how many hyperparameter cycles the data trigger before the log-evidence stops improving.
+Across all 21 bundled dopamine example mice, the median fit time was 1.65 min and the range was 0.77-3.99 min. These timings are intentionally based on real datasets rather than synthetic sweeps, so they are not perfectly monotonic in trial count. Fit time depends not just on `N`, but also on how many hyperparameter cycles the data trigger before the log-evidence stops improving.
 
 NVIDIA CUDA (float64) is expected to give a further **3–8× speedup** for models with K ≥ 3, since the per-trial likelihood and the entire MAP loop run on-device via `jax.vmap`.
 

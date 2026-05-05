@@ -38,5 +38,6 @@ def test_rt_models_return_finite_penalty_for_invalid_times_and_thresholds():
 def test_race_dopamine_default_model_hyper_starts_near_fitted_region():
     model_hyper = default_model_hyper_with_dopamine()
 
+    assert model_hyper["sig_i"] == 0.01
     assert model_hyper["da_beta"] == 2.0
     assert model_hyper["da_offset"] == 1.4
