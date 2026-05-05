@@ -440,9 +440,10 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
 
     if traj_mode == 'Separate' and is_race:
         idx = {n: i for i, n in enumerate(param_names)}
-        fig = plt.figure(figsize=(11, 10), constrained_layout=True)
+        fig = plt.figure(figsize=(12, 7.6))
         _tc = _style_fig(fig)
-        gs = fig.add_gridspec(3, 4, hspace=0.65, wspace=0.28)
+        gs = fig.add_gridspec(3, 4, hspace=0.38, wspace=0.16)
+        fig.subplots_adjust(left=0.06, right=0.985, top=0.96, bottom=0.075)
         ax_wr = fig.add_subplot(gs[0, 0:2])
         ax_wl = fig.add_subplot(gs[0, 2:4], sharey=ax_wr)
         ax_br = fig.add_subplot(gs[1, 0:2])
@@ -451,7 +452,7 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
 
         def _draw(ax, name, idx_in_palette, hide_y=False):
             col = _TRAJ_COLORS[idx_in_palette % len(_TRAJ_COLORS)]
-            _style_ax(ax, xlabel='Trial', title=name, title_pad=10)
+            _style_ax(ax, xlabel='Trial', title=name, title_pad=5)
             i = idx[name]
             ax.plot(trials, params[i], color=col, lw=0.8, alpha=0.9)
             if W_std is not None:
