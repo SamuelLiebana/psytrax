@@ -89,7 +89,7 @@ def _style_legend(ax, **kwargs):
     )
 
 
-def _style_ax(ax, xlabel=None, ylabel=None, title=None):
+def _style_ax(ax, xlabel=None, ylabel=None, title=None, title_pad=None):
     ax.set_facecolor(_PLOT_COLOURS['bg'])
     ax.tick_params(colors=_PLOT_COLOURS['text'])
     for spine in ax.spines.values():
@@ -99,7 +99,10 @@ def _style_ax(ax, xlabel=None, ylabel=None, title=None):
     if ylabel:
         ax.set_ylabel(ylabel, color=_PLOT_COLOURS['text'])
     if title:
-        ax.set_title(title, color=_PLOT_COLOURS['text'])
+        kwargs = {}
+        if title_pad is not None:
+            kwargs['pad'] = title_pad
+        ax.set_title(title, color=_PLOT_COLOURS['text'], **kwargs)
 
 
 def _show_fig(fig, filename='figure.png', dpi=200):
@@ -454,8 +457,7 @@ def _render_parameter_trajectories(result, *, key_suffix=''):
 
         def _draw(ax, name, idx_in_palette, hide_y=False):
             col = _TRAJ_COLORS[idx_in_palette % len(_TRAJ_COLORS)]
-            _style_ax(ax, xlabel='Trial', title=name)
-            ax.title.set_pad(10)
+            _style_ax(ax, xlabel='Trial', title=name, title_pad=10)
             i = idx[name]
             ax.plot(trials, params[i], color=col, lw=0.8, alpha=0.9)
             if W_std is not None:
