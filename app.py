@@ -597,19 +597,27 @@ def _render_gw_publication_figures(result):
         ax_b.spines['right'].set_visible(False)
         ax_b.spines['top'].set_visible(False)
 
-        # Two legends: (1) line-style key, (2) per-parameter colour key.
+        # Two legends, stacked one above the other BELOW the plot so they
+        # never cover the data points.
         from matplotlib.lines import Line2D
         style_handles = [l_sim_b, l_rec_b]
         style_labels  = ['simulated', r'recovered ($\sigma$)']
         if has_sigDay and l_rec_b_day is not None:
             style_handles.append(l_rec_b_day)
             style_labels.append(r'recovered ($\sigma_{\mathrm{day}}$)')
+
+        # Reserve room at the bottom for the two legends; without this
+        # tight_layout would clip them.
+        fig_b.subplots_adjust(left=0.22, right=0.96, top=0.97, bottom=0.18)
+
         leg_style = ax_b.legend(
             style_handles, style_labels,
-            prop={'size': 22}, loc='upper right', frameon=True,
+            prop={'size': 22},
+            loc='upper center',
+            bbox_to_anchor=(0.5, -0.04),
+            ncol=len(style_handles),
+            frameon=True,
         )
-        # Parameter-colour key (filled circle per parameter) in a second
-        # legend pinned to a different corner so it can't collide.
         colour_handles = [
             Line2D([0], [0], marker='o', color='none', markerfacecolor=c,
                    markeredgecolor='black', markeredgewidth=0.8,
@@ -618,12 +626,18 @@ def _render_gw_publication_figures(result):
         ]
         ax_b.legend(
             colour_handles, names,
-            prop={'size': 22}, loc='lower right', frameon=True,
-            title='Parameter', title_fontsize=22,
+            prop={'size': 22},
+            loc='upper center',
+            bbox_to_anchor=(0.5, -0.10),
+            ncol=K,
+            frameon=True,
+            title='Parameter',
+            title_fontsize=22,
         )
         ax_b.add_artist(leg_style)
 
-        fig_b.tight_layout()
+        # Don't call tight_layout — it would override our subplots_adjust
+        # and re-clip the legends back inside the figure.
         _show_fig(fig_b, 'recovery_publication_sigma.png')
     else:
         st.caption(':grey[Hyperparameter recovery figure skipped — fit did not '
@@ -5029,6 +5043,12 @@ is modelled.
         first_legend_done = False
         for k, ax, name, hide_y in iter_axes:
             _style_ax(ax, xlabel='Trial', title=name)
+            # Larger fonts on the per-panel labels & ticks so the figure
+            # reads well even at small render sizes.
+            ax.title.set_fontsize(22)
+            ax.xaxis.label.set_fontsize(18)
+            ax.yaxis.label.set_fontsize(18)
+            ax.tick_params(labelsize=15)
             ax.plot(trials_rec, true_params_r[k], color='#000000', lw=1.5, label='true')
             ax.plot(trials_rec, recovered[k], color='#4e9af1', lw=1.0,
                     label=primary_label)
@@ -5055,7 +5075,7 @@ is modelled.
             if hide_y:
                 plt.setp(ax.get_yticklabels(), visible=False)
             if not first_legend_done:
-                _style_legend(ax)
+                _style_legend(ax, fontsize=15)
                 first_legend_done = True
             mae = float(np.mean(np.abs(recovered[k] - true_params_r[k])))
             if np.std(true_params_r[k]) > 0 and np.std(recovered[k]) > 0:
@@ -5081,9 +5101,9 @@ is modelled.
             for ax in axes_rec.flat[K_r:]:
                 ax.set_visible(False)
         fig_rec.suptitle('Parameter recovery: true vs recovered',
-                         color=_tc['text'], fontsize=12)
+                         color=_tc['text'], fontsize=24)
         if not is_race_recov:
-            fig_rec.tight_layout(rect=[0, 0, 1, 0.96], pad=1.3)
+            fig_rec.tight_layout(rect=[0, 0, 1, 0.94], pad=1.3)
         _show_fig(fig_rec, 'recovery_overlay.png')
 
         # Log-evidence comparison block (only when both fits ran).
