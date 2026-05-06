@@ -119,7 +119,7 @@ def _show_fig(fig, filename='figure.png', dpi=200):
     buf.seek(0)
     png_bytes = buf.getvalue()
 
-    st.image(png_bytes, use_container_width=True)
+    st.image(png_bytes, width='stretch')
     st.download_button(
         label=f'Download {filename}',
         data=png_bytes,
@@ -930,14 +930,14 @@ handles all the inference machinery.
     st.caption('Example output from the bundled DAP014 race-model fit.')
     if all(os.path.exists(path) for path in (_DAP014_TRAJ, _DAP014_PSY, _DAP014_CHRONO)):
         st.image(_DAP014_TRAJ, caption='Parameter trajectories recovered across learning',
-                 use_container_width=True)
+                 width='stretch')
         col1, col2 = st.columns(2)
         with col1:
             st.image(_DAP014_PSY, caption='Psychometric evolution over learning',
-                     use_container_width=True)
+                     width='stretch')
         with col2:
             st.image(_DAP014_CHRONO, caption='Chronometric evolution over learning',
-                     use_container_width=True)
+                     width='stretch')
     else:
         st.info('Documentation example figures are missing from this checkout.')
 
@@ -1260,7 +1260,7 @@ columns to the required fields.
     if data_source == 'Upload my own file' and data_file.name.endswith('.csv'):
         _csv_df = pd.read_csv(data_file)
         raw = None  # will be built after model selection + column mapping
-        st.dataframe(_csv_df.head(5), use_container_width=True)
+        st.dataframe(_csv_df.head(5), width='stretch')
         st.caption(f'{len(_csv_df)} rows × {len(_csv_df.columns)} columns.  '
                    'Column mapping will appear after you choose a model below.')
     elif data_source == 'Upload my own file':
@@ -2067,7 +2067,7 @@ def learning_rule(params, dat_trial):
                 })
             st.markdown('**Optimised model-level hyperparameters**')
             st.dataframe(pd.DataFrame(mh_rows).set_index('hyperparameter'),
-                         use_container_width=True)
+                         width='stretch')
 
         with open(path, 'rb') as f:
             st.download_button(
@@ -2308,7 +2308,7 @@ elif page == 'IBL Explorer':
     _sess_df = pd.DataFrame(_filtered)
     st.dataframe(
         _sess_df[['date', 'number', 'lab', 'task_protocol', 'eid']],
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
     )
 
@@ -2566,7 +2566,7 @@ elif page == 'IBL Explorer':
             'RT (s)': raw['times'][:_n_preview] if _has_rt else [None] * _n_preview,
             'reward': raw['inputs'].get('reward', np.full(_n_preview, np.nan))[:_n_preview],
             'p_left': raw['inputs'].get('p_left', np.full(_n_preview, np.nan))[:_n_preview],
-        }), use_container_width=True, hide_index=True)
+        }), width='stretch', hide_index=True)
 
     st.divider()
 
@@ -3014,7 +3014,7 @@ elif page == 'IBL Explorer':
                 _hv = np.atleast_1d(_hv)
                 _hyp_rows[_hk] = {name: f'{np.log2(v):.2f}' for name, v in zip(_ipn, _hv)}
         if _hyp_rows:
-            st.dataframe(pd.DataFrame(_hyp_rows).T, use_container_width=True)
+            st.dataframe(pd.DataFrame(_hyp_rows).T, width='stretch')
 
 # ---------------------------------------------------------------------------
 # Visualise Results
@@ -3298,7 +3298,7 @@ elif page == 'Visualise Results':
                 })
             hyper_rows.append(row)
     if hyper_rows:
-        st.dataframe(pd.DataFrame(hyper_rows).set_index('hyperparameter'), use_container_width=True)
+        st.dataframe(pd.DataFrame(hyper_rows).set_index('hyperparameter'), width='stretch')
 
     # --- Hyperparameter credible intervals (Laplace, log₂ scale) ---
     _hyp_std = (result.get('hess_info') or {}).get('hyp_std')
@@ -3346,7 +3346,7 @@ elif page == 'Visualise Results':
                 'sat at a bound or was confounded with another).'
             )
             st.dataframe(pd.DataFrame(_ci_rows).set_index('hyperparameter'),
-                         use_container_width=True)
+                         width='stretch')
     elif (result.get('hess_info') or {}).get('hyp_std_error'):
         st.caption(
             f'Hyperparameter credible intervals could not be computed: '
@@ -3363,7 +3363,7 @@ elif page == 'Visualise Results':
             pd.DataFrame(
                 [{'hyperparameter': k, 'value': float(v)} for k, v in _model_hyper.items()]
             ).set_index('hyperparameter'),
-            use_container_width=True,
+            width='stretch',
         )
 
 # ---------------------------------------------------------------------------
@@ -3444,7 +3444,7 @@ elif page == 'Compare Models':
             'Log evidence':  f"{res['log_evidence']:.2f}",
             'Duration':      str(res['duration']).split('.')[0],
         })
-    st.dataframe(pd.DataFrame(rows).set_index('Model'), use_container_width=True)
+    st.dataframe(pd.DataFrame(rows).set_index('Model'), width='stretch')
 
     # --- Psychometric & chronometric evolution per model ---
     first_res = next(iter(results.values()))
@@ -4332,7 +4332,7 @@ is modelled.
             _mini_ax.axhline(lo, color='#cc4444', lw=0.6, ls=':', alpha=0.6)
             _mini_ax.axhline(hi, color='#cc4444', lw=0.6, ls=':', alpha=0.6)
             _mini_fig.tight_layout()
-            st.pyplot(_mini_fig, use_container_width=True)
+            st.pyplot(_mini_fig, width='stretch')
             plt.close(_mini_fig)
 
     # Build the truth trajectory matrix when in slider-driven mode.  In
@@ -5071,7 +5071,7 @@ is modelled.
         st.subheader('Per-parameter recovery quality')
         st.dataframe(
             pd.DataFrame(per_param_summary).set_index('parameter').round(4),
-            use_container_width=True,
+            width='stretch',
         )
 
         # --- Behavioural recovery: 4-quartile psychometric & chronometric ----
