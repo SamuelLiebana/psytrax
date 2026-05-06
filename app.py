@@ -597,8 +597,8 @@ def _render_gw_publication_figures(result):
         ax_b.spines['right'].set_visible(False)
         ax_b.spines['top'].set_visible(False)
 
-        # Two legends, stacked one above the other BELOW the plot so they
-        # never cover the data points.
+        # Two legends stacked vertically OUTSIDE the plot on the right, so
+        # they never cover the data points.
         from matplotlib.lines import Line2D
         style_handles = [l_sim_b, l_rec_b]
         style_labels  = ['simulated', r'recovered ($\sigma$)']
@@ -606,17 +606,18 @@ def _render_gw_publication_figures(result):
             style_handles.append(l_rec_b_day)
             style_labels.append(r'recovered ($\sigma_{\mathrm{day}}$)')
 
-        # Reserve room at the bottom for the two legends; without this
-        # tight_layout would clip them.
-        fig_b.subplots_adjust(left=0.22, right=0.96, top=0.97, bottom=0.18)
+        # Shrink the axes column to leave ~35 % of the figure width for
+        # the right-side legend stack.  tight_layout is skipped on
+        # purpose — it would override these margins and re-clip the
+        # external legends back inside the figure.
+        fig_b.subplots_adjust(left=0.22, right=0.62, top=0.97, bottom=0.05)
 
         leg_style = ax_b.legend(
             style_handles, style_labels,
             prop={'size': 22},
-            loc='upper center',
-            bbox_to_anchor=(0.5, -0.04),
-            ncol=len(style_handles),
-            frameon=True,
+            loc='upper left',
+            bbox_to_anchor=(1.04, 1.0),
+            ncol=1, frameon=True,
         )
         colour_handles = [
             Line2D([0], [0], marker='o', color='none', markerfacecolor=c,
@@ -627,17 +628,14 @@ def _render_gw_publication_figures(result):
         ax_b.legend(
             colour_handles, names,
             prop={'size': 22},
-            loc='upper center',
-            bbox_to_anchor=(0.5, -0.10),
-            ncol=K,
-            frameon=True,
+            loc='upper left',
+            bbox_to_anchor=(1.04, 0.65),
+            ncol=1, frameon=True,
             title='Parameter',
             title_fontsize=22,
         )
         ax_b.add_artist(leg_style)
 
-        # Don't call tight_layout — it would override our subplots_adjust
-        # and re-clip the legends back inside the figure.
         _show_fig(fig_b, 'recovery_publication_sigma.png')
     else:
         st.caption(':grey[Hyperparameter recovery figure skipped — fit did not '
@@ -5015,14 +5013,20 @@ is modelled.
             ax_bl = fig_rec.add_subplot(gs[1, 0:2])
             ax_br = fig_rec.add_subplot(gs[1, 2:4], sharey=ax_bl)
             ax_z  = fig_rec.add_subplot(gs[2, 1:3])
+            # Tuple = (param name, ax, hide y-tick labels, show 'Trial' xlabel).
+            # In the race-grid layout only the bottom row (z) needs the
+            # x-axis label since the upper four panels share the same
+            # trial axis.
             _race_axes = [
-                ('wl', ax_wl, False), ('wr', ax_wr, True),
-                ('bl', ax_bl, False), ('br', ax_br, True),
-                ('z',  ax_z,  False),
+                ('wl', ax_wl, False, False),
+                ('wr', ax_wr, True,  False),
+                ('bl', ax_bl, False, False),
+                ('br', ax_br, True,  False),
+                ('z',  ax_z,  False, True),
             ]
             iter_axes = (
-                (idx_map[name], ax, name, hide_y)
-                for name, ax, hide_y in _race_axes
+                (idx_map[name], ax, name, hide_y, show_xlabel)
+                for name, ax, hide_y, show_xlabel in _race_axes
             )
             for_axes_postloop = [ax_wr, ax_br]   # right-column shared-y axes
         else:
@@ -5033,7 +5037,7 @@ is modelled.
                                              squeeze=False)
             _tc = _style_fig(fig_rec)
             iter_axes = (
-                (k, ax, name, False)
+                (k, ax, name, False, True)
                 for k, (ax, name) in enumerate(zip(axes_rec.flat,
                                                    param_names_r))
             )
@@ -5041,12 +5045,15 @@ is modelled.
 
         per_param_summary = []
         first_legend_done = False
-        for k, ax, name, hide_y in iter_axes:
-            _style_ax(ax, xlabel='Trial', title=name)
+        for k, ax, name, hide_y, show_xlabel in iter_axes:
+            _style_ax(ax,
+                      xlabel='Trial' if show_xlabel else None,
+                      title=name)
             # Larger fonts on the per-panel labels & ticks so the figure
             # reads well even at small render sizes.
             ax.title.set_fontsize(22)
-            ax.xaxis.label.set_fontsize(18)
+            if show_xlabel:
+                ax.xaxis.label.set_fontsize(18)
             ax.yaxis.label.set_fontsize(18)
             ax.tick_params(labelsize=15)
             ax.plot(trials_rec, true_params_r[k], color='#000000', lw=1.5, label='true')
@@ -5100,10 +5107,7 @@ is modelled.
         if not is_race_recov:
             for ax in axes_rec.flat[K_r:]:
                 ax.set_visible(False)
-        fig_rec.suptitle('Parameter recovery: true vs recovered',
-                         color=_tc['text'], fontsize=24)
-        if not is_race_recov:
-            fig_rec.tight_layout(rect=[0, 0, 1, 0.94], pad=1.3)
+            fig_rec.tight_layout(pad=1.3)
         _show_fig(fig_rec, 'recovery_overlay.png')
 
         # Log-evidence comparison block (only when both fits ran).
