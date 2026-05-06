@@ -456,9 +456,9 @@ def _render_gw_publication_figures(result):
     fig_a, ax_a = plt.subplots(figsize=(13, 4.5))
     _style_fig(fig_a)
     _style_ax(ax_a, xlabel='# Trials', ylabel='Parameters')
-    ax_a.xaxis.label.set_fontsize(16)
-    ax_a.yaxis.label.set_fontsize(16)
-    ax_a.tick_params(labelsize=13)
+    ax_a.xaxis.label.set_fontsize(32)
+    ax_a.yaxis.label.set_fontsize(32)
+    ax_a.tick_params(labelsize=26)
     handles_named, l_sim, l_rec = [], None, None
     for i, name in enumerate(names):
         z_order = 2 * i
@@ -481,11 +481,11 @@ def _render_gw_publication_figures(result):
     for bx in boundary_xs:
         ax_a.axvline(int(bx), color='black', lw=0.6, alpha=0.6, zorder=10)
     leg_names  = ax_a.legend(handles=handles_named, loc='upper left',
-                             prop={'size': 13})
+                             prop={'size': 26})
     if l_sim is not None and l_rec is not None:
         ax_a.legend(handles=[l_sim, l_rec],
                     labels=['simulated', 'recovered'],
-                    loc='upper center', prop={'size': 13})
+                    loc='upper center', prop={'size': 26})
         ax_a.add_artist(leg_names)
     ax_a.spines['right'].set_visible(False)
     ax_a.spines['top'].set_visible(False)
@@ -540,44 +540,44 @@ def _render_gw_publication_figures(result):
         recovered_log2 = np.log2(rec_sigma)
 
         # Horizontal layout: log₂(σ) on the x-axis, parameter labels on
-        # the y-axis. With sig_day, the y-axis pairs each σ with its
-        # σ_day right above it.
+        # the y-axis.  Aspect ratio is 1:3 (height = 3× width) so the
+        # figure stands tall in the page.
         y_per_param = 2 if has_sigDay else 1
-        fig_b, ax_b = plt.subplots(
-            figsize=(8.5, 0.6 * K * y_per_param + 2.0)
-        )
+        _fig_w = 5.0
+        _fig_h = 3.0 * _fig_w
+        fig_b, ax_b = plt.subplots(figsize=(_fig_w, _fig_h))
         _style_fig(fig_b)
         _style_ax(ax_b, xlabel=r'$\log_2(\sigma)$')
-        ax_b.xaxis.label.set_fontsize(16)
-        ax_b.tick_params(labelsize=13)
+        ax_b.xaxis.label.set_fontsize(32)
+        ax_b.tick_params(labelsize=26)
         l_sim_b = l_rec_b = l_rec_b_day = None
         for i, name in enumerate(names):
             y_sigma = i * y_per_param
             l_sim_b, = ax_b.plot(
                 [true_log2_sigma[i]] * 2,
                 [y_sigma - 0.3, y_sigma + 0.3],
-                color='black', linestyle='-', lw=1.6, zorder=0,
+                color='black', linestyle='-', lw=3.2, zorder=0,
             )
             l_rec_b = ax_b.errorbar(
                 recovered_log2[i], [y_sigma],
                 xerr=(1.96 * sigma_std[i]
                       if np.isfinite(sigma_std[i]) else None),
-                c=colors[i], lw=1.4, marker='o', markersize=10,
-                markeredgecolor='black', markeredgewidth=0.6,
+                c=colors[i], lw=2.8, marker='o', markersize=20,
+                markeredgecolor='black', markeredgewidth=1.2,
             )
             if has_sigDay:
                 y_day = y_sigma + 1
                 ax_b.plot(
                     [true_log2_sigDay[i]] * 2,
                     [y_day - 0.3, y_day + 0.3],
-                    color='black', linestyle='-', lw=1.6, zorder=0,
+                    color='black', linestyle='-', lw=3.2, zorder=0,
                 )
                 l_rec_b_day = ax_b.errorbar(
                     recovered_log2_sigDay[i], [y_day],
                     xerr=(1.96 * sigDay_std[i]
                           if np.isfinite(sigDay_std[i]) else None),
-                    c=colors[i], lw=1.4, marker='s', markersize=10,
-                    markeredgecolor='black', markeredgewidth=0.6,
+                    c=colors[i], lw=2.8, marker='s', markersize=20,
+                    markeredgecolor='black', markeredgewidth=1.2,
                 )
 
         ax_b.set_yticks(np.arange(K * y_per_param))
@@ -586,10 +586,10 @@ def _render_gw_publication_figures(result):
             for n in names:
                 yticks.append(rf'$\sigma_{{{n}}}$')
                 yticks.append(rf'$\sigma_{{{n},\mathrm{{day}}}}$')
-            ax_b.set_yticklabels(yticks, fontsize=14)
+            ax_b.set_yticklabels(yticks, fontsize=28)
         else:
             ax_b.set_yticklabels(
-                [rf'$\sigma_{{{n}}}$' for n in names], fontsize=14,
+                [rf'$\sigma_{{{n}}}$' for n in names], fontsize=28,
             )
         # Earliest → highest on the y-axis is more natural to read.
         ax_b.invert_yaxis()
@@ -606,20 +606,20 @@ def _render_gw_publication_figures(result):
             style_labels.append(r'recovered ($\sigma_{\mathrm{day}}$)')
         leg_style = ax_b.legend(
             style_handles, style_labels,
-            prop={'size': 11}, loc='upper right', frameon=True,
+            prop={'size': 22}, loc='upper right', frameon=True,
         )
         # Parameter-colour key (filled circle per parameter) in a second
         # legend pinned to a different corner so it can't collide.
         colour_handles = [
             Line2D([0], [0], marker='o', color='none', markerfacecolor=c,
-                   markeredgecolor='black', markeredgewidth=0.4,
-                   markersize=10, lw=0)
+                   markeredgecolor='black', markeredgewidth=0.8,
+                   markersize=20, lw=0)
             for c in colors
         ]
         ax_b.legend(
             colour_handles, names,
-            prop={'size': 11}, loc='lower right', frameon=True,
-            title='Parameter', title_fontsize=11,
+            prop={'size': 22}, loc='lower right', frameon=True,
+            title='Parameter', title_fontsize=22,
         )
         ax_b.add_artist(leg_style)
 
