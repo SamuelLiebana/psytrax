@@ -433,6 +433,17 @@ def _render_gw_publication_figures(result):
               for i, n in enumerate(names)]
     trials = np.arange(N)
 
+    # Session boundaries (only drawn when > 1 session was simulated).
+    sim_data        = result.get('simulated_data') or {}
+    fit_data        = result.get('data') or {}
+    session_lengths = sim_data.get('session_lengths')
+    if session_lengths is None:
+        session_lengths = fit_data.get('dayLength')
+    boundary_xs = (np.cumsum(np.asarray(session_lengths, dtype=int))[:-1]
+                   if (session_lengths is not None
+                       and len(np.asarray(session_lengths)) > 1)
+                   else np.array([], dtype=int))
+
     st.subheader('Recovery figures')
     st.caption(
         'Figure (a) overlays simulated and recovered parameter trajectories '
@@ -464,6 +475,8 @@ def _render_gw_publication_figures(result):
             l_sim, l_rec = l_sim_h, l_rec_h
 
     ax_a.axhline(0, color='black', linestyle='--', lw=0.5, alpha=0.5, zorder=0)
+    for bx in boundary_xs:
+        ax_a.axvline(int(bx), color='black', lw=0.6, alpha=0.6, zorder=10)
     leg_names  = ax_a.legend(handles=handles_named, loc='upper left',
                              prop={'size': 10})
     if l_sim is not None and l_rec is not None:
@@ -4143,8 +4156,8 @@ is modelled.
         # baselines, near-stationary threshold, mirroring the values used
         # in the user's reference recovery scripts.
         _GW_LOG2_SIGMA_DEFAULTS = {
-            'race':      {'wr': -4.0, 'wl': -4.0, 'br': -5.0, 'bl': -5.0, 'z': -12.0},
-            'ddm_exact': {'w': -4.0, 'b': -5.0, 'a': -12.0},
+            'race':      {'wr': -4.0, 'wl': -4.0, 'br': -5.0, 'bl': -5.0, 'z': -10.0},
+            'ddm_exact': {'w': -4.0, 'b': -5.0, 'a': -10.0},
             'logistic':  None,
         }
         family_def = _GW_LOG2_SIGMA_DEFAULTS.get(_rec_bundle['family'])
@@ -4357,7 +4370,7 @@ is modelled.
         # Per-key slider caps.  Most race-model scalars (sig_i, sig_DA) are
         # within-trial noise and conventionally live well below 1.
         _MH_SLIDER_MAX = {
-            'sig_i':  1.0,
+            'sig_i':  0.5,
             'sig_DA': 1.0,
         }
         for _key, _val in _default_mh.items():
@@ -4922,6 +4935,20 @@ is modelled.
         trials_rec      = np.arange(N_r)
         is_race_recov   = set(param_names_r) >= {'wr', 'wl', 'br', 'bl', 'z'}
 
+        # Session boundaries for vertical-line annotations (only when the
+        # truth was simulated with > 1 session).
+        _sim_data        = result_rec.get('simulated_data') or {}
+        _fit_data        = result_rec.get('data') or {}
+        _session_lengths = _sim_data.get('session_lengths')
+        if _session_lengths is None:
+            _session_lengths = _fit_data.get('dayLength')
+        boundary_xs_rec  = (
+            np.cumsum(np.asarray(_session_lengths, dtype=int))[:-1]
+            if (_session_lengths is not None
+                and len(np.asarray(_session_lengths)) > 1)
+            else np.array([], dtype=int)
+        )
+
         # Same wl|wr / bl|br / z layout used by Visualise Results so the
         # two pages render identically for race fits.
         if is_race_recov:
@@ -4985,6 +5012,9 @@ is modelled.
                         recovered_alt[k] + W_std_alt[k],
                         color='#f1a44e', alpha=0.10,
                     )
+            for bx in boundary_xs_rec:
+                ax.axvline(int(bx), color='black', lw=0.6, alpha=0.6,
+                           zorder=10)
             if hide_y:
                 plt.setp(ax.get_yticklabels(), visible=False)
             if not first_legend_done:
