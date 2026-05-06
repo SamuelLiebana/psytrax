@@ -4530,6 +4530,10 @@ is modelled.
 
         def _run_recovery():
             try:
+                # Make sure the JAX hyperparameter path is enabled (the
+                # default behaviour anyway — this just protects against an
+                # external override leaking in from the parent shell).
+                os.environ.pop('PSYTRAX_DISABLE_JAX_HYPER', None)
                 rng = np.random.default_rng(_seed_local)
                 inputs = {}
                 for k, spec in _value_pools_local.items():

@@ -371,22 +371,35 @@ def _minimize_hyperparameters(optVals, opt_keywords, bounds, opts, callback=None
 def _minimize_hyperparameters_jax(optVals, opt_keywords, bounds, opts,
                                   showOpt=0, status_callback=None):
     """JAX-native hyperparameter update for the standard trial-wise EB case."""
+
+    def _skip(reason):
+        # Surface the reason to the UI so the user can tell why the SciPy
+        # fallback fired instead of the (much faster) JAX path.
+        _emit_status(
+            status_callback,
+            f'JAX hyper optimiser skipped: {reason} — using SciPy fallback.',
+            stage='hyper',
+        )
+        if showOpt:
+            print(f'JAX hyper optimiser skipped: {reason}')
+        return None
+
     disabled = os.environ.get('PSYTRAX_DISABLE_JAX_HYPER', '').lower()
     if disabled in {'1', 'true', 'yes'}:
-        return None
+        return _skip('PSYTRAX_DISABLE_JAX_HYPER env var set')
     if opt_keywords.get('method') is not None:
-        return None
+        return _skip(f"non-default method={opt_keywords['method']!r}")
     if opt_keywords.get('learning_rule') is not None:
         # The learning-rule objective has an extra prior-mean correction; keep
         # the mature SciPy path until the JAX version covers that case too.
-        return None
+        return _skip('learning_rule is set (REINFORCE / custom)')
 
     try:
         import jax
         import jax.numpy as jnp
         import optax
-    except Exception:
-        return None
+    except Exception as exc:
+        return _skip(f'jax/optax import failed ({exc})')
 
     dat = opt_keywords['dat']
     hyper = opt_keywords['hyper']
@@ -396,7 +409,7 @@ def _minimize_hyperparameters_jax(optVals, opt_keywords, bounds, opts,
     ll_terms = opt_keywords['LL_terms']
     H_sparse = ll_terms.get('H')
     if H_sparse is None:
-        return None
+        return _skip('LL_terms[H] is None (sparse Hessian missing)')
 
     K = int(ll_terms['K'])
     N = int(dat['r'].shape[0])
@@ -410,7 +423,8 @@ def _minimize_hyperparameters_jax(optVals, opt_keywords, bounds, opts,
             showOpt=showOpt, status_callback=status_callback,
         )
         if runner is None:
-            return None
+            return _skip('runner setup returned None (count/bounds mismatch '
+                         'or hyper key missing)')
         model_hyper_jax = {
             k: jnp.asarray(v, dtype=dtype)
             for k, v in model_hyper.items()
@@ -427,16 +441,31 @@ def _minimize_hyperparameters_jax(optVals, opt_keywords, bounds, opts,
         grad_norm = float(grad_norm)
         n_iter = int(n_iter)
     except Exception as exc:
-        if showOpt:
-            print(f'JAX hyper optimiser unavailable ({exc}); falling back to SciPy.')
-        return None
+        return _skip(f'JAX runner raised: {exc}')
 
     improvement_tol = max(1e-8, 1e-8 * abs(f0))
     if not np.isfinite(f_final) or f_final >= f0 - improvement_tol:
-        if showOpt:
-            print(f'JAX hyper optimiser did not improve objective '
-                  f'({f0:.6g} -> {f_final:.6g}); falling back to SciPy.')
-        return None
+        # Even tiny non-improvement counts as a no-op for the outer EB loop.
+        # Honour the force flag: if the user has asked for JAX-only, return
+        # a no-op result instead of falling back to SciPy.
+        if os.environ.get(
+            'PSYTRAX_DISABLE_SCIPY_HYPER', ''
+        ).lower() in {'1', 'true', 'yes'}:
+            _emit_status(
+                status_callback,
+                f'JAX hyper optimiser converged at objective {f0:.4g} '
+                '(no further improvement possible).',
+                stage='hyper',
+            )
+            result = OptimizeResult(
+                x=np.asarray(optVals, dtype=float),
+                fun=f0, success=True, status=0,
+                message='JAX L-BFGS — no improvement, SciPy fallback disabled',
+                nit=n_iter, nfev=n_iter, jac=None,
+            )
+            result.psytrax_method = 'JAX L-BFGS (no-op)'
+            return result
+        return _skip(f'JAX did not improve objective ({f0:.4g} → {f_final:.4g})')
 
     result = OptimizeResult(
         x=x_final,
@@ -449,6 +478,12 @@ def _minimize_hyperparameters_jax(optVals, opt_keywords, bounds, opts,
         jac=None,
     )
     result.psytrax_method = 'JAX L-BFGS'
+    _emit_status(
+        status_callback,
+        f'JAX L-BFGS hyper update: {f0:.4g} → {f_final:.4g} '
+        f'in {n_iter} iters (|grad|={grad_norm:.2e}).',
+        stage='hyper',
+    )
     if showOpt:
         print(f'JAX hyper grad norm: {grad_norm:.3e}')
     return result
