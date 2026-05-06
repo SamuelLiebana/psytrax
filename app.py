@@ -433,7 +433,7 @@ def _render_gw_publication_figures(result):
               for i, n in enumerate(names)]
     trials = np.arange(N)
 
-    st.subheader('Publication-style recovery figures')
+    st.subheader('Recovery figures')
     st.caption(
         'Figure (a) overlays simulated and recovered parameter trajectories '
         'with 95% credible intervals (±1.96 × W_std). Figure (b) compares '
@@ -479,43 +479,103 @@ def _render_gw_publication_figures(result):
     # --- (b) hyperparameter recovery -----------------------------------
     if (true_log2_sigma.size == K and rec_sigma.size == K
             and 'sigma' in hyp_optList):
-        # Find the slice of hyp_std corresponding to the per-param sigma
-        # vector; entries before it are scalar contributions of length 1.
-        sig_idx = hyp_optList.index('sigma')
-        prefix_len = 0
-        for j, key in enumerate(hyp_optList):
-            if j >= sig_idx:
-                break
-            v = result.get('hyper', {}).get(key)
-            prefix_len += 1 if (v is None or np.ndim(v) == 0) else K
+        # Slice helper: compute where each entry in hyp_optList starts
+        # within the hyp_std vector (each contributes 1 if scalar, K if
+        # vector).
+        def _slice(target_key):
+            offset = 0
+            for j, key in enumerate(hyp_optList):
+                v = result.get('hyper', {}).get(key)
+                length = 1 if (v is None or np.ndim(v) == 0) else K
+                if key == target_key:
+                    return offset, length
+                offset += length
+            return None, 0
+
+        sig_off, sig_len = _slice('sigma')
         sigma_std = (
-            hyp_std[prefix_len:prefix_len + K]
-            if hyp_std.size >= prefix_len + K
+            hyp_std[sig_off:sig_off + sig_len]
+            if (sig_off is not None and hyp_std.size >= sig_off + sig_len)
             else np.full(K, np.nan)
         )
+
+        # σ_day is only fitted when session_boundaries=True (i.e. the GW
+        # truth used >1 sessions).  When present, plot it next to its
+        # matching σ at x = 2*i+1 with a square marker.
+        rec_sigDay = result.get('hyper', {}).get('sigDay')
+        true_log2_sigDay = np.asarray(
+            gw_cfg.get('log2_sigDay', []), dtype=float
+        )
+        has_sigDay = (
+            rec_sigDay is not None
+            and np.asarray(rec_sigDay).size == K
+            and true_log2_sigDay.size == K
+            and 'sigDay' in hyp_optList
+        )
+        if has_sigDay:
+            sd_off, sd_len = _slice('sigDay')
+            sigDay_std = (
+                hyp_std[sd_off:sd_off + sd_len]
+                if (sd_off is not None and hyp_std.size >= sd_off + sd_len)
+                else np.full(K, np.nan)
+            )
+            recovered_log2_sigDay = np.log2(np.asarray(rec_sigDay))
+
         recovered_log2 = np.log2(rec_sigma)
 
-        fig_b, ax_b = plt.subplots(figsize=(0.9 * K + 1.5, 3.5))
+        # Width grows with the number of paired entries.
+        x_per_param = 2 if has_sigDay else 1
+        fig_b, ax_b = plt.subplots(
+            figsize=(0.9 * K * x_per_param + 1.5, 3.5)
+        )
         _style_fig(fig_b)
         _style_ax(ax_b, ylabel=r'$\log_2(\sigma)$')
-        l_sim_b, l_rec_b = None, None
+        l_sim_b = l_rec_b = l_rec_b_day = None
         for i, name in enumerate(names):
-            l_sim_b, = ax_b.plot([i - 0.3, i + 0.3],
-                                 [true_log2_sigma[i]] * 2,
-                                 color='black', linestyle='-', lw=1.4,
-                                 zorder=0)
+            x_sigma = i * x_per_param
+            l_sim_b, = ax_b.plot(
+                [x_sigma - 0.3, x_sigma + 0.3],
+                [true_log2_sigma[i]] * 2,
+                color='black', linestyle='-', lw=1.4, zorder=0,
+            )
             l_rec_b = ax_b.errorbar(
-                [i], recovered_log2[i],
-                yerr=1.96 * sigma_std[i] if np.isfinite(sigma_std[i]) else None,
+                [x_sigma], recovered_log2[i],
+                yerr=(1.96 * sigma_std[i]
+                      if np.isfinite(sigma_std[i]) else None),
                 c=colors[i], lw=1.2, marker='o', markersize=6,
             )
-        ax_b.set_xticks(np.arange(K))
-        ax_b.set_xticklabels([rf'$\sigma_{{{n}}}$' for n in names])
-        ax_b.set_xlim(-0.5, K - 0.5)
+            if has_sigDay:
+                x_day = x_sigma + 1
+                ax_b.plot(
+                    [x_day - 0.3, x_day + 0.3],
+                    [true_log2_sigDay[i]] * 2,
+                    color='black', linestyle='-', lw=1.4, zorder=0,
+                )
+                l_rec_b_day = ax_b.errorbar(
+                    [x_day], recovered_log2_sigDay[i],
+                    yerr=(1.96 * sigDay_std[i]
+                          if np.isfinite(sigDay_std[i]) else None),
+                    c=colors[i], lw=1.2, marker='s', markersize=6,
+                )
+        ax_b.set_xticks(np.arange(K * x_per_param))
+        if has_sigDay:
+            xticks = []
+            for n in names:
+                xticks.append(rf'$\sigma_{{{n}}}$')
+                xticks.append(r'$_{day}$')
+            ax_b.set_xticklabels(xticks)
+        else:
+            ax_b.set_xticklabels([rf'$\sigma_{{{n}}}$' for n in names])
+        ax_b.set_xlim(-0.5, K * x_per_param - 0.5)
         ax_b.spines['right'].set_visible(False)
         ax_b.spines['top'].set_visible(False)
-        if l_sim_b is not None and l_rec_b is not None:
-            ax_b.legend([l_sim_b, l_rec_b], ['simulated', 'recovered'],
+        legend_handles = [l_sim_b, l_rec_b]
+        legend_labels  = ['simulated', 'recovered (σ)']
+        if has_sigDay and l_rec_b_day is not None:
+            legend_handles.append(l_rec_b_day)
+            legend_labels.append(r'recovered ($\sigma_{day}$)')
+        if all(h is not None for h in legend_handles):
+            ax_b.legend(legend_handles, legend_labels,
                         prop={'size': 9}, loc='lower right')
         fig_b.tight_layout()
         _show_fig(fig_b, 'recovery_publication_sigma.png')
@@ -4294,21 +4354,30 @@ is modelled.
             'uses the **true** value; the EB outer loop is started from the **init** '
             'value and reports a recovered estimate in the result.'
         )
+        # Per-key slider caps.  Most race-model scalars (sig_i, sig_DA) are
+        # within-trial noise and conventionally live well below 1.
+        _MH_SLIDER_MAX = {
+            'sig_i':  1.0,
+            'sig_DA': 1.0,
+        }
         for _key, _val in _default_mh.items():
-            _max = max(2.0, 4.0 * float(_val))
+            if _key in _MH_SLIDER_MAX:
+                _max = float(_MH_SLIDER_MAX[_key])
+            else:
+                _max = max(2.0, 4.0 * float(_val))
             col_t, col_i = st.columns(2)
             with col_t:
                 _rec_true_mh[_key] = st.slider(
                     f'True `{_key}` (simulator)',
                     min_value=0.001, max_value=float(_max),
-                    value=float(_val), step=0.001,
+                    value=float(min(_val, _max)), step=0.001,
                     key=f'rec_true_mh_{_rec_bundle["family"]}_{_key}',
                 )
             with col_i:
                 _rec_init_mh[_key] = st.slider(
                     f'Initial `{_key}` (EB starting point)',
                     min_value=0.001, max_value=float(_max),
-                    value=float(_val), step=0.001,
+                    value=float(min(_val, _max)), step=0.001,
                     key=f'rec_init_mh_{_rec_bundle["family"]}_{_key}',
                 )
         st.divider()
@@ -4524,6 +4593,14 @@ is modelled.
                                             'trials with non-finite RTs.'),
                                 'stage':   'simulate_filter',
                             })
+                            # Per-trial session index, used to rebuild
+                            # session_lengths after the filter so the
+                            # multi-session structure (and sigDay fitting)
+                            # is preserved.
+                            sess_idx = np.repeat(
+                                np.arange(len(session_lengths)),
+                                session_lengths,
+                            )
                             data['times']     = T_arr[valid]
                             data['responses'] = np.asarray(
                                 data['responses'])[valid]
@@ -4537,11 +4614,15 @@ is modelled.
                                 if arr.shape and arr.shape[0] == _N_local:
                                     data[k] = arr[valid]
                             _true_params_run = _true_params_run[:, valid]
-                            # Recompute simple session_lengths matching the
-                            # surviving trials so psytrax.fit gets a
-                            # consistent dayLength sum.
-                            data['session_lengths'] = np.array(
-                                [int(np.sum(valid))], dtype=int)
+                            new_lens = np.bincount(
+                                sess_idx[valid],
+                                minlength=len(session_lengths),
+                            ).astype(int)
+                            # Drop sessions that lost every trial — keeping
+                            # them with 0 length would break psytrax.fit's
+                            # dayLength validation.
+                            new_lens = new_lens[new_lens > 0]
+                            data['session_lengths'] = new_lens
                 elif _use_reinforce_local:
                     _rec_status_cb({
                         'message': f'Forward-simulating {_N_local} REINFORCE trials…',
@@ -4574,6 +4655,14 @@ is modelled.
                 _rec_status_cb({'message': f'Simulated in {t_sim:.1f}s — running EB fit…',
                                 'stage': 'fit_start'})
 
+                # If the GW truth used >1 sessions with σ_day > σ jumps at
+                # the boundaries, the matching fit must opt-in to per-day
+                # process noise so EB recovers σ_day alongside σ.
+                _gw_uses_sigday = (
+                    _use_gw_local
+                    and _gw_cfg_local is not None
+                    and int(_gw_cfg_local['n_sessions']) > 1
+                )
                 fit_kwargs = dict(
                     data=data,
                     log_lik_trial=_bundle_local['log_lik_trial'],
@@ -4582,6 +4671,7 @@ is modelled.
                     hess_calc='All',   # weights + hyperparameter CIs
                     verbose=True,
                     status_callback=_rec_status_cb,
+                    session_boundaries=bool(_gw_uses_sigday),
                 )
                 _dh = _bundle_local.get('default_hyper')
                 if callable(_dh):
