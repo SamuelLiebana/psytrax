@@ -1,0 +1,143 @@
+.bd-main .bd-content .bd-article-container {
+  max-width: 1040px;
+}
+
+.psytrax-hero {
+  align-items: center;
+  display: grid;
+  gap: 2.5rem;
+  grid-template-columns: minmax(0, 0.96fr) minmax(320px, 1.04fr);
+  margin: 1.4rem 0 2.4rem;
+}
+
+.psytrax-hero h1 {
+  color: #14313b;
+  font-size: clamp(2.35rem, 6vw, 4.6rem);
+  letter-spacing: 0;
+  line-height: 1.02;
+  margin: 0.35rem 0 1rem;
+}
+
+.psytrax-kicker {
+  color: #2f7d67;
+  font-size: 0.8rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.psytrax-lede {
+  color: #465d68;
+  font-size: 1.12rem;
+  line-height: 1.65;
+  margin-bottom: 1.4rem;
+}
+
+.psytrax-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.psytrax-button {
+  align-items: center;
+  border: 1px solid #bed2d6;
+  border-radius: 8px;
+  color: #1f5365;
+  display: inline-flex;
+  font-weight: 700;
+  min-height: 2.7rem;
+  padding: 0.62rem 0.95rem;
+  text-decoration: none;
+}
+
+.psytrax-button:hover {
+  border-color: #2f7d67;
+  color: #1d664f;
+  text-decoration: none;
+}
+
+.psytrax-button.primary {
+  background: #1f5f78;
+  border-color: #1f5f78;
+  color: #ffffff;
+}
+
+.psytrax-button.primary:hover {
+  background: #17495d;
+  border-color: #17495d;
+  color: #ffffff;
+}
+
+.psytrax-hero-figure img {
+  display: block;
+  height: auto;
+  width: 100%;
+}
+
+.psytrax-feature-row {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 1.8rem 0 0.8rem;
+}
+
+.psytrax-feature {
+  border: 1px solid #d6e2e4;
+  border-radius: 8px;
+  color: #324b55;
+  display: block;
+  padding: 1rem;
+  text-decoration: none;
+}
+
+.psytrax-feature strong {
+  color: #17313b;
+  display: block;
+  font-size: 1.05rem;
+  margin-bottom: 0.4rem;
+}
+
+.psytrax-feature span {
+  color: #5c7078;
+}
+
+.psytrax-feature:hover {
+  border-color: #2f7d67;
+  text-decoration: none;
+}
+
+.toctree-wrapper.compound:empty {
+  display: none;
+}
+
+.psytrax-footer-logos {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.4rem;
+  justify-content: center;
+}
+
+.psytrax-footer-logos img {
+  display: block;
+  height: auto;
+  max-height: 52px;
+  object-fit: contain;
+  width: auto;
+}
+
+.psytrax-footer-logos img.ucl-gatsby-logo {
+  max-height: 64px;
+}
+
+@media (max-width: 960px) {
+  .psytrax-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .psytrax-feature-row {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 520" role="img" aria-labelledby="title desc">
+  <title id="title">psytrax modelling pipeline</title>
+  <desc id="desc">Behavioural data and model likelihood are combined by the psytrax empirical Bayes engine to produce parameter trajectories, uncertainty, and model evidence.</desc>
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f9fbff"/>
+      <stop offset="1" stop-color="#eef5f6"/>
+    </linearGradient>
+    <linearGradient id="engine" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1f5f78"/>
+      <stop offset="1" stop-color="#2f7d67"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#28434a" flood-opacity="0.16"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2d5362"/>
+    </marker>
+  </defs>
+
+  <rect width="980" height="520" rx="28" fill="url(#panel)"/>
+  <path d="M80 398 C210 338 332 438 482 372 C638 302 762 330 906 248" fill="none" stroke="#d8e6e9" stroke-width="48" stroke-linecap="round"/>
+  <path d="M83 398 C210 338 332 438 482 372 C638 302 762 330 906 248" fill="none" stroke="#ffffff" stroke-width="18" stroke-linecap="round"/>
+
+  <g filter="url(#shadow)">
+    <rect x="58" y="74" width="240" height="150" rx="18" fill="#ffffff"/>
+    <rect x="370" y="80" width="240" height="150" rx="18" fill="#ffffff"/>
+    <rect x="682" y="74" width="240" height="150" rx="18" fill="#ffffff"/>
+    <rect x="292" y="296" width="396" height="144" rx="24" fill="url(#engine)"/>
+  </g>
+
+  <text x="84" y="116" fill="#17313b" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="700">Behavioural data</text>
+  <text x="84" y="151" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">stimuli</text>
+  <text x="84" y="178" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">choices</text>
+  <text x="84" y="205" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">reaction times</text>
+  <g transform="translate(210 141)">
+    <rect x="0" y="0" width="55" height="50" rx="8" fill="#edf4f6"/>
+    <path d="M8 38 L18 22 L29 30 L43 10" fill="none" stroke="#2f7d67" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <text x="396" y="122" fill="#17313b" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="700">Model likelihood</text>
+  <text x="396" y="158" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">JAX-compatible</text>
+  <text x="396" y="185" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">per-trial function</text>
+  <text x="396" y="211" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">built-in or custom</text>
+  <text x="552" y="188" fill="#2f7d67" font-family="Menlo, Consolas, monospace" font-size="38" font-weight="700">ℓₜ</text>
+
+  <text x="708" y="116" fill="#17313b" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="700">Outputs</text>
+  <text x="708" y="151" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">parameter trajectories</text>
+  <text x="708" y="178" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">credible intervals</text>
+  <text x="708" y="205" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">log evidence</text>
+  <g transform="translate(836 128)" fill="none" stroke-linecap="round">
+    <path d="M0 65 C18 16 34 20 48 43 S78 84 96 16" stroke="#1f5f78" stroke-width="5"/>
+    <path d="M0 82 C18 42 34 47 48 61 S78 92 96 38" stroke="#d48a2f" stroke-width="4"/>
+  </g>
+
+  <line x1="302" y1="150" x2="356" y2="150" stroke="#2d5362" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="492" y1="236" x2="492" y2="282" stroke="#2d5362" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="688" y1="366" x2="774" y2="236" stroke="#2d5362" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="602" y1="150" x2="668" y2="150" stroke="#2d5362" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <text x="490" y="341" text-anchor="middle" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700">psytrax</text>
+  <text x="490" y="377" text-anchor="middle" fill="#dff1ef" font-family="Inter, Arial, sans-serif" font-size="19">Empirical Bayes + Laplace</text>
+  <text x="490" y="406" text-anchor="middle" fill="#dff1ef" font-family="Inter, Arial, sans-serif" font-size="19">random-walk priors over trials</text>
+
+  <g transform="translate(336 340)" fill="none" stroke="#dff1ef" stroke-width="5" stroke-linecap="round">
+    <path d="M0 40 C18 4 36 4 54 40 S90 76 108 40"/>
+    <path d="M202 40 C220 4 238 4 256 40 S292 76 310 40"/>
+  </g>
+</svg>

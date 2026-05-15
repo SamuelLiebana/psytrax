@@ -34,10 +34,6 @@ jobs:
       - name: Build HTML
         run: sphinx-build -W -b html docs/source docs/build/html
 
-      - name: Configure GitHub Pages
-        if: github.event_name != 'pull_request'
-        uses: actions/configure-pages@v5
-
       - name: Upload Pages artifact
         if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v4

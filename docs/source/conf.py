@@ -33,11 +33,15 @@ exclude_patterns = []
 html_theme = "pydata_sphinx_theme"
 html_title = "psytrax"
 html_static_path = ["_static"]
+html_css_files = ["psytrax.css"]
 html_theme_options = {
     "github_url": "https://github.com/SamuelLiebana/psytrax",
     "external_links": [
         {"name": "App", "url": "https://psytrax.streamlit.app"},
     ],
+    "footer_start": ["footer-logos"],
+    "footer_center": ["copyright"],
+    "footer_end": ["sphinx-version"],
     "show_toc_level": 2,
 }
 
