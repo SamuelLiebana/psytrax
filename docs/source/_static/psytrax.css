@@ -1,5 +1,45 @@
+:root {
+  --psytrax-accent: #2f7d67;
+  --psytrax-button: #1f5f78;
+  --psytrax-button-hover: #17495d;
+  --psytrax-border: #d6e2e4;
+  --psytrax-card-bg: transparent;
+  --psytrax-muted: #465d68;
+  --psytrax-soft-muted: #5c7078;
+  --psytrax-text: #14313b;
+}
+
+html[data-theme="dark"] {
+  --psytrax-accent: #6bd4b0;
+  --psytrax-button: #4aa1bd;
+  --psytrax-button-hover: #65b6cd;
+  --psytrax-border: #526a73;
+  --psytrax-card-bg: rgba(255, 255, 255, 0.03);
+  --psytrax-muted: #d0dde1;
+  --psytrax-soft-muted: #bacbd0;
+  --psytrax-text: #f2f7f8;
+}
+
+html[data-theme="light"] {
+  --pst-color-primary: #2f7d67;
+  --pst-color-link: var(--pst-color-primary);
+}
+
+html[data-theme="dark"] {
+  --pst-color-primary: #6bd4b0;
+  --pst-color-link: var(--pst-color-primary);
+}
+
 .bd-main .bd-content .bd-article-container {
   max-width: 1040px;
+}
+
+.sd-card-title {
+  color: var(--psytrax-text);
+}
+
+.sd-card-text {
+  color: var(--psytrax-muted);
 }
 
 .psytrax-hero {
@@ -11,7 +51,7 @@
 }
 
 .psytrax-hero h1 {
-  color: #14313b;
+  color: var(--psytrax-text);
   font-size: clamp(2.35rem, 6vw, 4.6rem);
   letter-spacing: 0;
   line-height: 1.02;
@@ -19,7 +59,7 @@
 }
 
 .psytrax-kicker {
-  color: #2f7d67;
+  color: var(--psytrax-accent);
   font-size: 0.8rem;
   font-weight: 750;
   letter-spacing: 0.08em;
@@ -28,7 +68,7 @@
 }
 
 .psytrax-lede {
-  color: #465d68;
+  color: var(--psytrax-muted);
   font-size: 1.12rem;
   line-height: 1.65;
   margin-bottom: 1.4rem;
@@ -42,9 +82,9 @@
 
 .psytrax-button {
   align-items: center;
-  border: 1px solid #bed2d6;
+  border: 1px solid var(--psytrax-border);
   border-radius: 8px;
-  color: #1f5365;
+  color: var(--psytrax-button);
   display: inline-flex;
   font-weight: 700;
   min-height: 2.7rem;
@@ -53,20 +93,20 @@
 }
 
 .psytrax-button:hover {
-  border-color: #2f7d67;
-  color: #1d664f;
+  border-color: var(--psytrax-accent);
+  color: var(--psytrax-accent);
   text-decoration: none;
 }
 
 .psytrax-button.primary {
-  background: #1f5f78;
-  border-color: #1f5f78;
+  background: var(--psytrax-button);
+  border-color: var(--psytrax-button);
   color: #ffffff;
 }
 
 .psytrax-button.primary:hover {
-  background: #17495d;
-  border-color: #17495d;
+  background: var(--psytrax-button-hover);
+  border-color: var(--psytrax-button-hover);
   color: #ffffff;
 }
 
@@ -84,27 +124,28 @@
 }
 
 .psytrax-feature {
-  border: 1px solid #d6e2e4;
+  background: var(--psytrax-card-bg);
+  border: 1px solid var(--psytrax-border);
   border-radius: 8px;
-  color: #324b55;
+  color: var(--psytrax-muted);
   display: block;
   padding: 1rem;
   text-decoration: none;
 }
 
 .psytrax-feature strong {
-  color: #17313b;
+  color: var(--psytrax-text);
   display: block;
   font-size: 1.05rem;
   margin-bottom: 0.4rem;
 }
 
 .psytrax-feature span {
-  color: #5c7078;
+  color: var(--psytrax-soft-muted);
 }
 
 .psytrax-feature:hover {
-  border-color: #2f7d67;
+  border-color: var(--psytrax-accent);
   text-decoration: none;
 }
 
@@ -130,6 +171,10 @@
 
 .psytrax-footer-logos img.ucl-gatsby-logo {
   max-height: 64px;
+}
+
+html[data-theme="dark"] .psytrax-footer-logos img {
+  filter: invert(1) brightness(1.15);
 }
 
 @media (max-width: 960px) {

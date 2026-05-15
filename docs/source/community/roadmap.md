@@ -14,13 +14,11 @@ Sphinx project pattern from the
 | API reference | Generate Sphinx API pages from docstrings | Started |
 | User guide | Document data format, models, learning rules, and dataset loading | Started |
 | Website build | Use Sphinx with the PyData theme, following the Neuroinformatics Unit cookiecutter pattern | Started |
-| Community support | Create a public Zulip route and document when to use GitHub issues | Planned |
+| Community support | Create a public Zulip route and document when to use GitHub issues | In setup |
 | Contribution guidance | Tell contributors what is wanted and what condition PRs should be in | Started |
 | Hosting | Ask Andrew about a stable project URL once the first docs build is ready | Planned |
 | Advertising | Produce short GIFs for the Streamlit app and example fits | Planned |
-| Publication | Prepare JOSS readiness checklist and gather adoption evidence from labs using psytrax | Started |
 | Governance | Consider moving the repository under a trusted GitHub organisation | Planned |
-| Maintenance | Publish dependency and Python support policy informed by Scientific Python SPEC 0 | Started |
 
 ## Near-term priorities
 
@@ -28,4 +26,4 @@ Sphinx project pattern from the
 2. Add a fast logistic example and a race-model RT example.
 3. Add visible community routes: GitHub issue templates and Zulip.
 4. Decide license, code of conduct, citation, and release process.
-5. Collect evidence of use by labs and projects for publication.
+5. Add short app walkthrough media for outreach.

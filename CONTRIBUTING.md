@@ -2,7 +2,7 @@
 
 Thanks for helping make psytrax easier to use and trust.
 
-The current contribution guide lives in the documentation:
+The detailed contribution guide lives in the documentation:
 
 - `docs/source/community/contributing.md`
 - `docs/source/community/support.md`

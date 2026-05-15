@@ -2,28 +2,43 @@
 
 Empirical Bayes fitting for trial-by-trial decision models.
 
-<div class="psytrax-hero">
-  <div class="psytrax-hero-copy">
-    <p class="psytrax-kicker">Behavioural modelling across trials</p>
-    <h1>Fit interpretable decision-model trajectories from trial-by-trial data.</h1>
-    <p class="psytrax-lede">
-      psytrax helps researchers estimate how latent decision-making parameters
-      change over learning, fatigue, task engagement, or experimental
-      manipulations. You provide a per-trial likelihood; psytrax handles
-      random-walk priors, MAP fitting, Laplace evidence, model comparison, and
-      uncertainty over trajectories.
-    </p>
-    <div class="psytrax-actions">
-      <a class="psytrax-button primary" href="tutorials/first-fit.html">Start a first fit</a>
-      <a class="psytrax-button" href="user-guide/index.html">User guide</a>
-      <a class="psytrax-button" href="examples/index.html">Examples</a>
-      <a class="psytrax-button" href="community/support.html">Connect</a>
-    </div>
-  </div>
-  <div class="psytrax-hero-figure">
-    <img src="_static/images/psytrax_pipeline.svg" alt="psytrax pipeline from behavioural data to model trajectories and evidence">
-  </div>
-</div>
+psytrax helps researchers estimate how latent decision-making parameters change
+over learning, fatigue, task engagement, or experimental manipulations. You
+provide a per-trial likelihood; psytrax handles random-walk priors, MAP
+fitting, Laplace evidence, model comparison, and uncertainty over trajectories.
+
+::::{grid} 1 2 2 4
+:gutter: 3
+
+:::{grid-item-card} {fas}`book;sd-text-primary` User guide
+:link: user-guide/index
+:link-type: doc
+
+Installation, data format, dataset loading, and model structure.
+:::
+
+:::{grid-item-card} {fas}`chart-line;sd-text-primary` Examples
+:link: examples/index
+:link-type: doc
+
+Worked analyses for fast choice models, RT models, recovery, and CSV data.
+:::
+
+:::{grid-item-card} {fas}`rocket;sd-text-primary` Web app
+:link: https://psytrax.streamlit.app
+
+Fit and inspect models in the browser, without writing code.
+:::
+
+:::{grid-item-card} {fas}`comments;sd-text-primary` Connect
+:link: community/index
+:link-type: doc
+
+Ask questions, report issues, and help improve the project.
+:::
+::::
+
+![](_static/images/psytrax_pipeline.svg)
 
 ## Overview
 
@@ -43,21 +58,6 @@ Use psytrax when you want to:
 - start from built-in logistic, DDM, race, or MLP models, then move to your own
   JAX-compatible per-trial likelihood.
 
-<div class="psytrax-feature-row">
-  <a class="psytrax-feature" href="user-guide/data-format.html">
-    <strong>Prepare data</strong>
-    <span>Convert trial tables into the small dictionary format psytrax expects.</span>
-  </a>
-  <a class="psytrax-feature" href="user-guide/models.html">
-    <strong>Choose models</strong>
-    <span>Use built-in models or write a custom likelihood for your task.</span>
-  </a>
-  <a class="psytrax-feature" href="api/index.html">
-    <strong>Reference API</strong>
-    <span>Look up public functions, model modules, and learning-rule helpers.</span>
-  </a>
-</div>
-
 ```{toctree}
 :hidden:
 :maxdepth: 2
@@ -68,6 +68,4 @@ user-guide/index
 examples/index
 api/index
 community/index
-maintenance
-publication
 ```

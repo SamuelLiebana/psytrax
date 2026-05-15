@@ -25,16 +25,25 @@ extensions = [
 autosummary_generate = True
 autodoc_typehints = "description"
 numpydoc_show_class_members = False
+myst_enable_extensions = ["colon_fence"]
 myst_heading_anchors = 3
 
 templates_path = ["_templates"]
-exclude_patterns = []
+exclude_patterns = ["snippets/*"]
 
 html_theme = "pydata_sphinx_theme"
 html_title = "psytrax"
 html_static_path = ["_static"]
 html_css_files = ["psytrax.css"]
 html_theme_options = {
+    "icon_links": [
+        {
+            "name": "Zulip",
+            "url": "https://neuroinformatics.zulipchat.com",
+            "icon": "fa-solid fa-comments",
+            "type": "fontawesome",
+        },
+    ],
     "github_url": "https://github.com/SamuelLiebana/psytrax",
     "external_links": [
         {"name": "App", "url": "https://psytrax.streamlit.app"},

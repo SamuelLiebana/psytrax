@@ -1,69 +1,79 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 520" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 470" role="img" aria-labelledby="title desc">
   <title id="title">psytrax modelling pipeline</title>
-  <desc id="desc">Behavioural data and model likelihood are combined by the psytrax empirical Bayes engine to produce parameter trajectories, uncertainty, and model evidence.</desc>
+  <desc id="desc">Trial-aligned behavioural data and a model likelihood enter psytrax, which returns parameter trajectories, uncertainty, and model evidence.</desc>
   <defs>
-    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#f9fbff"/>
-      <stop offset="1" stop-color="#eef5f6"/>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fbfc"/>
+      <stop offset="1" stop-color="#edf4f3"/>
     </linearGradient>
-    <linearGradient id="engine" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#1f5f78"/>
+    <linearGradient id="core" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#195f78"/>
       <stop offset="1" stop-color="#2f7d67"/>
     </linearGradient>
-    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
-      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#28434a" flood-opacity="0.16"/>
+    <filter id="shadow" x="-8%" y="-8%" width="116%" height="124%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#17313b" flood-opacity="0.13"/>
     </filter>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2d5362"/>
+      <path d="M0 0 L10 5 L0 10 Z" fill="#2d5362"/>
     </marker>
   </defs>
 
-  <rect width="980" height="520" rx="28" fill="url(#panel)"/>
-  <path d="M80 398 C210 338 332 438 482 372 C638 302 762 330 906 248" fill="none" stroke="#d8e6e9" stroke-width="48" stroke-linecap="round"/>
-  <path d="M83 398 C210 338 332 438 482 372 C638 302 762 330 906 248" fill="none" stroke="#ffffff" stroke-width="18" stroke-linecap="round"/>
+  <rect x="8" y="8" width="1104" height="454" rx="28" fill="url(#background)" stroke="#d7e4e5" stroke-width="2"/>
 
   <g filter="url(#shadow)">
-    <rect x="58" y="74" width="240" height="150" rx="18" fill="#ffffff"/>
-    <rect x="370" y="80" width="240" height="150" rx="18" fill="#ffffff"/>
-    <rect x="682" y="74" width="240" height="150" rx="18" fill="#ffffff"/>
-    <rect x="292" y="296" width="396" height="144" rx="24" fill="url(#engine)"/>
+    <rect x="58" y="78" width="218" height="244" rx="20" fill="#ffffff"/>
+    <rect x="330" y="78" width="218" height="244" rx="20" fill="#ffffff"/>
+    <rect x="622" y="94" width="188" height="212" rx="28" fill="url(#core)"/>
+    <rect x="858" y="78" width="218" height="244" rx="20" fill="#ffffff"/>
   </g>
 
-  <text x="84" y="116" fill="#17313b" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="700">Behavioural data</text>
-  <text x="84" y="151" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">stimuli</text>
-  <text x="84" y="178" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">choices</text>
-  <text x="84" y="205" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">reaction times</text>
-  <g transform="translate(210 141)">
-    <rect x="0" y="0" width="55" height="50" rx="8" fill="#edf4f6"/>
-    <path d="M8 38 L18 22 L29 30 L43 10" fill="none" stroke="#2f7d67" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="167" y="122" text-anchor="middle" fill="#17313b" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="700">Trial data</text>
+  <text x="167" y="154" text-anchor="middle" fill="#5c7078" font-family="Inter, Arial, sans-serif" font-size="16">one row per trial</text>
+  <g transform="translate(92 182)">
+    <rect x="0" y="0" width="150" height="96" rx="10" fill="#f2f7f8" stroke="#d8e6e9"/>
+    <line x1="0" y1="32" x2="150" y2="32" stroke="#d8e6e9"/>
+    <line x1="50" y1="0" x2="50" y2="96" stroke="#d8e6e9"/>
+    <line x1="100" y1="0" x2="100" y2="96" stroke="#d8e6e9"/>
+    <text x="25" y="22" text-anchor="middle" fill="#195f78" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700">c</text>
+    <text x="75" y="22" text-anchor="middle" fill="#195f78" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700">r</text>
+    <text x="125" y="22" text-anchor="middle" fill="#195f78" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700">rt</text>
+    <circle cx="25" cy="52" r="5" fill="#2f7d67"/>
+    <circle cx="75" cy="52" r="5" fill="#d48a2f"/>
+    <circle cx="125" cy="52" r="5" fill="#195f78"/>
+    <circle cx="25" cy="76" r="5" fill="#d48a2f"/>
+    <circle cx="75" cy="76" r="5" fill="#195f78"/>
+    <circle cx="125" cy="76" r="5" fill="#2f7d67"/>
   </g>
 
-  <text x="396" y="122" fill="#17313b" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="700">Model likelihood</text>
-  <text x="396" y="158" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">JAX-compatible</text>
-  <text x="396" y="185" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">per-trial function</text>
-  <text x="396" y="211" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">built-in or custom</text>
-  <text x="552" y="188" fill="#2f7d67" font-family="Menlo, Consolas, monospace" font-size="38" font-weight="700">ℓₜ</text>
-
-  <text x="708" y="116" fill="#17313b" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="700">Outputs</text>
-  <text x="708" y="151" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">parameter trajectories</text>
-  <text x="708" y="178" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">credible intervals</text>
-  <text x="708" y="205" fill="#4f6470" font-family="Inter, Arial, sans-serif" font-size="18">log evidence</text>
-  <g transform="translate(836 128)" fill="none" stroke-linecap="round">
-    <path d="M0 65 C18 16 34 20 48 43 S78 84 96 16" stroke="#1f5f78" stroke-width="5"/>
-    <path d="M0 82 C18 42 34 47 48 61 S78 92 96 38" stroke="#d48a2f" stroke-width="4"/>
+  <text x="439" y="122" text-anchor="middle" fill="#17313b" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="700">Model</text>
+  <text x="439" y="154" text-anchor="middle" fill="#5c7078" font-family="Inter, Arial, sans-serif" font-size="16">built-in or custom</text>
+  <g transform="translate(362 183)">
+    <rect x="0" y="0" width="154" height="94" rx="12" fill="#f2f7f8" stroke="#d8e6e9"/>
+    <text x="77" y="38" text-anchor="middle" fill="#195f78" font-family="Menlo, Consolas, monospace" font-size="26" font-weight="700">log p(yₜ|xₜ, θₜ)</text>
+    <text x="77" y="68" text-anchor="middle" fill="#5c7078" font-family="Inter, Arial, sans-serif" font-size="14">JAX likelihood</text>
   </g>
 
-  <line x1="302" y1="150" x2="356" y2="150" stroke="#2d5362" stroke-width="4" marker-end="url(#arrow)"/>
-  <line x1="492" y1="236" x2="492" y2="282" stroke="#2d5362" stroke-width="4" marker-end="url(#arrow)"/>
-  <line x1="688" y1="366" x2="774" y2="236" stroke="#2d5362" stroke-width="4" marker-end="url(#arrow)"/>
-  <line x1="602" y1="150" x2="668" y2="150" stroke="#2d5362" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="716" y="151" text-anchor="middle" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="800">psytrax</text>
+  <text x="716" y="188" text-anchor="middle" fill="#dff1ef" font-family="Inter, Arial, sans-serif" font-size="16">Empirical Bayes</text>
+  <text x="716" y="214" text-anchor="middle" fill="#dff1ef" font-family="Inter, Arial, sans-serif" font-size="16">random-walk prior</text>
+  <text x="716" y="240" text-anchor="middle" fill="#dff1ef" font-family="Inter, Arial, sans-serif" font-size="16">Laplace evidence</text>
 
-  <text x="490" y="341" text-anchor="middle" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700">psytrax</text>
-  <text x="490" y="377" text-anchor="middle" fill="#dff1ef" font-family="Inter, Arial, sans-serif" font-size="19">Empirical Bayes + Laplace</text>
-  <text x="490" y="406" text-anchor="middle" fill="#dff1ef" font-family="Inter, Arial, sans-serif" font-size="19">random-walk priors over trials</text>
+  <text x="967" y="122" text-anchor="middle" fill="#17313b" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="700">Results</text>
+  <text x="967" y="154" text-anchor="middle" fill="#5c7078" font-family="Inter, Arial, sans-serif" font-size="16">trajectories + evidence</text>
+  <g transform="translate(892 182)">
+    <rect x="0" y="0" width="150" height="96" rx="10" fill="#f2f7f8" stroke="#d8e6e9"/>
+    <path d="M12 66 C30 35 48 38 66 50 S102 74 136 20" fill="none" stroke="#195f78" stroke-width="5" stroke-linecap="round"/>
+    <path d="M12 76 C30 48 48 50 66 61 S102 84 136 41" fill="none" stroke="#d48a2f" stroke-width="4" stroke-linecap="round"/>
+    <path d="M18 22 H66" stroke="#d8e6e9" stroke-width="5" stroke-linecap="round"/>
+    <path d="M18 38 H46" stroke="#d8e6e9" stroke-width="5" stroke-linecap="round"/>
+  </g>
 
-  <g transform="translate(336 340)" fill="none" stroke="#dff1ef" stroke-width="5" stroke-linecap="round">
-    <path d="M0 40 C18 4 36 4 54 40 S90 76 108 40"/>
-    <path d="M202 40 C220 4 238 4 256 40 S292 76 310 40"/>
+  <line x1="278" y1="200" x2="316" y2="200" stroke="#2d5362" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="550" y1="200" x2="606" y2="200" stroke="#2d5362" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="812" y1="200" x2="844" y2="200" stroke="#2d5362" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <g transform="translate(106 374)">
+    <text x="0" y="0" fill="#5c7078" font-family="Inter, Arial, sans-serif" font-size="17">Inputs stay simple: arrays, dictionaries, and one likelihood function.</text>
+    <text x="0" y="34" fill="#5c7078" font-family="Inter, Arial, sans-serif" font-size="17">Outputs stay scientific: trajectories, credible intervals, and model evidence.</text>
   </g>
 </svg>
