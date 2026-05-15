@@ -31,6 +31,12 @@ jobs:
       - name: Install docs dependencies
         run: python -m pip install -e ".[docs]"
 
+      - name: Install Pandoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pandoc
+          pandoc --version
+
       - name: Build HTML
         run: sphinx-build -W -b html docs/source docs/build/html
 
