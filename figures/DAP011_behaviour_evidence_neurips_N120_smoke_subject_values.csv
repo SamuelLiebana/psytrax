@@ -1,0 +1,5 @@
+subject,model_id,delta_log_evidence_vs_glm,log_evidence,model
+DAP011,glm_shallow_zero_mean,0.0,-85.93815856970622,GLM (shallow)
+DAP011,glm_shallow_reinforce,0.5672847695884116,-85.3708738001178,GLM (shallow) + R
+DAP011,deep_zero_mean,-34.9519326706823,-120.89009124038851,"Deep, 0-mean"
+DAP011,deep_te_rule,-24.062055238226137,-110.00021380793235,Deep + TE rule

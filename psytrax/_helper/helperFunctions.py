@@ -111,14 +111,11 @@ def trim(dat, START=0, END=0):
 
     if 'dayLength' in new_dat and new_dat['dayLength'] is not None and new_dat['dayLength'].size:
         cumdays = np.cumsum(new_dat['dayLength'])
-        min_id = np.where(cumdays > START)[0][0]
-        max_id = np.where(cumdays < END)[0][-1] + 1
-        new = new_dat['dayLength'][min_id:max_id + 1].copy()
-        new[0] = cumdays[min_id] - START
-        new[-1] = END - cumdays[max_id - 1]
-        if len(new) == 1:
-            new[0] = END - START
-        new_dat['dayLength'] = new
+        starts = np.concatenate(([0], cumdays[:-1]))
+        keep = np.where((starts < END) & (cumdays > START))[0]
+        clipped_start = np.maximum(starts[keep], START)
+        clipped_end = np.minimum(cumdays[keep], END)
+        new_dat['dayLength'] = (clipped_end - clipped_start).astype(int)
 
     new_dat['skimmed'] = {'START': START, 'END': END}
     return new_dat
@@ -172,6 +169,43 @@ def build_v_mean_flat(lr_hat, alpha, K, N):
     return v.flatten()
 
 
+def build_prior_mean_flat(init_mean, K, N):
+    """Build a flat absolute prior-mean trajectory.
+
+    ``init_mean`` may be a length-K vector, a full ``(K, N)`` trajectory, or an
+    already-flat ``(K*N,)`` vector.  A length-K vector is repeated across trials,
+    which corresponds to a non-zero mean for the initial state and zero-mean
+    random-walk transitions.
+    """
+    if init_mean is None:
+        return None
+
+    arr = np.asarray(init_mean, dtype=float)
+    if arr.shape == (K,):
+        mean = np.tile(arr[:, None], (1, N))
+    elif arr.shape == (K, 1):
+        mean = np.tile(arr, (1, N))
+    elif arr.shape == (K, N):
+        mean = arr
+    elif arr.shape == (K * N,):
+        mean = arr.reshape(K, N)
+    else:
+        raise ValueError(
+            f'init_mean must have shape ({K},), ({K}, {N}), or ({K*N},), '
+            f'got {arr.shape}'
+        )
+    if not np.all(np.isfinite(mean)):
+        raise ValueError('init_mean must contain only finite values')
+    return mean.flatten()
+
+
+def compute_invC_mean(mean_flat, invSigma, K, N):
+    """Compute the natural-parameter contribution Q @ mean_flat."""
+    if mean_flat is None:
+        return np.zeros(K * N)
+    return DT_X_D(invSigma, K) @ mean_flat
+
+
 def compute_invC_u(v_mean_flat, invSigma, K, N):
     """Compute  invC @ u  =  D^T  Σ⁻¹  v   without forming invC explicitly.
 
@@ -203,23 +237,24 @@ def compute_invC_u(v_mean_flat, invSigma, K, N):
     return result.flatten()
 
 
-def correct_logprior_for_learning_rule(logprior_zero_mean, E_flat, v_mean_flat,
-                                       invSigma, K, N):
-    """Correct a zero-mean log-prior to account for a learning-rule mean shift.
+def correct_logprior_for_learning_rule(logprior_base, E_flat, v_mean_flat,
+                                       invSigma, K, N, prior_mean_flat=None):
+    """Correct a base log-prior to account for a learning-rule mean shift.
 
-    Given the zero-mean log-prior  −½ (DE)^T Σ⁻¹ (DE) − ½ log|C|  and the
+    Given the base log-prior  −½ (D(E−m))^T Σ⁻¹ (D(E−m)) − ½ log|C|  and the
     learning-rule mean vector *v*, return the shifted version:
 
-        −½ (DE − v)^T Σ⁻¹ (DE − v)  − ½ log|C|
+        −½ (D(E−m) − v)^T Σ⁻¹ (D(E−m) − v)  − ½ log|C|
 
-    The correction equals  (DE)^T Σ⁻¹ v  −  ½ v^T Σ⁻¹ v.
+    The correction equals  (D(E−m))^T Σ⁻¹ v  −  ½ v^T Σ⁻¹ v.
 
     Args:
-        logprior_zero_mean : scalar, the log-prior computed with u = 0
+        logprior_base      : scalar, the log-prior computed with v = 0
         E_flat             : (K*N,) parameter vector
         v_mean_flat        : (K*N,) from :func:`build_v_mean_flat`
         invSigma           : sparse diagonal from :func:`make_invSigma`
         K, N               : parameter count and trial count
+        prior_mean_flat    : optional (K*N,) absolute prior-mean trajectory
 
     Returns:
         scalar — corrected log-prior value
@@ -227,7 +262,8 @@ def correct_logprior_for_learning_rule(logprior_zero_mean, E_flat, v_mean_flat,
     inv_sig_diag = invSigma.diagonal()
 
     # Compute DE (first differences, matching the invSigma layout)
-    E = E_flat.reshape(K, N)
+    centered = E_flat if prior_mean_flat is None else E_flat - prior_mean_flat
+    E = centered.reshape(K, N)
     DE = np.zeros((K, N))
     DE[:, 0] = E[:, 0]                 # initial state
     DE[:, 1:] = E[:, 1:] - E[:, :-1]   # transition differences
@@ -235,4 +271,4 @@ def correct_logprior_for_learning_rule(logprior_zero_mean, E_flat, v_mean_flat,
 
     cross_term = np.dot(DE_flat * inv_sig_diag, v_mean_flat)  # (DE)^T Σ⁻¹ v
     v_quad     = np.dot(v_mean_flat * inv_sig_diag, v_mean_flat)  # v^T Σ⁻¹ v
-    return logprior_zero_mean + cross_term - 0.5 * v_quad
+    return logprior_base + cross_term - 0.5 * v_quad

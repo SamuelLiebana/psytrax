@@ -1,17 +1,20 @@
 """Drift diffusion model — inverse-Gaussian (one-barrier) approximation.
 
-A single accumulator drifts toward the chosen boundary with drift rate
+A single accumulator drifts toward the chosen boundary with drift rate::
+
     v = w·c + b
+
 and the unchosen accumulator has not yet reached threshold.  This uses the
 inverse-Gaussian first-passage-time density (same as one accumulator of the
 race model), which is exact for a semi-infinite domain (one absorbing barrier).
 
 Compared to ddm_exact.py, this model:
-  - Is faster to evaluate (closed-form, no series)
-  - Ignores the lower barrier (approximation that is accurate when z is large
-    relative to diffusion noise, or equivalently when error rates are low)
-  - Has 3 parameters instead of 4 (boundary separation and starting-point bias
-    are not separately identifiable under this approximation)
+
+- Is faster to evaluate (closed-form, no series)
+- Ignores the lower barrier (approximation that is accurate when z is large
+  relative to diffusion noise, or equivalently when error rates are low)
+- Has 3 parameters instead of 4 (boundary separation and starting-point bias
+  are not separately identifiable under this approximation)
 
 Parameters (K = 3)
 ------------------

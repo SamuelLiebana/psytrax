@@ -26,6 +26,7 @@ def fit(data, log_lik_trial, n_params,
         session_boundaries=False,
         learning_rule=None,
         E0=None,
+        init_mean=None,
         n_trials=None,
         hess_calc='weights',
         device='auto',
@@ -43,15 +44,23 @@ def fit(data, log_lik_trial, n_params,
     ----------
     data : dict or str
         Either a data dict or a path to a .npy file containing one.
+
         Required keys:
-          - 'inputs'   : dict of input arrays, each of shape (N, ...)
-          - 'responses': array of shape (N,) — discrete (0/1) or continuous  [also accepts 'r']
+
+        - ``inputs``: dict of input arrays, each of shape ``(N, ...)``
+        - ``responses``: array of shape ``(N,)`` — discrete (0/1) or
+          continuous [also accepts ``r``]
+
         Optional keys:
-          - 'times'           : RT array shape (N,)   [also accepts 'T']
-          - 'session_lengths' : array of per-session trial counts [also 'dayLength']
+
+        - ``times``: RT array shape ``(N,)`` [also accepts ``T``]
+        - ``session_lengths``: array of per-session trial counts [also
+          ``dayLength``]
     log_lik_trial : callable
-        Per-trial log-likelihood with signature
+        Per-trial log-likelihood with signature::
+
             log_lik_trial(params_k, dat_trial) -> scalar
+
         Must be JAX-traceable (written with jax.numpy).
         See psytrax/_likelihood.py for porting tips and psytrax/models/race.py
         for a complete example.
@@ -83,16 +92,24 @@ def fit(data, log_lik_trial, n_params,
         the EB outer loop.  Set to False to keep them fixed at their initial
         values.
     learning_rule : callable, optional
-        A JAX-traceable function with signature
+        A JAX-traceable function with signature::
+
             learning_rule(params, dat_trial) -> (K,) array
+
         that returns the unnormalized update direction v̂_t at each trial.
         The actual update mean is v_t = diag(α) · v̂_t, where the learning
-        rates α are optimised as hyperparameters.  The Gaussian walk becomes:
+        rates α are optimised as hyperparameters.  The Gaussian walk becomes::
+
             w_{t+1} − w_t  ∼  N(v_t, diag(σ²))
+
         See ``psytrax.learning_rules`` for ready-made rules (e.g. REINFORCE).
     E0 : np.ndarray, optional
         Initial parameter matrix of shape (K, N).  Defaults to 0.01 everywhere.
         For the built-in race model, use psytrax.models.race.default_E0(N).
+    init_mean : np.ndarray, optional
+        Prior mean for the absolute latent-parameter trajectory.  A length-K
+        vector is repeated across trials, centering the initial state there
+        while keeping random-walk transitions zero-mean.  Defaults to zero.
     n_trials : int, optional
         Use only the first n_trials trials.
     hess_calc : str
@@ -263,6 +280,7 @@ def fit(data, log_lik_trial, n_params,
                     log_lik_fns=log_lik_fns,
                     optList=opt_list,
                     E0=init_E0,
+                    init_mean=init_mean,
                     method=None,
                     showOpt=int(verbose),
                     hess_calc=hess_calc,
@@ -308,6 +326,8 @@ def fit(data, log_lik_trial, n_params,
         'duration': duration,
         'execution': plan.as_dict(),
     }
+    if init_mean is not None:
+        results['init_mean'] = np.asarray(init_mean, dtype=float)
     _emit_status(status_callback, "Fit complete.", stage="done")
 
     if not save:

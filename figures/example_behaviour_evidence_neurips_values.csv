@@ -1,0 +1,5 @@
+model_id,model,n_subjects,mean_log_evidence,sem_log_evidence,mean_delta_log_evidence_vs_glm,sem_delta_log_evidence_vs_glm
+glm_shallow_zero_mean,GLM (shallow),21,-2836.5134748573014,334.8977835049827,0.0,0.0
+glm_shallow_reinforce,GLM (shallow) + R,21,-2836.396520762654,334.91442148926626,0.11695409464765102,0.0553352212804316
+deep_zero_mean,"Deep, 0-mean",21,-3529.150812403373,1331.7607184974165,-692.637337546071,1095.0481076636597
+deep_te_rule,Deep + TE rule,21,-4484.575454591038,886.3911877159671,-1648.0619797337367,582.7503101217544

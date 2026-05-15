@@ -39,7 +39,7 @@ _INVALID_LL_THRESHOLD_PER_TRIAL = -100.0
 # ---------------------------------------------------------------------------
 
 def _log_prior_jax(E_flat, K, N, sigma_k, sigInit_k, is_boundary, sigDay_k,
-                   v_mean=None):
+                   v_mean=None, prior_mean_flat=None):
     """Gaussian random-walk log-prior, fully JAX-traceable.
 
     Args:
@@ -53,10 +53,17 @@ def _log_prior_jax(E_flat, K, N, sigma_k, sigInit_k, is_boundary, sigDay_k,
         v_mean      : (K, N-1) learning-rule mean shift for each transition,
                       or None for a zero-mean random walk.  When provided the
                       transition model becomes  w_{t+1} − w_t ∼ N(v_mean[:,t], σ²).
+        prior_mean_flat : optional (K*N,) absolute prior-mean trajectory.
+                      A constant trajectory centers the initial state at a
+                      non-zero vector while leaving transitions zero-mean.
     """
-    E = jnp.reshape(E_flat, (K, N))
+    if prior_mean_flat is not None:
+        E_centered_flat = E_flat - prior_mean_flat
+    else:
+        E_centered_flat = E_flat
+    E = jnp.reshape(E_centered_flat, (K, N))
 
-    # Initial term: E[:, 0] ~ N(0, sigInit_k^2)
+    # Initial term: E[:, 0] ~ N(prior_mean[:, 0], sigInit_k^2)
     lp = jnp.sum(-0.5 * (E[:, 0] / sigInit_k) ** 2 - jnp.log(sigInit_k))
 
     if N == 1:
@@ -264,10 +271,33 @@ def _compute_v_mean_jax(E, learning_rule, dat_jax, alpha_k, K, N, model_hyper_ja
     return (alpha_k[None, :] * lr_out).T   # (K, N-1)
 
 
+def _prepare_prior_mean_flat(init_mean, K, N, dtype):
+    """Return a JAX flat prior-mean trajectory in the psytrax C-order layout."""
+    if init_mean is None:
+        return jnp.zeros(K * N, dtype=dtype)
+    arr = np.asarray(init_mean, dtype=np.float64)
+    if arr.shape == (K,):
+        mean = np.tile(arr[:, None], (1, N))
+    elif arr.shape == (K, 1):
+        mean = np.tile(arr, (1, N))
+    elif arr.shape == (K, N):
+        mean = arr
+    elif arr.shape == (K * N,):
+        mean = arr.reshape(K, N)
+    else:
+        raise ValueError(
+            f'init_mean must have shape ({K},), ({K}, {N}), or ({K*N},), '
+            f'got {arr.shape}'
+        )
+    if not np.all(np.isfinite(mean)):
+        raise ValueError('init_mean must contain only finite values')
+    return jnp.asarray(mean.flatten(order='C'), dtype=dtype)
+
+
 def getMAP_jax(dat, hyper, n_params, log_lik_fns,
                E0=None, method=None, showOpt=0, pbar=None, map_tol=1e-6,
                execution_plan=None, status_callback=None,
-               learning_rule=None, model_hyper=None):
+               learning_rule=None, model_hyper=None, init_mean=None):
     """MAP estimation using JAX L-BFGS in prior-whitened space.
 
     The inner optimisation loop runs entirely in JAX (GPU-native) in a
@@ -345,6 +375,7 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
 
     # ---- prior-whitening Cholesky (computed once, baked into JIT as constants) ----
     L_diag, L_sub = _prior_chol(K, N, sigma_k, sigInit_k, is_boundary, sigDay_k)
+    prior_mean_flat = _prepare_prior_mean_flat(init_mean, K, N, dtype)
 
     # ---- JIT-compiled objective in whitened z-space ----
     @jax.jit
@@ -355,7 +386,7 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
         (mean log-lik per trial < -50 nats) to give L-BFGS a non-zero gradient
         there.  The barrier is negligible in valid parameter territory.
         """
-        E_flat = _unwhiten(z_flat, K, N, L_diag, L_sub).astype(dtype)
+        E_flat = (_unwhiten(z_flat, K, N, L_diag, L_sub) + prior_mean_flat).astype(dtype)
         E      = jnp.reshape(E_flat, (K, N))
         logli  = log_likelihood_fn(E, dat_jax, model_hyper_jax)
 
@@ -367,7 +398,7 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
             v_mean = None
 
         lp = _log_prior_jax(E_flat, K, N, sigma_k, sigInit_k, is_boundary, sigDay_k,
-                            v_mean=v_mean)
+                            v_mean=v_mean, prior_mean_flat=prior_mean_flat)
         # Barrier: sigmoid activates near 0 when logli/N << -50 (sentinel territory),
         # and stays ≈0 in valid territory (logli/N typically > -5).
         sentinel_weight = jax.nn.sigmoid(-logli / N - 50.0)
@@ -377,7 +408,7 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
     @jax.jit
     def neg_log_post_exact(z_flat):
         """Unpenalised neg-log-posterior (used for validity check and final evaluation)."""
-        E_flat = _unwhiten(z_flat, K, N, L_diag, L_sub).astype(dtype)
+        E_flat = (_unwhiten(z_flat, K, N, L_diag, L_sub) + prior_mean_flat).astype(dtype)
         E      = jnp.reshape(E_flat, (K, N))
         logli  = log_likelihood_fn(E, dat_jax, model_hyper_jax)
 
@@ -388,7 +419,7 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
             v_mean = None
 
         lp = _log_prior_jax(E_flat, K, N, sigma_k, sigInit_k, is_boundary, sigDay_k,
-                            v_mean=v_mean)
+                            v_mean=v_mean, prior_mean_flat=prior_mean_flat)
         return -(logli + lp)
 
     # ---- initial parameters ----
@@ -402,7 +433,7 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
     else:
         E0_flat = E0.flatten().astype(dtype)
 
-    z0_flat = _whiten(E0_flat, K, N, L_diag, L_sub)
+    z0_flat = _whiten(E0_flat - prior_mean_flat, K, N, L_diag, L_sub)
 
     # ---- run L-BFGS via optax ----
     try:
@@ -460,7 +491,7 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
         print(f'  JAX L-BFGS: final grad norm = {grad_norm:.2e}')
 
     # Convert back to e-space for Hessian computation
-    E_current = _unwhiten(z_current, K, N, L_diag, L_sub)
+    E_current = _unwhiten(z_current, K, N, L_diag, L_sub) + prior_mean_flat
     eMode = np.array(E_current, dtype=np.float64)
 
     # ---- Hessian + Laplace evidence (numpy/scipy, cheap one-time cost) ----
@@ -482,7 +513,7 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
         with ctx:
             pT, lT = getPosteriorTerms(
                 eMode, dat, hyper, log_lik_fns, method=None,
-                model_hyper=model_hyper,
+                model_hyper=model_hyper, init_mean=np.asarray(prior_mean_flat),
             )
     finally:
         _map_module._JAX_DTYPE = prev_dtype
@@ -504,6 +535,7 @@ def getMAP_jax(dat, hyper, n_params, log_lik_fns,
         v_mean_flat = build_v_mean_flat(lr_hat, np.asarray(hyper['alpha']), K, N)
         pT['logprior'] = correct_logprior_for_learning_rule(
             pT['logprior'], eMode, v_mean_flat, invSigma, K, N,
+            prior_mean_flat=np.asarray(prior_mean_flat),
         )
 
     hess = {

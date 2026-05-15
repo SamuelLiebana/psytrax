@@ -9,14 +9,16 @@ from psytrax._helper.invBlkTriDiag import getCredibleInterval
 from psytrax._helper.jacHessCheck import compHess
 from psytrax._helper.helperFunctions import (
     DT_X_D, make_invSigma, sparse_logdet,
-    build_v_mean_flat, compute_invC_u, correct_logprior_for_learning_rule,
+    build_v_mean_flat, build_prior_mean_flat, compute_invC_mean, compute_invC_u,
+    correct_logprior_for_learning_rule,
 )
 
 
 def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
              method=None, showOpt=0, jump=2, hess_calc='weights', show_progress=True,
              map_tol=1e-6, execution_plan=None, status_callback=None,
-             learning_rule=None, model_hyper=None, model_hyper_optList=None):
+             learning_rule=None, model_hyper=None, model_hyper_optList=None,
+             init_mean=None):
     """Optimise hyperparameters and return MAP weights.
 
     Uses the decoupled Laplace approximation to find the hyperparameter values
@@ -84,6 +86,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         'learning_rule': learning_rule,
         'model_hyper': current_model_hyper,
         'model_hyper_optList': list(model_hyper_optList),
+        'init_mean': init_mean,
     }
 
     while True:
@@ -99,6 +102,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
                 status_callback=status_callback,
                 learning_rule=learning_rule,
                 model_hyper=current_model_hyper,
+                init_mean=init_mean,
             )
         except RuntimeError as exc:
             msg = str(exc).lower()
@@ -127,7 +131,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
                 ddlogprior = best_llstruct['pT']['ddlogprior']
                 LL_v = _compute_LL_v_pure(
                     eMode, H, ddlogprior, best_llstruct, best_hyper,
-                    dat, has_lr, K, N,
+                    dat, has_lr, K, N, init_mean=init_mean,
                 )
                 opt_keywords.update({
                     'hyper': best_hyper,
@@ -181,7 +185,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
             ddlogprior = best_llstruct['pT']['ddlogprior']
             LL_v = _compute_LL_v_pure(
                 eMode, H, ddlogprior, best_llstruct, best_hyper,
-                dat, has_lr, K, N,
+                dat, has_lr, K, N, init_mean=init_mean,
             )
             opt_keywords.update({
                 'hyper': best_hyper,
@@ -201,7 +205,7 @@ def hyperOpt(dat, hyper, n_params, log_lik_fns, optList, E0=None,
         ddlogprior = llstruct['pT']['ddlogprior']
         LL_v = _compute_LL_v_pure(
             eMode, H, ddlogprior, llstruct, current_hyper,
-            dat, has_lr, K, N,
+            dat, has_lr, K, N, init_mean=init_mean,
         )
         opt_keywords.update({
             'hyper': current_hyper,
@@ -393,6 +397,9 @@ def _minimize_hyperparameters_jax(optVals, opt_keywords, bounds, opts,
         # The learning-rule objective has an extra prior-mean correction; keep
         # the mature SciPy path until the JAX version covers that case too.
         return _skip('learning_rule is set (REINFORCE / custom)')
+    if opt_keywords.get('init_mean') is not None:
+        # The JAX runner currently assumes a zero absolute prior mean.
+        return _skip('init_mean is set')
 
     try:
         import jax
@@ -892,33 +899,42 @@ def _emit_status(callback, message, stage=None, **extra):
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _compute_LL_v_pure(eMode, H, ddlogprior, llstruct, hyper, dat, has_lr, K, N):
+def _compute_LL_v_pure(eMode, H, ddlogprior, llstruct, hyper, dat, has_lr, K, N,
+                       init_mean=None):
     """Compute the "pure likelihood" vector for the decoupled Laplace step.
 
     Without a learning rule (zero prior mean):
         LL_v = -(H + ddlogprior) @ eMode   (= dlogli - H @ eMode)
 
-    With a learning rule (non-zero prior mean u):
-        LL_v_pure = -(H + ddlogprior) @ eMode - invC @ u
+    With a learning rule and/or initial prior mean:
+        LL_v_pure = -(H + ddlogprior) @ eMode - prior_natural_parameter
                   = dlogli - H @ eMode
 
-    The subtraction of invC @ u ensures that LL_v encodes only the likelihood
-    information.  The prior mean contribution is re-added in the decoupled loss
-    function for the new hyperparameters.
+    The subtraction ensures that LL_v encodes only the likelihood information.
+    Prior mean contributions are re-added in the decoupled loss function for
+    the new hyperparameters.
     """
     LL_v = -(H + ddlogprior) @ eMode
+
+    dat.setdefault('dayLength', np.array([], dtype=int))
+    dat.setdefault('missing_trials', None)
+    day_lengths = dat.get('dayLength', np.array([], dtype=int))
+    if len(day_lengths) > 0:
+        days_arr = np.cumsum(day_lengths, dtype=int)[:-1]
+    else:
+        days_arr = np.array([], dtype=int)
+    invSigma = None
+
+    if init_mean is not None:
+        invSigma = make_invSigma(hyper, days_arr, dat.get('missing_trials'), N, K)
+        mean_flat = build_prior_mean_flat(init_mean, K, N)
+        LL_v = LL_v - compute_invC_mean(mean_flat, invSigma, K, N)
 
     if has_lr and llstruct.get('lr_hat') is not None:
         alpha = hyper.get('alpha')
         if alpha is not None:
-            dat.setdefault('dayLength', np.array([], dtype=int))
-            dat.setdefault('missing_trials', None)
-            day_lengths = dat.get('dayLength', np.array([], dtype=int))
-            if len(day_lengths) > 0:
-                days_arr = np.cumsum(day_lengths, dtype=int)[:-1]
-            else:
-                days_arr = np.array([], dtype=int)
-            invSigma = make_invSigma(hyper, days_arr, dat.get('missing_trials'), N, K)
+            if invSigma is None:
+                invSigma = make_invSigma(hyper, days_arr, dat.get('missing_trials'), N, K)
             v_mean_flat = build_v_mean_flat(llstruct['lr_hat'], alpha, K, N)
             invC_u = compute_invC_u(v_mean_flat, invSigma, K, N)
             LL_v = LL_v - invC_u
@@ -993,6 +1009,7 @@ def _hyperOpt_lossfun(optVals, keywords):
     learning_rule = keywords.get('learning_rule')
     lr_hat = keywords.get('lr_hat')   # (K, N-1) or None
     has_lr = learning_rule is not None and lr_hat is not None
+    init_mean = keywords.get('init_mean')
 
     hyper = keywords['hyper'].copy()
     model_hyper = dict(keywords.get('model_hyper') or {})
@@ -1017,34 +1034,39 @@ def _hyperOpt_lossfun(optVals, keywords):
 
     try:
         invSigma = make_invSigma(hyper, days_arr, missing_trials, w_N, K)
-        ddlogprior = -DT_X_D(invSigma, K)
+        invC = DT_X_D(invSigma, K)
+        ddlogprior = -invC
         H = keywords['LL_terms']['H']
         LL_v = keywords['LL_v']          # "pure likelihood" vector
         Lambda = -H - ddlogprior
 
         # Build the RHS of the decoupled system
+        rhs = LL_v
+        prior_mean_flat = build_prior_mean_flat(init_mean, K, w_N)
+        if prior_mean_flat is not None:
+            rhs = rhs + invC @ prior_mean_flat
+
         if has_lr:
             alpha_new = hyper.get('alpha')
             if alpha_new is not None:
                 v_mean_flat = build_v_mean_flat(lr_hat, alpha_new, K, N)
                 invC_u_new = compute_invC_u(v_mean_flat, invSigma, K, N)
-                rhs = LL_v + invC_u_new
+                rhs = rhs + invC_u_new
             else:
-                rhs = LL_v
                 v_mean_flat = None
         else:
-            rhs = LL_v
             v_mean_flat = None
 
         E_flat = linalg.spsolve(Lambda, rhs)
 
         pT, lT = getPosteriorTerms(E_flat, dat, hyper, log_lik_fns, method,
-                                   model_hyper=model_hyper)
+                                   model_hyper=model_hyper, init_mean=init_mean)
 
         # Correct the log-prior for the learning-rule mean shift
         if has_lr and v_mean_flat is not None:
             pT['logprior'] = correct_logprior_for_learning_rule(
                 pT['logprior'], E_flat, v_mean_flat, invSigma, K, N,
+                prior_mean_flat=prior_mean_flat,
             )
 
         logterm_post = 0.5 * sparse_logdet(-ddlogprior - lT['ddlogli']['H'])

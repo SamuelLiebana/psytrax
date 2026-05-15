@@ -8,6 +8,7 @@ from psytrax._helper.memoize import memoize
 from psytrax._helper.jacHessCheck import jacHessCheck, jacEltsCheck
 from psytrax._helper.helperFunctions import (
     DT_X_D,
+    build_prior_mean_flat,
     sparse_logdet,
     make_invSigma,
     myblk_diags,
@@ -21,7 +22,7 @@ _JAX_DTYPE = jnp.float64
 
 
 def getMAP(dat, hyper, n_params, log_lik_fns, method=None, E0=None, showOpt=0,
-           pbar=None, map_tol=1e-6, model_hyper=None):
+           pbar=None, map_tol=1e-6, model_hyper=None, init_mean=None):
     """Estimate MAP parameters under a Gaussian random-walk prior.
 
     Args:
@@ -80,7 +81,7 @@ def getMAP(dat, hyper, n_params, log_lik_fns, method=None, E0=None, showOpt=0,
     dat.setdefault('missing_trials', None)
 
     # --- MAP optimisation ---
-    prior_cache = make_prior_cache(dat, hyper, K, method)
+    prior_cache = make_prior_cache(dat, hyper, K, method, init_mean=init_mean)
     lossfun = memoize(negLogPost)
     if model_hyper is None:
         model_hyper = {}
@@ -170,7 +171,7 @@ def negLogPost(E_flat, dat, prior_cache, log_lik_fns, method=None, model_hyper=N
 
 
 def getPosteriorTerms(E_flat, dat, hyper_or_prior, log_lik_fns, method=None,
-                      model_hyper=None):
+                      model_hyper=None, init_mean=None):
     """Compute prior and likelihood terms (with derivatives) at E_flat.
 
     Args:
@@ -194,7 +195,8 @@ def getPosteriorTerms(E_flat, dat, hyper_or_prior, log_lik_fns, method=None,
         hyper_or_prior
         if isinstance(hyper_or_prior, dict) and 'invC' in hyper_or_prior
         else make_prior_cache(
-            dat, hyper_or_prior, int(len(E_flat) / len(dat['r'])), method
+            dat, hyper_or_prior, int(len(E_flat) / len(dat['r'])), method,
+            init_mean=init_mean,
         )
     )
     K = prior_cache['K']
@@ -206,8 +208,10 @@ def getPosteriorTerms(E_flat, dat, hyper_or_prior, log_lik_fns, method=None,
     # --- Prior ---
     invC = prior_cache['invC']
     logdet_C = prior_cache['logdet_C']
-    logprior = 0.5 * (-logdet_C - E_flat @ invC @ E_flat)
-    dlogprior = -invC @ E_flat
+    prior_mean_flat = prior_cache.get('prior_mean_flat')
+    centered_E = E_flat if prior_mean_flat is None else E_flat - prior_mean_flat
+    logprior = 0.5 * (-logdet_C - centered_E @ invC @ centered_E)
+    dlogprior = -invC @ centered_E
     ddlogprior = prior_cache['ddlogprior']
 
     priorTerms = {'logprior': logprior, 'dlogprior': dlogprior, 'ddlogprior': ddlogprior}
@@ -254,7 +258,7 @@ def _to_jax_pytree(d, dtype):
     return d
 
 
-def make_prior_cache(dat, hyper, n_params, method=None):
+def make_prior_cache(dat, hyper, n_params, method=None, init_mean=None):
     """Precompute prior quantities that stay fixed within a MAP solve."""
     dat.setdefault('dayLength', onp.array([], dtype=int))
     dat.setdefault('missing_trials', None)
@@ -279,6 +283,7 @@ def make_prior_cache(dat, hyper, n_params, method=None):
 
     invSigma = make_invSigma(hyper, days, missing_trials, w_N, K)
     invC = DT_X_D(invSigma, K)
+    prior_mean_flat = build_prior_mean_flat(init_mean, K, w_N)
 
     return {
         'K': K,
@@ -286,4 +291,5 @@ def make_prior_cache(dat, hyper, n_params, method=None):
         'invC': invC,
         'ddlogprior': -invC,
         'logdet_C': -onp.sum(jnp.log(invSigma.diagonal())),
+        'prior_mean_flat': prior_mean_flat,
     }

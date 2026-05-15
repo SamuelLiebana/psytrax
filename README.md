@@ -1,5 +1,7 @@
 # psytrax
 
+[![Docs](https://github.com/SamuelLiebana/psytrax/actions/workflows/docs.yml/badge.svg)](https://github.com/SamuelLiebana/psytrax/actions/workflows/docs.yml)
+
 **Empirical Bayes fitting for trial-by-trial decision models**
 
 psytrax fits a Gaussian random-walk prior over a sequence of K parameters across N trials and optimises the prior variance (hyperparameters) by maximising the marginal likelihood (evidence) using the Laplace approximation.
@@ -41,6 +43,24 @@ For development and tests only:
 ```bash
 pip install -e .[dev]
 ```
+
+## Documentation
+
+The public documentation is published with GitHub Pages:
+
+> **[https://samuelliebana.github.io/psytrax/](https://samuelliebana.github.io/psytrax/)**
+
+The documentation is being built with Sphinx and organised around the Diataxis
+framework: tutorials, user guide/how-to material, API reference, and community
+pages. To build it locally:
+
+```bash
+pip install -e ".[docs]"
+make -C docs html
+```
+
+Start with `docs/source/tutorials/first-fit.md` for a narrative walkthrough
+written for an experimentalist fitting their first behavioural dataset.
 
 ---
 

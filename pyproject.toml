@@ -32,6 +32,14 @@ dev = [
     "streamlit>=1.30",
     "ONE-api>=2.0",
 ]
+docs = [
+    "myst-parser>=4",
+    "numpydoc>=1.8",
+    "pydata-sphinx-theme>=0.16",
+    "sphinx>=8",
+    "sphinx-copybutton>=0.5",
+    "sphinx-design>=0.6",
+]
 
 [tool.setuptools.packages.find]
 exclude = ["tests", "tests.*"]

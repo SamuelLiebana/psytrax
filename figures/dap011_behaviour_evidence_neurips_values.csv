@@ -1,0 +1,4 @@
+model,fit_path,n_params,n_trials,log_evidence,delta_log_evidence_vs_glm
+GLM (shallow),fits/DAP011_behaviour_logistic_zero_mean_magnitude_fit.npy,2,5413,-3031.7773850450103,0.0
+GLM (shallow) + REINFORCE,fits/DAP011_behaviour_logistic_reinforce_side_fit.npy,2,5413,-3031.213750632938,0.5636344120721333
+Deep + TE rule,fits/DAP011_behaviour_tutor_executor_rule_side_fit.npy,9,5413,-2388.875547639873,642.9018374051375

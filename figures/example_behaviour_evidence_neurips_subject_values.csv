@@ -1,0 +1,85 @@
+subject,model_id,delta_log_evidence_vs_glm,log_evidence,model
+DAP007,glm_shallow_zero_mean,0.0,-7299.669735951873,GLM (shallow)
+DAP009,glm_shallow_zero_mean,0.0,-2538.931467548846,GLM (shallow)
+DAP011,glm_shallow_zero_mean,0.0,-3031.7773850450103,GLM (shallow)
+DAP013,glm_shallow_zero_mean,0.0,-2393.2123083557744,GLM (shallow)
+DAP014,glm_shallow_zero_mean,0.0,-1541.2815432183888,GLM (shallow)
+DAP015,glm_shallow_zero_mean,0.0,-3418.8138573452343,GLM (shallow)
+DAP017,glm_shallow_zero_mean,0.0,-3141.4177987842486,GLM (shallow)
+DAP022,glm_shallow_zero_mean,0.0,-3403.6871194175183,GLM (shallow)
+DAP023,glm_shallow_zero_mean,0.0,-2772.1910256544907,GLM (shallow)
+DAP024,glm_shallow_zero_mean,0.0,-4570.423091078672,GLM (shallow)
+DAP027,glm_shallow_zero_mean,0.0,-1482.0854984023808,GLM (shallow)
+DAP028,glm_shallow_zero_mean,0.0,-3526.926341921302,GLM (shallow)
+DAP033,glm_shallow_zero_mean,0.0,-1227.9319414926176,GLM (shallow)
+DAP039,glm_shallow_zero_mean,0.0,-1801.8552067130113,GLM (shallow)
+DAP044,glm_shallow_zero_mean,0.0,-151.65998543633486,GLM (shallow)
+DAP046,glm_shallow_zero_mean,0.0,-3370.8047353669535,GLM (shallow)
+DAP048,glm_shallow_zero_mean,0.0,-1333.4922562146348,GLM (shallow)
+DAP050,glm_shallow_zero_mean,0.0,-4491.264815313829,GLM (shallow)
+DAP051,glm_shallow_zero_mean,0.0,-3331.3156333093575,GLM (shallow)
+DAP110,glm_shallow_zero_mean,0.0,-1301.6546970666386,GLM (shallow)
+DAP156,glm_shallow_zero_mean,0.0,-3436.386528366209,GLM (shallow)
+DAP007,glm_shallow_reinforce,-0.01617672180873342,-7299.685912673682,GLM (shallow) + R
+DAP009,glm_shallow_reinforce,0.4549546220587217,-2538.476512926787,GLM (shallow) + R
+DAP011,glm_shallow_reinforce,0.5636344120721333,-3031.213750632938,GLM (shallow) + R
+DAP013,glm_shallow_reinforce,-0.010333951744541992,-2393.222642307519,GLM (shallow) + R
+DAP014,glm_shallow_reinforce,0.9037060719638248,-1540.377837146425,GLM (shallow) + R
+DAP015,glm_shallow_reinforce,-0.006461842414864805,-3418.820319187649,GLM (shallow) + R
+DAP017,glm_shallow_reinforce,-0.008982210085378028,-3141.426780994334,GLM (shallow) + R
+DAP022,glm_shallow_reinforce,-0.012676297803409398,-3403.6997957153217,GLM (shallow) + R
+DAP023,glm_shallow_reinforce,0.3439135469379835,-2771.8471121075527,GLM (shallow) + R
+DAP024,glm_shallow_reinforce,-0.10467538222292205,-4570.527766460895,GLM (shallow) + R
+DAP027,glm_shallow_reinforce,-0.009746637597345398,-1482.0952450399782,GLM (shallow) + R
+DAP028,glm_shallow_reinforce,0.09340718627208844,-3526.83293473503,GLM (shallow) + R
+DAP033,glm_shallow_reinforce,0.002613913791719824,-1227.929327578826,GLM (shallow) + R
+DAP039,glm_shallow_reinforce,0.007761387912978535,-1801.8474453250983,GLM (shallow) + R
+DAP044,glm_shallow_reinforce,0.29255338462598957,-151.36743205170887,GLM (shallow) + R
+DAP046,glm_shallow_reinforce,0.002948574045149144,-3370.8017867929084,GLM (shallow) + R
+DAP048,glm_shallow_reinforce,0.051835906071573845,-1333.4404203085633,GLM (shallow) + R
+DAP050,glm_shallow_reinforce,-0.015112841836526059,-4491.279928155665,GLM (shallow) + R
+DAP051,glm_shallow_reinforce,-0.005511329796718201,-3331.321144639154,GLM (shallow) + R
+DAP110,glm_shallow_reinforce,-0.003812555485865232,-1301.6585096221245,GLM (shallow) + R
+DAP156,glm_shallow_reinforce,-0.06780324735518661,-3436.454331613564,GLM (shallow) + R
+DAP007,deep_zero_mean,-21449.338172790496,-28749.00790874237,"Deep, 0-mean"
+DAP009,deep_zero_mean,559.2141896088215,-1979.7172779400244,"Deep, 0-mean"
+DAP011,deep_zero_mean,1812.8163403830258,-1218.9610446619845,"Deep, 0-mean"
+DAP013,deep_zero_mean,503.1928607709376,-1890.0194475848368,"Deep, 0-mean"
+DAP014,deep_zero_mean,-490.80716324538685,-2032.0887064637757,"Deep, 0-mean"
+DAP015,deep_zero_mean,2170.08237283352,-1248.7314845117144,"Deep, 0-mean"
+DAP017,deep_zero_mean,1904.7582669400547,-1236.659531844194,"Deep, 0-mean"
+DAP022,deep_zero_mean,2114.701996055832,-1288.9851233616864,"Deep, 0-mean"
+DAP023,deep_zero_mean,1185.3693780074498,-1586.821647647041,"Deep, 0-mean"
+DAP024,deep_zero_mean,-5396.247801896789,-9966.67089297546,"Deep, 0-mean"
+DAP027,deep_zero_mean,-268.2383818387334,-1750.3238802411142,"Deep, 0-mean"
+DAP028,deep_zero_mean,1352.9559435368283,-2173.970398384474,"Deep, 0-mean"
+DAP033,deep_zero_mean,-358.0697670948648,-1586.0017085874824,"Deep, 0-mean"
+DAP039,deep_zero_mean,-137.2171978674744,-1939.0724045804857,"Deep, 0-mean"
+DAP044,deep_zero_mean,-30.577705011032776,-182.23769044736764,"Deep, 0-mean"
+DAP046,deep_zero_mean,-19.946605885837926,-3390.7513412527915,"Deep, 0-mean"
+DAP048,deep_zero_mean,-300.4704493678071,-1633.962705582442,"Deep, 0-mean"
+DAP050,deep_zero_mean,-62.518435705169395,-4553.783251018998,"Deep, 0-mean"
+DAP051,deep_zero_mean,1700.5102958884963,-1630.8053374208612,"Deep, 0-mean"
+DAP110,deep_zero_mean,-357.2680076147917,-1658.9227046814303,"Deep, 0-mean"
+DAP156,deep_zero_mean,1021.7139558259296,-2414.6725725402794,"Deep, 0-mean"
+DAP007,deep_te_rule,-10516.417487079729,-17816.0872230316,Deep + TE rule
+DAP009,deep_te_rule,-289.774224442539,-2828.705691991385,Deep + TE rule
+DAP011,deep_te_rule,-883.1758761342567,-3914.953261179267,Deep + TE rule
+DAP013,deep_te_rule,49.96342998155524,-2343.248878374219,Deep + TE rule
+DAP014,deep_te_rule,-335.31841785866004,-1876.5999610770489,Deep + TE rule
+DAP015,deep_te_rule,-1686.3259003280582,-5105.1397576732925,Deep + TE rule
+DAP017,deep_te_rule,-844.1682807088946,-3985.586079493143,Deep + TE rule
+DAP022,deep_te_rule,-759.7434782442506,-4163.430597661769,Deep + TE rule
+DAP023,deep_te_rule,-319.95951488810533,-3092.150540542596,Deep + TE rule
+DAP024,deep_te_rule,-6239.753894135169,-10810.17698521384,Deep + TE rule
+DAP027,deep_te_rule,-38.48420428629265,-1520.5697026886735,Deep + TE rule
+DAP028,deep_te_rule,-1949.7625421946505,-5476.6888841159525,Deep + TE rule
+DAP033,deep_te_rule,-238.1040923132132,-1466.0360338058308,Deep + TE rule
+DAP039,deep_te_rule,-238.34476845966878,-2040.19997517268,Deep + TE rule
+DAP044,deep_te_rule,-36.096872399441054,-187.75685783577592,Deep + TE rule
+DAP046,deep_te_rule,-226.39275748816,-3597.1974928551135,Deep + TE rule
+DAP048,deep_te_rule,-368.04842295161507,-1701.54067916625,Deep + TE rule
+DAP050,deep_te_rule,-5882.372149023082,-10373.63696433691,Deep + TE rule
+DAP051,deep_te_rule,-1227.8341229165817,-4559.149756225939,Deep + TE rule
+DAP110,deep_te_rule,-457.58539931417,-1759.2400963808086,Deep + TE rule
+DAP156,deep_te_rule,-2121.6025992234936,-5557.989127589703,Deep + TE rule
