@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 392 96" role="img" aria-labelledby="title desc">
   <title id="title">psytrax logo</title>
-  <desc id="desc">A psytrax wordmark with psychometric curves evolving during learning.</desc>
+  <desc id="desc">A psytrax wordmark with grayscale psychometric curves evolving during learning.</desc>
   <defs>
     <linearGradient id="mark-bg" x1="10" y1="12" x2="88" y2="84" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#4aa1bd"/>
@@ -9,10 +9,10 @@
   </defs>
   <rect x="10" y="12" width="74" height="72" rx="18" fill="url(#mark-bg)"/>
   <path d="M23 68 H72 M25 70 V26" fill="none" stroke="#e8fbf6" stroke-width="3.4" stroke-linecap="round" opacity="0.78"/>
-  <path d="M27 60 C40 59 54 58 70 56" fill="none" stroke="#f1b65e" stroke-width="4.8" stroke-linecap="round"/>
-  <path d="M27 52 C43 51 53 45 70 35" fill="none" stroke="#dffbf4" stroke-width="4.8" stroke-linecap="round"/>
-  <path d="M27 62 C45 62 50 28 70 25" fill="none" stroke="#ffffff" stroke-width="5.2" stroke-linecap="round"/>
-  <circle cx="27" cy="62" r="3.4" fill="#ffffff"/>
-  <circle cx="70" cy="25" r="3.4" fill="#f1b65e"/>
+  <path d="M27 58 C40 58 56 58 70 58" fill="none" stroke="#ffffff" stroke-width="4.6" stroke-linecap="round"/>
+  <path d="M27 58 C38 56 43 48 49 39 C55 32 62 31 70 31" fill="none" stroke="#9ea6aa" stroke-width="4.8" stroke-linecap="round"/>
+  <path d="M27 61 C36 60 41 50 46 39 C53 25 62 25 70 25" fill="none" stroke="#111820" stroke-width="5.2" stroke-linecap="round"/>
+  <circle cx="27" cy="61" r="3.4" fill="#ffffff"/>
+  <circle cx="70" cy="25" r="3.4" fill="#111820"/>
   <text x="102" y="62" fill="#f2f7f8" font-family="Inter, Arial, sans-serif" font-size="45" font-weight="800" letter-spacing="0">psy<tspan fill="#6bd4b0">trax</tspan></text>
 </svg>
