@@ -1,10 +1,9 @@
-"""Fit and compare all built-in psytrax models on mouse DAP009.
+"""Fit and compare the current built-in psytrax models on mouse DAP009.
 
-Fits four models on the first N_TRIALS trials:
+Fits three models on the first N_TRIALS trials:
   1. Logistic regression  (choice only, K=2)
   2. DDM                  (choice + RT, K=4)
-  3. Race model           (choice + RT, K=6)
-  4. MLP                  (choice only, K=13)
+  3. Race model           (choice + RT, K=5 + sig_i)
 
 Results are saved to fits/ and compared by log evidence.
 Run the Streamlit app afterwards to visualise:
@@ -22,7 +21,6 @@ import psytrax
 import psytrax.models.logistic  as logistic_model
 import psytrax.models.ddm       as ddm_model
 import psytrax.models.race      as race_model
-import psytrax.models.mlp       as mlp_model
 
 CSV      = os.path.join(os.path.dirname(__file__),
            '../../learning_race_model/mouse_data/empirical_behav_normalised.csv')
@@ -85,10 +83,6 @@ MODELS = {
     'race': dict(
         module      = race_model,
         needs_rt    = True,
-    ),
-    'mlp': dict(
-        module      = mlp_model,
-        needs_rt    = False,
     ),
 }
 

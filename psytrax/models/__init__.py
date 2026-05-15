@@ -1,1 +1,1 @@
-from psytrax.models import race, ddm, logistic, mlp
+from psytrax.models import race, ddm, logistic

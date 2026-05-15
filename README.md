@@ -50,9 +50,8 @@ The public documentation is published with GitHub Pages:
 
 > **[https://samuelliebana.github.io/psytrax/](https://samuelliebana.github.io/psytrax/)**
 
-The documentation is being built with Sphinx and organised around the Diataxis
-framework: tutorials, user guide/how-to material, API reference, and community
-pages. To build it locally:
+The documentation is being built with Sphinx and organised as tutorials, user
+guide/how-to material, API reference, and community pages. To build it locally:
 
 ```bash
 pip install -e ".[docs]"
@@ -182,9 +181,7 @@ DATA_SPEC = {
 |-------|------|---|-----|-------------|
 | Logistic | `models/logistic.py` | 2 | No | Binary logistic regression |
 | DDM (exact) | `models/ddm.py` | 4 | Yes | Drift diffusion model — Navarro & Fuss (2009) / Bogacz et al. (2006) series solution |
-| DDM (approx) | `models/ddm_approx.py` | 3 | Yes | Drift diffusion model — inverse-Gaussian single-barrier approximation |
 | Race | `models/race.py` | 5 + `sig_i` | Yes | Race model with separate accumulators (sig_i is a model_hyper estimated by EB) |
-| MLP | `models/mlp.py` | 13 | No | 1→4→1 MLP with tanh hidden layer |
 
 Each model exposes: `log_lik_trial`, `N_PARAMS`, `PARAM_NAMES`, `default_hyper()`, `default_E0(N)`, `default_learning_rule()`.
 For a shared random-walk variance across parameters, call `default_hyper(shared_sigma=True)`.

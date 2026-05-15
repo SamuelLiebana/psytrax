@@ -13,7 +13,5 @@ entry points are listed first.
    psytrax.recover
    psytrax.models.logistic
    psytrax.models.ddm
-   psytrax.models.ddm_approx
    psytrax.models.race
-   psytrax.models.mlp
    psytrax.learning_rules

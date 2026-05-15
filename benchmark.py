@@ -31,7 +31,7 @@ _DATA_DIR = os.path.join(_REPO_DIR, 'data')
 # Models to benchmark: (label, module_path, needs_RT)
 MODELS = [
     ('Logistic (K=2)',  'psytrax.models.logistic',   False),
-    ('DDM approx (K=3)', 'psytrax.models.ddm_approx', True),
+    ('DDM exact (K=4)', 'psytrax.models.ddm', True),
     ('Race fixed sig_i (K=5)', 'psytrax.models.race', True),
 ]
 

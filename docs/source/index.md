@@ -55,7 +55,7 @@ Use psytrax when you want to:
 - compare candidate behavioural models with approximate marginal likelihood;
 - add learning rules or model-level hyperparameters without rewriting the
   inference engine;
-- start from built-in logistic, DDM, race, or MLP models, then move to your own
+- start from built-in logistic, DDM, or race models, then move to your own
   JAX-compatible per-trial likelihood.
 
 ```{toctree}

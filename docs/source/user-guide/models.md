@@ -10,9 +10,7 @@ default hyperparameters, initial values, simulators, and data specifications.
 | --- | --- | --- | --- | --- |
 | Logistic | `psytrax.models.logistic` | yes | no | Fast choice-only baseline |
 | DDM | `psytrax.models.ddm` | yes | yes | Exact diffusion-model likelihood |
-| DDM approximation | `psytrax.models.ddm_approx` | yes | yes | Faster approximate RT model |
 | Race | `psytrax.models.race` | yes | yes | Choice and RT fits with optional dopamine term |
-| MLP | `psytrax.models.mlp` | yes | no | Flexible nonlinear choice model |
 
 ## A minimal custom likelihood
 

@@ -34,6 +34,11 @@ html[data-theme="dark"] {
   max-width: 1040px;
 }
 
+.navbar-brand img {
+  max-height: 42px;
+  width: auto;
+}
+
 .sd-card-title {
   color: var(--psytrax-text);
 }

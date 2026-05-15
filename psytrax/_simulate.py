@@ -17,8 +17,8 @@ Public API
   the fit result with the ground-truth trajectory attached as ``true_params``.
 
 Both functions are model-agnostic: they accept any user-defined sampler /
-likelihood pair.  See the built-in models (race, logistic, ddm, ddm_approx)
-for ready-made ``sample_trial`` implementations.
+likelihood pair.  See the built-in models (race, logistic, ddm) for ready-made
+``sample_trial`` implementations.
 """
 
 from __future__ import annotations

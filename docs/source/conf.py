@@ -33,9 +33,14 @@ exclude_patterns = ["snippets/*"]
 
 html_theme = "pydata_sphinx_theme"
 html_title = "psytrax"
+html_logo = "_static/psytrax_logo.svg"
 html_static_path = ["_static"]
 html_css_files = ["psytrax.css"]
 html_theme_options = {
+    "logo": {
+        "image_light": "_static/psytrax_logo.svg",
+        "image_dark": "_static/psytrax_logo_dark.svg",
+    },
     "icon_links": [
         {
             "name": "Zulip",
