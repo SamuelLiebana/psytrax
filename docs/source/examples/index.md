@@ -1,11 +1,11 @@
 # Examples
 
 Examples show complete scientific workflows. Start with a small choice-only fit
-if you are checking your installation, then move to reaction-time models, model
-recovery, and data-loading examples.
+if you are checking your installation, then move to rendered notebooks for
+documentation figures, built-in model comparison, and data-loading examples.
 
 <div class="psytrax-example-gallery">
-  <figure class="psytrax-example-wide">
+  <figure>
     <img src="../_static/images/examples/long-term-learning-task.png" alt="Long-term learning behavioural task timeline with stimulus onset, auditory go cue, choice, stimulus centre, reward, and stimulus contrast values." />
     <figcaption><strong>Behavioural task.</strong> A long-term learning task with stimulus contrast, go cue, choice, stimulus centering, and reward events aligned within each trial.</figcaption>
   </figure>
@@ -29,35 +29,36 @@ recovery, and data-loading examples.
 
 ## Worked examples
 
-<div class="psytrax-worked-examples">
-  <article class="psytrax-worked-example">
-    <img src="../_static/images/examples/dap014-race-trajectories.png" alt="DAP014 race-model parameter trajectories." />
-    <div class="psytrax-worked-example-body">
-      <h3>Recreate the documentation figures</h3>
-      <p>Load the bundled DAP014 race-model fit and regenerate the trajectory, psychometric, and chronometric panels used throughout the docs.</p>
-      <p><code>generate_dap014_docs_figures.py</code></p>
-      <p class="psytrax-script-link"><a href="https://github.com/SamuelLiebana/psytrax/blob/main/examples/generate_dap014_docs_figures.py">View script</a></p>
-    </div>
-  </article>
-  <article class="psytrax-worked-example">
-    <img src="../_static/images/examples/model-evidence-comparison.png" alt="Model evidence comparison plot." />
-    <div class="psytrax-worked-example-body">
-      <h3>Compare built-in models</h3>
-      <p>Fit logistic, diffusion, and race-model likelihoods to the same mouse and compare them with the approximate log evidence returned by psytrax.</p>
-      <p><code>compare_models_DAP009.py</code></p>
-      <p class="psytrax-script-link"><a href="https://github.com/SamuelLiebana/psytrax/blob/main/examples/compare_models_DAP009.py">View script</a></p>
-    </div>
-  </article>
-  <article class="psytrax-worked-example">
-    <img src="../_static/images/examples/ibl-integration-workflow.svg" alt="IBL ONE to psytrax data workflow." />
-    <div class="psytrax-worked-example-body">
-      <h3>Load public IBL trials</h3>
-      <p>Search subjects and sessions with ONE, handle common public IBL trial layouts, and convert the result to a psytrax data dictionary.</p>
-      <p><code>ibl_one_integration_walkthrough.ipynb</code></p>
-      <p class="psytrax-script-link"><a href="https://github.com/SamuelLiebana/psytrax/blob/main/examples/ibl_one_integration_walkthrough.ipynb">View notebook</a></p>
-    </div>
-  </article>
-</div>
+::::{grid} 1 1 3 3
+:gutter: 3
+
+:::{grid-item-card} Recreate the documentation figures
+:link: documentation-figures
+:link-type: doc
+:img-top: ../_static/images/examples/dap014-race-trajectories.png
+:class-card: psytrax-notebook-card
+Load the bundled DAP014 race-model fit and regenerate the trajectory,
+psychometric, and chronometric panels used throughout the docs.
+:::
+
+:::{grid-item-card} Compare built-in models
+:link: compare-built-in-models
+:link-type: doc
+:img-top: ../_static/images/examples/model-evidence-comparison.png
+:class-card: psytrax-notebook-card
+Fit the GLM, DDM, and race-model likelihoods to the same mouse and compare
+them with approximate log evidence.
+:::
+
+:::{grid-item-card} Load public IBL trials
+:link: ibl-one-integration
+:link-type: doc
+:img-top: ../_static/images/examples/ibl-integration-workflow.svg
+:class-card: psytrax-notebook-card
+Search sessions with ONE, handle public IBL trial layouts, and convert the
+result to a psytrax data dictionary.
+:::
+::::
 
 ## Detailed examples
 
@@ -93,6 +94,9 @@ Convert a trial table into the psytrax data dictionary.
 :maxdepth: 1
 :hidden:
 
+documentation-figures
+compare-built-in-models
+ibl-one-integration
 logistic-first-fit
 race-model-rt
 model-recovery

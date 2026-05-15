@@ -13,6 +13,7 @@ copyright = "2026, psytrax contributors"
 
 extensions = [
     "myst_parser",
+    "nbsphinx",
     "numpydoc",
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
@@ -27,6 +28,7 @@ autodoc_typehints = "description"
 numpydoc_show_class_members = False
 myst_enable_extensions = ["colon_fence"]
 myst_heading_anchors = 3
+nbsphinx_execute = "never"
 
 templates_path = ["_templates"]
 exclude_patterns = ["snippets/*"]
@@ -42,7 +44,7 @@ html_theme_options = {
         "image_dark": "_static/psytrax_logo_dark.svg",
     },
     "navbar_start": ["navbar-logo"],
-    "navbar_center": [],
+    "navbar_center": ["navbar-nav"],
     "navbar_end": [],
     "navbar_persistent": [],
     "icon_links": [

@@ -9,10 +9,8 @@
   </defs>
   <rect x="10" y="12" width="74" height="72" rx="18" fill="url(#mark-bg)"/>
   <path d="M23 68 H72 M25 70 V26" fill="none" stroke="#dff1ef" stroke-width="3.4" stroke-linecap="round" opacity="0.78"/>
-  <path d="M27 39 C40 39 56 39 70 39" fill="none" stroke="#ffffff" stroke-width="4.6" stroke-linecap="round"/>
-  <path d="M27 48 C42 48 50 47 55 39 C59 33 64 31 70 31" fill="none" stroke="#9ea6aa" stroke-width="4.8" stroke-linecap="round"/>
-  <path d="M27 61 C43 61 50 60 55 47 C59 36 64 25 70 25" fill="none" stroke="#111820" stroke-width="5.2" stroke-linecap="round"/>
-  <circle cx="27" cy="39" r="3.4" fill="#ffffff"/>
-  <circle cx="70" cy="25" r="3.4" fill="#111820"/>
+  <path d="M27 38 H70" fill="none" stroke="#ffffff" stroke-width="4.6" stroke-linecap="round"/>
+  <path d="M27 54 C38 54 45 50 50 45 C54 40 59 38 70 38" fill="none" stroke="#9ea6aa" stroke-width="4.8" stroke-linecap="round"/>
+  <path d="M27 66 C38 66 45 57 50 48 C54 40 59 38 70 38" fill="none" stroke="#111820" stroke-width="5.2" stroke-linecap="round"/>
   <text x="102" y="62" fill="#17313b" font-family="Inter, Arial, sans-serif" font-size="45" font-weight="800" letter-spacing="0">psy<tspan fill="#2f7d67">trax</tspan></text>
 </svg>

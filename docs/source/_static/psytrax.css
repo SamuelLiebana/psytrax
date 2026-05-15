@@ -165,7 +165,7 @@ html[data-theme="dark"] {
 .psytrax-example-gallery {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   margin: 1.2rem 0 2rem;
 }
 
@@ -178,19 +178,21 @@ html[data-theme="dark"] {
 }
 
 .psytrax-example-gallery figure.psytrax-example-wide {
-  grid-column: 1 / -1;
+  grid-column: auto;
 }
 
 .psytrax-example-gallery img {
   background: #ffffff;
   display: block;
-  height: auto;
+  height: 180px;
+  object-fit: contain;
+  padding: 0.4rem;
   width: 100%;
 }
 
 .psytrax-example-gallery figcaption {
   color: var(--psytrax-muted);
-  font-size: 0.95rem;
+  font-size: 0.88rem;
   line-height: 1.45;
   padding: 0.8rem 0.9rem 0.95rem;
 }
@@ -256,6 +258,14 @@ html[data-theme="dark"] {
 .psytrax-script-link a {
   font-weight: 700;
   text-decoration: none;
+}
+
+.psytrax-notebook-card .sd-card-img-top {
+  background: #ffffff;
+  border-bottom: 1px solid var(--psytrax-border);
+  height: 170px;
+  object-fit: contain;
+  padding: 0.5rem;
 }
 
 .psytrax-footer-logos {
