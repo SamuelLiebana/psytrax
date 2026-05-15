@@ -4,7 +4,7 @@
 
 **Empirical Bayes fitting for trial-by-trial decision models**
 
-psytrax fits a Gaussian random-walk prior over a sequence of K parameters across N trials and optimises the prior variance (hyperparameters) by maximising the marginal likelihood (evidence) using the Laplace approximation.
+psytrax fits a Gaussian random-walk prior over a sequence of K parameters across N trials and optimises the prior variance (hyperparameters) by maximising the marginal likelihood (evidence) using the Laplace approximation. It builds on the trial-by-trial modelling approach introduced by PsyTrack ([Roy et al., 2021](https://doi.org/10.1016/j.neuron.2020.12.004)).
 
 It is model-agnostic: you supply a **per-trial log-likelihood function** and psytrax handles all the inference machinery.
 

@@ -6,6 +6,8 @@ psytrax helps researchers estimate how latent decision-making parameters change
 over learning, fatigue, task engagement, or experimental manipulations. You
 provide a per-trial likelihood; psytrax handles random-walk priors, MAP
 fitting, Laplace evidence, model comparison, and uncertainty over trajectories.
+It builds on the trial-by-trial modelling approach introduced by PsyTrack
+([Roy et al., 2021](https://doi.org/10.1016/j.neuron.2020.12.004)).
 
 ::::{grid} 1 2 2 4
 :gutter: 3

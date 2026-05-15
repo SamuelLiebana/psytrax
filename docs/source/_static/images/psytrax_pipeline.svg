@@ -61,10 +61,10 @@
   <g transform="translate(647 99)">
     <rect x="0" y="0" width="46" height="45" rx="12" fill="#ffffff" opacity="0.16"/>
     <path d="M9 35 H39 M11 36 V10" fill="none" stroke="#dff1ef" stroke-width="2.2" stroke-linecap="round" opacity="0.78"/>
-    <path d="M13 30 C22 30 31 30 40 30" fill="none" stroke="#ffffff" stroke-width="2.8" stroke-linecap="round"/>
-    <path d="M13 30 C21 29 24 23 29 17 C33 13 37 13 40 13" fill="none" stroke="#9ea6aa" stroke-width="3" stroke-linecap="round"/>
-    <path d="M13 32 C21 31 24 23 28 16 C32 9 37 9 40 9" fill="none" stroke="#111820" stroke-width="3.2" stroke-linecap="round"/>
-    <circle cx="13" cy="32" r="2.1" fill="#ffffff"/>
+    <path d="M13 20 C22 20 31 20 40 20" fill="none" stroke="#ffffff" stroke-width="2.8" stroke-linecap="round"/>
+    <path d="M13 26 C22 26 28 25 32 18 C35 14 37 13 40 13" fill="none" stroke="#9ea6aa" stroke-width="3" stroke-linecap="round"/>
+    <path d="M13 33 C24 33 29 32 32 24 C35 16 37 9 40 9" fill="none" stroke="#111820" stroke-width="3.2" stroke-linecap="round"/>
+    <circle cx="13" cy="20" r="2.1" fill="#ffffff"/>
     <circle cx="40" cy="9" r="2.1" fill="#111820"/>
     <text x="58" y="33" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="30" font-weight="800" letter-spacing="0">psytrax</text>
   </g>

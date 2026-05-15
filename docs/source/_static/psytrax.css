@@ -43,6 +43,12 @@ html[data-theme="dark"] {
   min-height: 3.75rem;
 }
 
+.bd-header .primary-toggle {
+  align-items: center;
+  display: inline-flex !important;
+  visibility: visible !important;
+}
+
 .sd-card-title {
   color: var(--psytrax-text);
 }
