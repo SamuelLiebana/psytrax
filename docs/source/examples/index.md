@@ -27,6 +27,40 @@ recovery, and data-loading examples.
   </figure>
 </div>
 
+## Worked examples
+
+<div class="psytrax-worked-examples">
+  <article class="psytrax-worked-example">
+    <img src="../_static/images/examples/dap014-race-trajectories.png" alt="DAP014 race-model parameter trajectories." />
+    <div class="psytrax-worked-example-body">
+      <h3>Recreate the documentation figures</h3>
+      <p>Load the bundled DAP014 race-model fit and regenerate the trajectory, psychometric, and chronometric panels used throughout the docs.</p>
+      <p><code>generate_dap014_docs_figures.py</code></p>
+      <p class="psytrax-script-link"><a href="https://github.com/SamuelLiebana/psytrax/blob/main/examples/generate_dap014_docs_figures.py">View script</a></p>
+    </div>
+  </article>
+  <article class="psytrax-worked-example">
+    <img src="../_static/images/examples/model-evidence-comparison.png" alt="Model evidence comparison plot." />
+    <div class="psytrax-worked-example-body">
+      <h3>Compare built-in models</h3>
+      <p>Fit logistic, diffusion, and race-model likelihoods to the same mouse and compare them with the approximate log evidence returned by psytrax.</p>
+      <p><code>compare_models_DAP009.py</code></p>
+      <p class="psytrax-script-link"><a href="https://github.com/SamuelLiebana/psytrax/blob/main/examples/compare_models_DAP009.py">View script</a></p>
+    </div>
+  </article>
+  <article class="psytrax-worked-example">
+    <img src="../_static/images/examples/ibl-integration-workflow.svg" alt="IBL ONE to psytrax data workflow." />
+    <div class="psytrax-worked-example-body">
+      <h3>Load public IBL trials</h3>
+      <p>Search subjects and sessions with ONE, handle common public IBL trial layouts, and convert the result to a psytrax data dictionary.</p>
+      <p><code>ibl_one_integration_walkthrough.ipynb</code></p>
+      <p class="psytrax-script-link"><a href="https://github.com/SamuelLiebana/psytrax/blob/main/examples/ibl_one_integration_walkthrough.ipynb">View notebook</a></p>
+    </div>
+  </article>
+</div>
+
+## Detailed examples
+
 ::::{grid} 1 1 2 2
 :gutter: 3
 
@@ -54,14 +88,6 @@ Simulate known trajectories and check whether psytrax can recover them.
 Convert a trial table into the psytrax data dictionary.
 :::
 ::::
-
-## Existing scripts and notebooks
-
-| Example | File | What it teaches |
-| --- | --- | --- |
-| Compare built-in models | `examples/compare_models_DAP009.py` | Fit several models to one mouse and compare evidence |
-| IBL integration | `examples/ibl_one_integration_walkthrough.ipynb` | Load public IBL trials through ONE and convert them to psytrax format |
-| Documentation figures | `examples/generate_dap014_docs_figures.py` | Generate trajectory and psychometric/chronometric figures from a saved race fit |
 
 ```{toctree}
 :maxdepth: 1

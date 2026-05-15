@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 520" role="img" aria-labelledby="title desc">
+  <title id="title">IBL ONE to psytrax workflow</title>
+  <desc id="desc">A workflow showing IBL ONE loading public sessions, converting trials to a psytrax data dictionary, fitting a model, and inspecting trajectories.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fbfc"/>
+      <stop offset="1" stop-color="#edf4f3"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#195f78"/>
+      <stop offset="1" stop-color="#2f7d67"/>
+    </linearGradient>
+    <filter id="shadow" x="-8%" y="-8%" width="116%" height="124%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#17313b" flood-opacity="0.13"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#2d5362"/>
+    </marker>
+  </defs>
+  <rect x="10" y="10" width="960" height="500" rx="28" fill="url(#bg)" stroke="#d7e4e5" stroke-width="2"/>
+  <g filter="url(#shadow)" font-family="Inter, Arial, sans-serif">
+    <rect x="58" y="106" width="194" height="246" rx="18" fill="#ffffff"/>
+    <rect x="292" y="106" width="194" height="246" rx="18" fill="#ffffff"/>
+    <rect x="526" y="106" width="194" height="246" rx="18" fill="#ffffff"/>
+    <rect x="760" y="106" width="162" height="246" rx="18" fill="url(#accent)"/>
+  </g>
+  <g font-family="Inter, Arial, sans-serif">
+    <text x="155" y="156" text-anchor="middle" fill="#17313b" font-size="24" font-weight="800">IBL ONE</text>
+    <text x="155" y="186" text-anchor="middle" fill="#5c7078" font-size="15">public Alyx sessions</text>
+    <circle cx="125" cy="239" r="18" fill="#195f78"/>
+    <circle cx="162" cy="226" r="11" fill="#d48a2f"/>
+    <circle cx="183" cy="262" r="14" fill="#2f7d67"/>
+    <path d="M112 295 H199" stroke="#d8e6e9" stroke-width="7" stroke-linecap="round"/>
+    <path d="M112 318 H176" stroke="#d8e6e9" stroke-width="7" stroke-linecap="round"/>
+
+    <text x="389" y="156" text-anchor="middle" fill="#17313b" font-size="24" font-weight="800">Trials</text>
+    <text x="389" y="186" text-anchor="middle" fill="#5c7078" font-size="15">contrast, choice, RT</text>
+    <rect x="328" y="218" width="122" height="94" rx="10" fill="#f2f7f8" stroke="#d8e6e9"/>
+    <line x1="328" y1="248" x2="450" y2="248" stroke="#d8e6e9"/>
+    <line x1="369" y1="218" x2="369" y2="312" stroke="#d8e6e9"/>
+    <line x1="410" y1="218" x2="410" y2="312" stroke="#d8e6e9"/>
+    <text x="348" y="239" text-anchor="middle" fill="#195f78" font-size="12" font-weight="800">c</text>
+    <text x="389" y="239" text-anchor="middle" fill="#195f78" font-size="12" font-weight="800">y</text>
+    <text x="430" y="239" text-anchor="middle" fill="#195f78" font-size="12" font-weight="800">rt</text>
+    <circle cx="348" cy="270" r="5" fill="#2f7d67"/>
+    <circle cx="389" cy="270" r="5" fill="#d48a2f"/>
+    <circle cx="430" cy="270" r="5" fill="#195f78"/>
+    <circle cx="348" cy="294" r="5" fill="#d48a2f"/>
+    <circle cx="389" cy="294" r="5" fill="#195f78"/>
+    <circle cx="430" cy="294" r="5" fill="#2f7d67"/>
+
+    <text x="623" y="156" text-anchor="middle" fill="#17313b" font-size="24" font-weight="800">psytrax data</text>
+    <text x="623" y="186" text-anchor="middle" fill="#5c7078" font-size="15">standard dictionary</text>
+    <rect x="564" y="218" width="118" height="96" rx="10" fill="#f2f7f8" stroke="#d8e6e9"/>
+    <text x="623" y="248" text-anchor="middle" fill="#195f78" font-family="Menlo, Consolas, monospace" font-size="14" font-weight="800">inputs</text>
+    <text x="623" y="273" text-anchor="middle" fill="#195f78" font-family="Menlo, Consolas, monospace" font-size="14" font-weight="800">responses</text>
+    <text x="623" y="298" text-anchor="middle" fill="#195f78" font-family="Menlo, Consolas, monospace" font-size="14" font-weight="800">times</text>
+
+    <text x="841" y="156" text-anchor="middle" fill="#ffffff" font-size="24" font-weight="800">Fit</text>
+    <text x="841" y="186" text-anchor="middle" fill="#dff1ef" font-size="15">logistic baseline</text>
+    <path d="M794 286 C815 234 836 245 855 263 S895 306 907 226" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+    <path d="M794 309 C815 262 836 270 855 282 S895 326 907 260" fill="none" stroke="#f1b65e" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="907" cy="226" r="4" fill="#ffffff"/>
+    <circle cx="907" cy="260" r="4" fill="#f1b65e"/>
+  </g>
+  <line x1="254" y1="229" x2="285" y2="229" stroke="#2d5362" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="488" y1="229" x2="519" y2="229" stroke="#2d5362" stroke-width="4" marker-end="url(#arrow)"/>
+  <line x1="722" y1="229" x2="753" y2="229" stroke="#2d5362" stroke-width="4" marker-end="url(#arrow)"/>
+</svg>
