@@ -41,6 +41,10 @@ html_theme_options = {
         "image_light": "_static/psytrax_logo.svg",
         "image_dark": "_static/psytrax_logo_dark.svg",
     },
+    "navbar_start": ["navbar-logo"],
+    "navbar_center": [],
+    "navbar_end": [],
+    "navbar_persistent": [],
     "icon_links": [
         {
             "name": "Zulip",

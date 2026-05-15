@@ -53,19 +53,21 @@
 
   <text x="442" y="122" text-anchor="middle" fill="#17313b" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="700">Model</text>
   <text x="442" y="154" text-anchor="middle" fill="#5c7078" font-family="Inter, Arial, sans-serif" font-size="16">built-in or custom</text>
-  <g transform="translate(356 190)">
-    <rect x="0" y="0" width="172" height="104" rx="12" fill="#f2f7f8" stroke="#d8e6e9"/>
-    <text x="86" y="39" text-anchor="middle" fill="#195f78" font-family="Georgia, 'Times New Roman', serif" font-size="20" font-weight="700">log p(yₜ | xₜ, θₜ)</text>
-    <text x="86" y="68" text-anchor="middle" fill="#5c7078" font-family="Inter, Arial, sans-serif" font-size="14">JAX likelihood</text>
-    <text x="86" y="89" text-anchor="middle" fill="#5c7078" font-family="Inter, Arial, sans-serif" font-size="12">plus model hyperparameters</text>
+  <g transform="translate(346 190)">
+    <rect x="0" y="0" width="192" height="104" rx="12" fill="#f2f7f8" stroke="#d8e6e9"/>
+    <text x="96" y="38" text-anchor="middle" fill="#195f78" font-family="Georgia, 'Times New Roman', serif" font-size="17" font-weight="700">log p(yₜ | xₜ, θₜ)</text>
+    <text x="96" y="68" text-anchor="middle" fill="#5c7078" font-family="Inter, Arial, sans-serif" font-size="14">JAX likelihood</text>
+    <text x="96" y="89" text-anchor="middle" fill="#5c7078" font-family="Inter, Arial, sans-serif" font-size="12">plus model hyperparameters</text>
   </g>
 
   <g transform="translate(647 99)">
     <rect x="0" y="0" width="46" height="45" rx="12" fill="#ffffff" opacity="0.16"/>
-    <path d="M10 32 C17 20 23 22 29 26 S40 36 42 13" fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round"/>
-    <circle cx="10" cy="32" r="3.4" fill="#f1b65e"/>
-    <circle cx="29" cy="26" r="3.4" fill="#ffffff"/>
-    <circle cx="42" cy="13" r="3.4" fill="#f1b65e"/>
+    <path d="M9 35 H39 M11 36 V10" fill="none" stroke="#dff1ef" stroke-width="2.2" stroke-linecap="round" opacity="0.78"/>
+    <path d="M13 30 C21 29 30 29 40 28" fill="none" stroke="#f1b65e" stroke-width="3" stroke-linecap="round"/>
+    <path d="M13 25 C23 24 29 20 40 14" fill="none" stroke="#bfeee1" stroke-width="3" stroke-linecap="round"/>
+    <path d="M13 32 C25 32 29 12 40 10" fill="none" stroke="#ffffff" stroke-width="3.4" stroke-linecap="round"/>
+    <circle cx="13" cy="32" r="2.3" fill="#ffffff"/>
+    <circle cx="40" cy="10" r="2.3" fill="#f1b65e"/>
     <text x="58" y="33" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="30" font-weight="800" letter-spacing="0">psytrax</text>
   </g>
   <g transform="translate(639 167)">
