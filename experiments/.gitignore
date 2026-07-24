@@ -1,0 +1,32 @@
+# Large or machine-local experiment artifacts.
+logs/
+work/
+downloads/
+raw_data/
+scratch/
+cache/
+
+# Common job outputs.
+*.out
+*.err
+*.log
+*.tmp
+
+# Large binary result formats should be kept outside tracked source by default.
+*.npy
+*.npz
+*.pkl
+*.pickle
+*.parquet
+*.h5
+*.hdf5
+
+# Keep source templates, manifests, and small paper-ready exports trackable.
+!README.md
+!.gitignore
+!slurm/
+!slurm/**
+!manifests/
+!manifests/**
+!results/
+!results/**

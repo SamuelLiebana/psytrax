@@ -1,0 +1,72 @@
+experiment_id: E-XXX
+title:
+status: proposed
+reviewer_concerns: []
+
+human_approvals:
+  dataset_download:
+    approved: false
+    approved_by:
+    approved_at:
+    scope:
+  slurm_run:
+    approved: false
+    approved_by:
+    approved_at:
+    scope:
+  use_in_paper_or_rebuttal:
+    approved: false
+    approved_by:
+    approved_at:
+    scope:
+
+repository:
+  name: psytrax
+  commit:
+  branch:
+  dirty_worktree: null
+
+dataset:
+  name:
+  source_url:
+  citation:
+  license_or_terms:
+  expected_size:
+  storage_path:
+  checksums: []
+
+preprocessing:
+  commands: []
+  inputs: []
+  outputs: []
+
+fit_plan:
+  models: []
+  configs: []
+  smoke_test_command:
+  full_run_command:
+
+slurm:
+  partition:
+  cpus_per_task:
+  gpus:
+  memory:
+  walltime:
+  array_size:
+  job_ids: []
+  log_paths: []
+
+outputs:
+  raw_results: []
+  summaries: []
+  paper_ready_artifacts: []
+
+validation:
+  tests_run: []
+  smoke_status:
+  failed_jobs: []
+  incomplete_jobs: []
+
+notes:
+  risks: []
+  unresolved_questions: []
