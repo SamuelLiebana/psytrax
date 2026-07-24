@@ -38,7 +38,8 @@ If Streamlit app tests are added, run them with the same conda environment.
 ## Development Rules
 
 - Do not push directly to `main`.
-- Do not use `fit_all.py --push` during NeurIPS-response work.
+- `fit_all.py` must not commit or push results. Keep publishing and integration
+  as explicit human-reviewed Git operations.
 - Keep changes on review branches such as `neurips-response/setup`,
   `neurips-response/experiments`, `neurips-response/fixes`, or
   `neurips-response/streamlit-tests`.

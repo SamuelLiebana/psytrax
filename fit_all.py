@@ -3,14 +3,10 @@
 Reads every data/<mouse>_data.npy file, fits the race model with session
 boundaries enabled, and saves results to example_fits/<mouse>_race_fit.npy.
 
-With --push, each fit is committed and pushed to GitHub as soon as it
-finishes, so the Streamlit app is updated incrementally.
-
 Usage:
     python fit_all.py                        # fit all mice
     python fit_all.py --mice DAP009 DAP011   # fit specific mice
     python fit_all.py --skip-existing        # skip mice already fitted
-    python fit_all.py --push                 # git-commit + push each fit
 
 Fitting one mouse takes 30–120 min depending on trial count.
 Run overnight (or on a remote server) for all 26 mice.
@@ -19,7 +15,6 @@ Run overnight (or on a remote server) for all 26 mice.
 import os
 import sys
 import time
-import subprocess
 import argparse
 import numpy as np
 
@@ -29,18 +24,6 @@ from psytrax.models import race
 _REPO_DIR = os.path.dirname(__file__)
 _DATA_DIR = os.path.join(_REPO_DIR, 'data')
 _OUT_DIR  = os.path.join(_REPO_DIR, 'example_fits')
-
-
-def _git_push(mouse, out_path):
-    """Stage the new fit file, commit, and push."""
-    try:
-        subprocess.run(['git', 'add', out_path], cwd=_REPO_DIR, check=True)
-        msg = f'Add race model fit for {mouse}'
-        subprocess.run(['git', 'commit', '-m', msg], cwd=_REPO_DIR, check=True)
-        subprocess.run(['git', 'push', 'origin', 'main'], cwd=_REPO_DIR, check=True)
-        print(f'  Pushed {mouse} fit to GitHub.')
-    except subprocess.CalledProcessError as e:
-        print(f'  WARNING: git push failed: {e}')
 
 
 def fit_mouse(mouse, verbose=True, precision='float64', device='auto',
@@ -88,8 +71,6 @@ def main():
                         help='Mice to fit (default: all in data/)')
     parser.add_argument('--skip-existing', action='store_true',
                         help='Skip mice whose fit file already exists')
-    parser.add_argument('--push', action='store_true',
-                        help='git commit + push each fit as it completes')
     parser.add_argument('--device', default='auto',
                         choices=['auto', 'cpu', 'gpu', 'tpu'],
                         help='Execution device policy (default: auto)')
@@ -123,8 +104,6 @@ def main():
         f'sig_i estimated by Empirical Bayes from initial value '
         f'{race.DEFAULT_SIG_I:.4f}): {mice}'
     )
-    if args.push:
-        print('Auto-push enabled: each fit will be pushed to GitHub on completion.')
     print()
 
     results_summary = []
@@ -160,8 +139,6 @@ def main():
                 f'[{execution}] → {out_path}'
             )
             results_summary.append((mouse, N, 'ok', log_evd, elapsed))
-            if args.push:
-                _git_push(mouse, out_path)
         except Exception as e:
             print(f'  ERROR: {e}')
             results_summary.append((mouse, N, f'error: {e}', None, None))
